@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -23,7 +22,6 @@ import {
 } from "./archive-limits.js";
 import { resolveArchiveKind, type ArchiveKind } from "./archive-kind.js";
 import {
-  createArchiveSymlinkTraversalError,
   mergeExtractedTreeIntoDestination,
   prepareArchiveDestinationDir,
   prepareArchiveOutputPath,
@@ -35,9 +33,6 @@ import {
   type TarEntryInfo,
 } from "./archive-tar.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
-import { sameFileIdentity } from "./file-identity.js";
-import { FsSafeError } from "./errors.js";
-import { root } from "./root.js";
 import { isNotFoundPathError } from "./path.js";
 import { withTimeout } from "./timing.js";
 
@@ -85,41 +80,6 @@ const OPEN_WRITE_CREATE_FLAGS =
   fsConstants.O_EXCL |
   (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
 
-function symlinkTraversalError(originalPath: string) {
-  return createArchiveSymlinkTraversalError(originalPath);
-}
-
-type OpenZipOutputFileResult = {
-  handle: FileHandle;
-  createdForWrite: boolean;
-  realPath: string;
-  stat: Stats;
-};
-
-async function openZipOutputFile(params: {
-  relPath: string;
-  originalPath: string;
-  destinationRealDir: string;
-}): Promise<OpenZipOutputFileResult> {
-  try {
-    const targetRoot = await root(params.destinationRealDir);
-    return await targetRoot.openWritable(params.relPath, {
-      mkdir: false,
-      mode: 0o666,
-    });
-  } catch (err) {
-    if (
-      err instanceof FsSafeError &&
-      (err.code === "invalid-path" ||
-        err.code === "outside-workspace" ||
-        err.code === "path-mismatch")
-    ) {
-      throw symlinkTraversalError(params.originalPath);
-    }
-    throw err;
-  }
-}
-
 async function cleanupPartialRegularFile(filePath: string): Promise<void> {
   let stat: Awaited<ReturnType<typeof fs.lstat>>;
   try {
@@ -140,25 +100,6 @@ function buildArchiveAtomicTempPath(targetPath: string): string {
     path.dirname(targetPath),
     `.${path.basename(targetPath)}.${process.pid}.${randomUUID()}.tmp`,
   );
-}
-
-async function verifyZipWriteResult(params: {
-  destinationRealDir: string;
-  relPath: string;
-  expectedStat: Stats;
-}): Promise<string> {
-  const targetRoot = await root(params.destinationRealDir);
-  const opened = await targetRoot.open(params.relPath, {
-    hardlinks: "reject",
-  });
-  try {
-    if (!sameFileIdentity(opened.stat, params.expectedStat)) {
-      throw new FsSafeError("path-mismatch", "path changed during zip extract");
-    }
-    return opened.realPath;
-  } finally {
-    await opened.handle.close().catch(() => undefined);
-  }
 }
 
 type ZipEntry = {
@@ -214,29 +155,20 @@ async function prepareZipOutputPath(params: {
 
 async function writeZipFileEntry(params: {
   entry: ZipEntry;
-  relPath: string;
-  destinationRealDir: string;
+  outPath: string;
   budget: ZipExtractBudget;
 }): Promise<void> {
-  const opened = await openZipOutputFile({
-    relPath: params.relPath,
-    originalPath: params.entry.name,
-    destinationRealDir: params.destinationRealDir,
-  });
   params.budget.startEntry();
   const readable = await readZipEntryStream(params.entry);
-  const destinationPath = opened.realPath;
-  const targetMode = opened.stat.mode & 0o777;
-  await opened.handle.close().catch(() => undefined);
+  const destinationPath = params.outPath;
 
   let tempHandle: FileHandle | null = null;
   let tempPath: string | null = null;
-  let tempStat: Stats | null = null;
   let handleClosedByStream = false;
 
   try {
     tempPath = buildArchiveAtomicTempPath(destinationPath);
-    tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, targetMode || 0o666);
+    tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o666);
     const writable = tempHandle.createWriteStream();
     writable.once("close", () => {
       handleClosedByStream = true;
@@ -247,10 +179,6 @@ async function writeZipFileEntry(params: {
       createExtractBudgetTransform({ onChunkBytes: params.budget.addBytes }),
       writable,
     );
-    tempStat = await fs.stat(tempPath);
-    if (!tempStat) {
-      throw new Error("zip temp write did not produce file metadata");
-    }
     if (!handleClosedByStream) {
       await tempHandle.close().catch(() => undefined);
       handleClosedByStream = true;
@@ -258,17 +186,12 @@ async function writeZipFileEntry(params: {
     tempHandle = null;
     await fs.rename(tempPath, destinationPath);
     tempPath = null;
-    const verifiedPath = await verifyZipWriteResult({
-      destinationRealDir: params.destinationRealDir,
-      relPath: params.relPath,
-      expectedStat: tempStat,
-    });
 
     // Best-effort permission restore for zip entries created on unix.
     if (typeof params.entry.unixPermissions === "number") {
       const mode = params.entry.unixPermissions & 0o777;
       if (mode !== 0) {
-        await fs.chmod(verifiedPath, mode).catch(() => undefined);
+        await fs.chmod(destinationPath, mode).catch(() => undefined);
       }
     }
   } catch (err) {
@@ -276,9 +199,6 @@ async function writeZipFileEntry(params: {
       await fs.rm(tempPath, { force: true }).catch(() => undefined);
     } else {
       await cleanupPartialRegularFile(destinationPath).catch(() => undefined);
-    }
-    if (err instanceof FsSafeError) {
-      throw symlinkTraversalError(params.entry.name);
     }
     throw err;
   } finally {
@@ -310,35 +230,46 @@ async function extractZip(params: {
 
   const budget = createByteBudgetTracker(limits);
 
-  for (const entry of entries) {
-    const output = resolveZipOutputPath({
-      entryPath: entry.name,
-      strip,
-      destinationDir: params.destDir,
-    });
-    if (!output) {
-      continue;
-    }
+  await withStagedArchiveDestination({
+    destinationRealDir,
+    run: async (stagingDir) => {
+      const stagingRealDir = await fs.realpath(stagingDir);
+      for (const entry of entries) {
+        const output = resolveZipOutputPath({
+          entryPath: entry.name,
+          strip,
+          destinationDir: stagingRealDir,
+        });
+        if (!output) {
+          continue;
+        }
 
-    await prepareZipOutputPath({
-      destinationDir: params.destDir,
-      destinationRealDir,
-      relPath: output.relPath,
-      outPath: output.outPath,
-      originalPath: entry.name,
-      isDirectory: entry.dir,
-    });
-    if (entry.dir) {
-      continue;
-    }
+        await prepareZipOutputPath({
+          destinationDir: stagingRealDir,
+          destinationRealDir: stagingRealDir,
+          relPath: output.relPath,
+          outPath: output.outPath,
+          originalPath: entry.name,
+          isDirectory: entry.dir,
+        });
+        if (entry.dir) {
+          continue;
+        }
 
-    await writeZipFileEntry({
-      entry,
-      relPath: output.relPath,
-      destinationRealDir,
-      budget,
-    });
-  }
+        await writeZipFileEntry({
+          entry,
+          outPath: output.outPath,
+          budget,
+        });
+      }
+
+      await mergeExtractedTreeIntoDestination({
+        sourceDir: stagingRealDir,
+        destinationDir: destinationRealDir,
+        destinationRealDir,
+      });
+    },
+  });
 }
 
 export async function extractArchive(params: {

@@ -1,8 +1,10 @@
+import { appendFileSync } from "node:fs";
 import { mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { root as openRoot } from "../src/index.js";
+import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
 const tempDirs: string[] = [];
 
@@ -13,6 +15,7 @@ async function tempRoot(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+  __setFsSafeTestHooksForTest(undefined);
   const { rm } = await import("node:fs/promises");
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
 });
@@ -174,6 +177,34 @@ describe("@openclaw/fs-safe", () => {
 
     await root.move("from.txt", "to.txt", { overwrite: true });
     await expect(readFile(path.join(rootPath, "to.txt"), "utf8")).resolves.toBe("source");
+  });
+
+  it("enforces copyIn maxBytes while streaming", async () => {
+    const rootPath = await tempRoot("fs-safe-copy-limit-");
+    const sourceRoot = await tempRoot("fs-safe-copy-source-");
+    const sourcePath = path.join(sourceRoot, "source.txt");
+    await writeFile(sourcePath, "1234");
+    const root = await openRoot(rootPath);
+
+    __setFsSafeTestHooksForTest({
+      afterOpen(filePath, handle) {
+        if (filePath !== sourcePath) {
+          return;
+        }
+        const createReadStream = handle.createReadStream.bind(handle);
+        Object.defineProperty(handle, "createReadStream", {
+          value: (...args: Parameters<typeof handle.createReadStream>) => {
+            appendFileSync(sourcePath, "567890");
+            return createReadStream(...args);
+          },
+        });
+      },
+    });
+
+    await expect(root.copyIn("copied.txt", sourcePath, { maxBytes: 4 })).rejects.toMatchObject({
+      code: "too-large",
+    });
+    await expect(root.exists("copied.txt")).resolves.toBe(false);
   });
 
   it("removes symlink leaves without following them", async () => {

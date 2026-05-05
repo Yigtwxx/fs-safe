@@ -8,8 +8,11 @@
     "url": "https://github.com/openclaw/fs-safe.git"
   },
   "files": [
-    "dist",
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "dist/**/*.d.ts.map",
     "README.md",
+    "SECURITY.md",
     "LICENSE"
   ],
   "type": "module",

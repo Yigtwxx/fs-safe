@@ -130,7 +130,7 @@ type SymlinkPolicy = "reject" | "follow-within-root";
 type HardlinkPolicy = "reject" | "allow";
 ```
 
-The two policy unions you'll see throughout. `"reject"` is conservative; `"follow-within-root"` allows symlinks whose final target is still inside the root; `"allow"` (hardlinks only) is permissive. Default for symlinks is `"reject"`; default for hardlinks is `"allow"` — switch hardlinks to `"reject"` when you need defense-in-depth.
+The two policy unions you'll see throughout. `"reject"` is conservative; `"follow-within-root"` allows symlinks whose final target is still inside the root; `"allow"` (hardlinks only) is permissive. Defaults for both symlinks and hardlinks are `"reject"`; switch hardlinks to `"allow"` only when you intentionally accept hardlink aliases.
 
 ## `FsSafeErrorCode`
 

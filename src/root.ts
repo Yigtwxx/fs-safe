@@ -5,6 +5,7 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
@@ -708,6 +709,31 @@ function buildAtomicWriteTempPath(targetPath: string): string {
   return path.join(dir, `.${base}.${process.pid}.${randomUUID()}.tmp`);
 }
 
+function createMaxBytesTransform(maxBytes: number): Transform {
+  let bytes = 0;
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      const buffer = chunk instanceof Buffer ? chunk : Buffer.from(chunk as Uint8Array);
+      bytes += buffer.byteLength;
+      if (bytes > maxBytes) {
+        callback(
+          new FsSafeError(
+            "too-large",
+            `file exceeds limit of ${maxBytes} bytes (got at least ${bytes})`,
+          ),
+        );
+        return;
+      }
+      callback(null, buffer);
+    },
+  });
+}
+
+function createBoundedReadStream(opened: OpenResult, maxBytes: number | undefined) {
+  const stream = opened.handle.createReadStream();
+  return maxBytes === undefined ? stream : stream.pipe(createMaxBytesTransform(maxBytes));
+}
+
 async function writeTempFileForAtomicReplace(params: {
   tempPath: string;
   data: string | Buffer;
@@ -1131,7 +1157,7 @@ async function copyFileInRoot(
     }
 
     const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath);
-    const sourceStream = source.handle.createReadStream();
+    const sourceStream = createBoundedReadStream(source, params.maxBytes);
     const identity = await runPinnedWriteHelper({
       rootPath: pinned.rootReal,
       relativeParentPath: pinned.relativeParentPath,
@@ -1481,7 +1507,7 @@ async function copyFileFallback(
 
     tempPath = buildAtomicWriteTempPath(destinationPath);
     tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, targetMode || 0o600);
-    const sourceStream = source.handle.createReadStream();
+    const sourceStream = createBoundedReadStream(source, params.maxBytes);
     const targetStream = tempHandle.createWriteStream();
     sourceStream.once("close", () => {
       sourceClosedByStream = true;

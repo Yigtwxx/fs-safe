@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vitest";
-import { extractArchive, resolvePackedRootDir } from "../src/archive.js";
+import {
+  ARCHIVE_LIMIT_ERROR_CODE,
+  extractArchive,
+  resolvePackedRootDir,
+} from "../src/archive.js";
 import {
   buildRandomTempFilePath,
   createTempFileTarget,
@@ -37,6 +41,33 @@ describe("archive extraction", () => {
     await extractArchive({ archivePath, destDir, timeoutMs: 15_000 });
     const packageDir = await resolvePackedRootDir(destDir);
     await expect(fs.readFile(path.join(packageDir, "hello.txt"), "utf8")).resolves.toBe("hi");
+  });
+
+  it("does not truncate existing destination files when zip extraction fails", async () => {
+    const root = await tempRoot("fs-safe-archive-fail-");
+    const archivePath = path.join(root, "pkg.zip");
+    const destDir = path.join(root, "dest");
+    await fs.mkdir(destDir, { recursive: true });
+    await fs.writeFile(path.join(destDir, "keep.txt"), "old-content");
+
+    const zip = new JSZip();
+    zip.file("keep.txt", "new-content-that-exceeds-the-entry-limit");
+    await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+    await expect(
+      extractArchive({
+        archivePath,
+        destDir,
+        kind: "zip",
+        timeoutMs: 15_000,
+        limits: { maxEntryBytes: 4 },
+      }),
+    ).rejects.toMatchObject({
+      code: ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
+    });
+    await expect(fs.readFile(path.join(destDir, "keep.txt"), "utf8")).resolves.toBe(
+      "old-content",
+    );
   });
 });
 

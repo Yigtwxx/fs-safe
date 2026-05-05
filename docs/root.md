@@ -19,7 +19,7 @@ function root(rootDir: string, defaults?: RootDefaults): Promise<Root>;
 
 type RootDefaults = {
   encoding?: BufferEncoding;       // text encoding for read/write helpers; defaults to "utf8"
-  hardlinks?: "reject" | "allow";  // refuse files with nlink > 1 on read; defaults to "allow"
+  hardlinks?: "reject" | "allow";  // refuse files with nlink > 1 on read; defaults to "reject"
   maxBytes?: number;               // refuse reads larger than this many bytes
   mkdir?: boolean;                 // create missing parent dirs on write/openWritable/append
   nonBlockingRead?: boolean;       // schedule reads on a worker; useful for large files
