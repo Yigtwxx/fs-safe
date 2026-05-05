@@ -80,7 +80,8 @@
     "build": "tsc -p tsconfig.json",
     "prepack": "pnpm build",
     "test": "vitest run",
-    "check": "pnpm build && pnpm test"
+    "check": "pnpm build && pnpm test",
+    "docs:site": "node scripts/build-docs-site.mjs"
   },
   "dependencies": {
     "jszip": "^3.10.1",

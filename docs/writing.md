@@ -1,0 +1,222 @@
+# Writing
+
+The `Root` handle exposes a tight set of write verbs. Each one is atomic at the destination — no half-written intermediate state — and goes through the same boundary checks as reads.
+
+```ts
+await fs.write("state.json", body);
+await fs.create("seed.json", initial);   // throws if exists
+await fs.writeJson("config.json", state);
+await fs.append("logs/today.log", line);
+await fs.copyIn("inbox/upload.bin", "/tmp/upload.bin");
+await fs.move("notes/draft.md", "notes/published.md");
+await fs.remove("logs/yesterday.log");
+await fs.mkdir("snapshots/2026/05");
+```
+
+## What every write does
+
+1. Resolve the relative target against the canonical root and reject anything that escapes (`outside-workspace`).
+2. If `mkdir: true`, create missing parent directories with the parent fd pinned.
+3. Open the parent directory by fd. Subsequent rename/unlink uses the parent fd, not the path string, so a parent-directory symlink swap mid-call cannot divert the write.
+4. Write data to a sibling temp file in the same directory.
+5. Atomically rename the temp file over the destination.
+6. Stat the resulting fd and verify identity.
+
+A failure at any point either leaves the destination at its previous contents or surfaces an `FsSafeError` — never a partially-written file at the destination path.
+
+## Write verbs
+
+### `fs.write(rel, data, options?)`
+
+Overwrite or create. Always atomic.
+
+```ts
+await fs.write("state/last-run.json", JSON.stringify(run));
+await fs.write("notes/today.txt", "hello\n", { encoding: "utf8" });
+```
+
+`data` accepts `string | Buffer`. `options` are `{ encoding?: BufferEncoding; mkdir?: boolean }`.
+
+### `fs.create(rel, data, options?)`
+
+Don't-clobber variant of `write()`. Throws `already-exists` if the target is there.
+
+```ts
+try {
+  await fs.create("config/seed.json", initial);
+} catch (err) {
+  if (err instanceof FsSafeError && err.code !== "already-exists") throw err;
+}
+```
+
+### `fs.writeJson(rel, value, options?)`
+
+`JSON.stringify(value, replacer, space)` + atomic write. Adds a trailing newline by default.
+
+```ts
+await fs.writeJson("config.json", state, { space: 2 });
+await fs.writeJson("compact.json", state, { trailingNewline: false });
+```
+
+Options:
+
+```ts
+type RootWriteJsonOptions = {
+  encoding?: BufferEncoding;
+  mkdir?: boolean;
+  replacer?: (this: any, key: string, value: any) => any | (number | string)[];
+  space?: number | string;
+  trailingNewline?: boolean; // default true
+};
+```
+
+`createJson(rel, value, options?)` is the don't-clobber variant.
+
+### `fs.append(rel, data, options?)`
+
+Open in append mode, write, close. Honors `mkdir` for the parent directory. Pass `prependNewlineIfNeeded: true` to insert a `\n` if the file does not already end in one.
+
+```ts
+await fs.append("logs/today.log", `[${ts}] ${line}\n`);
+await fs.append("notes/scratch.md", "* new bullet", { prependNewlineIfNeeded: true });
+```
+
+For high-volume logging, consider [`openWritable`](#openwritable) and a long-lived append handle.
+
+### `fs.copyIn(rel, sourceAbsPath, options?)`
+
+Bring a file from outside the root into the root, atomically. The source path must be absolute. The library streams the source through the boundary, writes to a sibling temp, and renames over the destination.
+
+```ts
+await fs.copyIn("inbox/upload.bin", "/tmp/incoming.bin", {
+  maxBytes: 64 * 1024 * 1024,
+});
+```
+
+Options: `{ encoding?, mkdir?, maxBytes?, sourceHardlinks? }`. Use `sourceHardlinks: "reject"` to refuse if the source itself is a hardlinked alias.
+
+### `fs.move(from, to, options?)`
+
+Rename one path inside the root to another. Defaults to no clobber:
+
+```ts
+await fs.move("incoming/foo.txt", "archive/foo.txt");
+await fs.move("incoming/foo.txt", "archive/foo.txt", { overwrite: true });
+```
+
+Both `from` and `to` are bounded; `..` in either is rejected.
+
+### `fs.remove(rel)`
+
+Unlink a file or `rmdir` an empty directory. Non-empty directories throw `not-empty`. For atomic directory replacement, use [`replaceDirectoryStaged`](atomic.md#replacedirectorystaged).
+
+```ts
+await fs.remove("logs/yesterday.log");
+await fs.remove("snapshots/empty-dir"); // ok
+await fs.remove("snapshots/full-dir");  // throws not-empty
+```
+
+### `fs.mkdir(rel)`
+
+`mkdir -p`. Creates missing parents.
+
+```ts
+await fs.mkdir("snapshots/2026/05");
+```
+
+### `fs.ensureRoot()`
+
+Treats `""` / `"."` as the root itself. Useful when a generic helper computes a relative directory and might end up at the root.
+
+```ts
+const targetRel = path.relative(fs.rootReal, candidateAbs); // could be "" if candidateAbs === root
+await fs.ensureRoot(); // accepts "" without throwing
+```
+
+## `openWritable()` for streaming
+
+When `write` doesn't fit (very large outputs, slow producers), open a writable handle:
+
+```ts
+const opened = await fs.openWritable("logs/current.log", { append: true });
+try {
+  for await (const chunk of source) {
+    await opened.handle.appendFile(chunk);
+  }
+} finally {
+  await opened.handle.close();
+}
+```
+
+Options: `{ mkdir?, mode?, truncateExisting?, append? }`. Streaming writes go directly to the destination — there is no atomic-rename step. If you need both streaming and atomicity, write to a sibling temp yourself and rename when done; the [`atomic`](atomic.md) helpers can do this for you.
+
+## Write defaults vs per-call options
+
+Set `mkdir: true` and `encoding: "utf8"` once on `root()`; pass overrides per call when needed:
+
+```ts
+const fs = await root("/srv/workspace", {
+  mkdir: true,
+  encoding: "utf8",
+});
+
+await fs.write("notes/today.txt", "ascii"); // utf8
+await fs.write("data/blob.bin", buffer);     // mkdir true, no encoding because data is Buffer
+await fs.write("data/blob.bin", buffer, { mkdir: false }); // override
+```
+
+## Errors you'll catch
+
+| Code | When |
+|---|---|
+| `outside-workspace` | Target resolves outside the root. |
+| `already-exists` | `create()` / `createJson()` / `move({ overwrite: false })` hit an existing target. |
+| `not-found` | Parent does not exist and `mkdir` is false. |
+| `not-empty` | `remove()` on a non-empty directory. |
+| `not-removable` | `remove()` could not unlink/rmdir (typically permissions or device busy). |
+| `path-mismatch` | Post-write fd identity check did not match. Almost always a parallel writer. |
+| `too-large` | `copyIn()` source exceeded `maxBytes`. |
+| `symlink` | A path component is a symlink and policy is `reject`. |
+| `hardlink` | `sourceHardlinks: "reject"` saw `nlink > 1`. |
+
+Full list in [Errors](errors.md).
+
+## Common patterns
+
+### Replace if changed
+
+```ts
+const next = JSON.stringify(state);
+const prev = await fs.readText("state.json").catch(() => "");
+if (prev !== next) await fs.write("state.json", next);
+```
+
+### Stage many writes, then commit
+
+```ts
+const stagingDir = "snapshots/incoming";
+await fs.mkdir(stagingDir);
+for (const file of files) await fs.write(`${stagingDir}/${file.name}`, file.body);
+await fs.move(stagingDir, "snapshots/2026-05-05", { overwrite: true });
+```
+
+For a true commit-or-rollback over a *directory*, use [`replaceDirectoryStaged`](atomic.md#replacedirectorystaged).
+
+### Rotate logs
+
+```ts
+const today = `logs/${formatDate(new Date())}.log`;
+try {
+  await fs.create(today, "");
+} catch (err) {
+  if (!(err instanceof FsSafeError) || err.code !== "already-exists") throw err;
+}
+await fs.append(today, line);
+```
+
+## See also
+
+- [Atomic writes](atomic.md) — the lower-level `replaceFileAtomic` and friends.
+- [JSON files](json.md) — standalone JSON helpers without going through `root()`.
+- [Reading](reading.md) — companion read API.
+- [Errors](errors.md) — every code, when it fires.

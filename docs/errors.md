@@ -1,0 +1,141 @@
+# Errors
+
+Every failure that's the library's job to surface lands as an `FsSafeError` with a closed `code` union you can branch on. Catch by code, not by message text — messages may change, codes will not.
+
+```ts
+import { FsSafeError, type FsSafeErrorCode } from "@openclaw/fs-safe";
+```
+
+## Shape
+
+```ts
+class FsSafeError extends Error {
+  readonly name: "FsSafeError";
+  readonly code: FsSafeErrorCode;
+  readonly cause?: unknown;
+
+  constructor(code: FsSafeErrorCode, message: string, options?: { cause?: unknown });
+}
+```
+
+`cause` is the underlying error when the failure was triggered by a `NodeJS.ErrnoException` (e.g. a wrapped `EACCES`). Inspect it for the original `code` / `errno` / `syscall` if you need finer-grained reporting.
+
+## Code union
+
+```ts
+type FsSafeErrorCode =
+  | "already-exists"
+  | "hardlink"
+  | "helper-failed"
+  | "helper-unavailable"
+  | "invalid-path"
+  | "not-empty"
+  | "not-file"
+  | "not-found"
+  | "not-removable"
+  | "outside-workspace"
+  | "path-alias"
+  | "path-mismatch"
+  | "symlink"
+  | "too-large"
+  | "unsupported-platform";
+```
+
+## Code reference
+
+| Code | When it fires | Common causes |
+|---|---|---|
+| `already-exists` | `create()`, `createJson()`, `move({ overwrite: false })`. | Target file or directory already at the destination. |
+| `hardlink` | Read or copy with `hardlinks: "reject"` saw `nlink > 1`. | File is hardlinked — possibly an alias of an out-of-tree inode. |
+| `helper-failed` | Internal POSIX helper (Python-based fd-relative ops, sidecar lock acquire) failed. | Inspect `cause` for the underlying error. |
+| `helper-unavailable` | Helper could not be spawned at all. | Python missing in PATH; restricted sandbox. Library falls back to Node-only path where possible. |
+| `invalid-path` | Input was empty, contained NUL, was an unparseable URL, or otherwise unusable. | Caller didn't validate input; input was a network path on Windows. |
+| `not-empty` | `remove()` on a non-empty directory. | Use `replaceDirectoryStaged` or remove children first. |
+| `not-file` | Read or copy targeted a non-regular file. | Target was a directory, FIFO, socket, device. |
+| `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). | Typical missing-file case. |
+| `not-removable` | `remove()` couldn't `unlink`/`rmdir` for a reason other than non-empty. | Permissions, device busy, immutable bit. |
+| `outside-workspace` | Path resolves outside the configured root. | `..` traversal; absolute path outside the root; symlink resolved out. |
+| `path-alias` | A path alias check failed (e.g. canonical-real-path moved out of the root). | Symlink resolution lands outside the root. |
+| `path-mismatch` | Post-open identity check failed: the opened fd does not match the resolved path. | TOCTOU — something else swapped the path between resolve and open. |
+| `symlink` | Path component is a symlink, policy is `reject`. | Caller followed a symlink they shouldn't have, or `symlinks: "reject"` is set. |
+| `too-large` | Read exceeded `maxBytes`. | Caller gave a too-permissive file or didn't size-cap correctly. |
+| `unsupported-platform` | The requested operation is not supported on the current platform. | E.g. POSIX-only helper invoked on Windows. |
+
+## Branching
+
+```ts
+import { FsSafeError } from "@openclaw/fs-safe";
+
+try {
+  await fs.write("../escape.txt", "x");
+} catch (err) {
+  if (!(err instanceof FsSafeError)) throw err;
+  switch (err.code) {
+    case "outside-workspace":
+      return reply(400, "path escapes workspace");
+    case "already-exists":
+      return reply(409, "exists");
+    case "too-large":
+      return reply(413, "too large");
+    case "not-found":
+      return reply(404, "missing");
+    case "symlink":
+    case "hardlink":
+    case "path-mismatch":
+    case "path-alias":
+      return reply(400, "unsafe path");
+    default:
+      throw err;
+  }
+}
+```
+
+The compiler will flag missing cases when you exhaust the union — keep your switch up-to-date as the library adds new codes.
+
+## Distinguishing from `NodeJS.ErrnoException`
+
+Some failures bubble up as native Node errors (e.g. `EACCES`, `EISDIR`, `EBUSY`) when they don't map cleanly to a library code. Inspect both:
+
+```ts
+import { FsSafeError } from "@openclaw/fs-safe";
+
+try {
+  await op();
+} catch (err) {
+  if (err instanceof FsSafeError) {
+    handleFsSafe(err);
+    return;
+  }
+  if ((err as NodeJS.ErrnoException).code === "EACCES") {
+    handleAccess();
+    return;
+  }
+  throw err;
+}
+```
+
+A common pattern is to wrap your domain code in a single try/catch that maps both shapes to your application's typed error format.
+
+## Specialty errors
+
+A handful of helpers throw their own typed errors instead of `FsSafeError`:
+
+- `JsonFileReadError` — thrown by [`readJsonFileStrict`](json.md). Carries `cause` so you can distinguish missing (`ENOENT`) from invalid (`SyntaxError`).
+- `ArchiveLimitError` — thrown by [`extractArchive`](archive.md) when an archive size, entry count, or extracted-byte budget is exceeded. The `code` field uses `ARCHIVE_LIMIT_ERROR_CODE` constants (e.g. `"ARCHIVE_SIZE_EXCEEDS_LIMIT"`).
+- `ArchiveSecurityError` — thrown by extraction when an entry path violates safety rules (traversal, drive prefix, blocked link type). The `code` field uses `ArchiveSecurityErrorCode` values.
+
+These are exported from their respective subpaths.
+
+## Why `FsSafeError`?
+
+Two reasons it isn't a richer hierarchy of subclasses:
+
+1. **Switch on `code`, don't `instanceof` a tree.** `code` is a closed string union the TypeScript compiler can exhaust-check. Subclasses make `instanceof` ladders that drift over time.
+2. **One catch handler.** Library callers often want a single "is this an `fs-safe` failure?" gate before deciding what to do — `instanceof FsSafeError` plus a switch is the cleanest expression of that.
+
+## See also
+
+- [`root()`](root.md) — every method documents the codes it can throw.
+- [Reading](reading.md) — read-path codes.
+- [Writing](writing.md) — write-path codes.
+- [Archive extraction](archive.md) — `ArchiveLimitError` and `ArchiveSecurityError`.

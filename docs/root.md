@@ -1,0 +1,186 @@
+# root()
+
+`root()` is the primary entry point. It takes a trusted directory and returns a `Root` handle whose methods accept relative paths and refuse to escape the directory.
+
+```ts
+import { root } from "@openclaw/fs-safe";
+
+const fs = await root("/srv/workspace", {
+  hardlinks: "reject",
+  symlinks: "reject",
+  mkdir: true,
+});
+```
+
+## Signature
+
+```ts
+function root(rootDir: string, defaults?: RootDefaults): Promise<Root>;
+
+type RootDefaults = {
+  encoding?: BufferEncoding;       // text encoding for read/write helpers; defaults to "utf8"
+  hardlinks?: "reject" | "allow";  // refuse files with nlink > 1 on read; defaults to "allow"
+  maxBytes?: number;               // refuse reads larger than this many bytes
+  mkdir?: boolean;                 // create missing parent dirs on write/openWritable/append
+  nonBlockingRead?: boolean;       // schedule reads on a worker; useful for large files
+  symlinks?: "reject" | "follow-within-root"; // policy when a path component is a symlink
+};
+```
+
+`root()` resolves the directory through the real filesystem. A symlinked input becomes the canonical path; a non-existent root throws `FsSafeError` with code `not-found`.
+
+`defaults` apply to every method on the returned handle. Per-call options on individual methods override the defaults for that call only.
+
+## The `Root` interface
+
+Every method on the returned handle accepts paths relative to the root and rejects anything that would escape it.
+
+### Reads
+
+```ts
+fs.read(rel, options?)         // { buffer, realPath, stat }
+fs.readBytes(rel, options?)    // Buffer
+fs.readText(rel, options?)     // string
+fs.readJson<T>(rel, options?)  // parsed T
+fs.open(rel, options?)         // { handle, realPath, stat } — call handle.close() when done
+fs.readPath(absPath, options?) // ReadResult; absPath must already be inside the root
+fs.reader(options?)            // (path) => Promise<Buffer>; useful for loader APIs
+```
+
+`open()` returns a Node `FileHandle` for streaming. Always close it:
+
+```ts
+const opened = await fs.open("large.log");
+try {
+  for await (const chunk of opened.handle.createReadStream()) {
+    process.stdout.write(chunk);
+  }
+} finally {
+  await opened.handle.close();
+}
+```
+
+### Writes
+
+```ts
+fs.write(rel, data, options?)            // overwrite-ok atomic write
+fs.create(rel, data, options?)           // throws "already-exists" if target exists
+fs.writeJson(rel, value, options?)       // JSON.stringify + atomic write
+fs.createJson(rel, value, options?)      // create() variant of writeJson
+fs.append(rel, data, options?)           // append text/buffer; respects mkdir default
+fs.copyIn(rel, sourceAbsPath, options?)  // copy from outside the root, atomically, with size cap
+fs.openWritable(rel, options?)           // FileHandle for streaming writes; call .close()
+fs.move(from, to, options?)              // rename within the root; defaults to no clobber
+fs.remove(rel)                           // unlink file or rmdir empty directory
+fs.mkdir(rel)                            // mkdir -p (creates missing parents)
+fs.ensureRoot()                          // accepts "" / "." as the root itself
+```
+
+`writeJson` accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
+
+`copyIn` is a one-shot ingest from a trusted absolute source path: it streams the source through the boundary, atomically renames into the root, and respects `maxBytes`.
+
+`openWritable` opens a writable file with options `mode?: number`, `truncateExisting?: boolean`, `append?: boolean`. Use it for streaming output. Always close the returned handle.
+
+### Inspection (advisory)
+
+```ts
+fs.exists(rel)                   // boolean
+fs.stat(rel)                     // PathStat
+fs.list(rel)                     // string[]
+fs.list(rel, { withFileTypes })  // DirEntry[]
+fs.resolve(rel)                  // absolute path inside the root, after canonicalization
+```
+
+These do not pin a later operation. They are safe to expose to UIs and decision points; for the actual read or write, use the verb methods so the operation pins identity at the point of use.
+
+### Properties
+
+```ts
+fs.rootDir       // the directory you passed in
+fs.rootReal      // its canonical real path (after symlink resolution)
+fs.rootWithSep   // rootReal with a trailing separator, for prefix comparisons
+fs.defaults      // the RootDefaults you passed
+```
+
+## Failure semantics
+
+Every method throws `FsSafeError` with a `code`. Branch on `err.code`, not message text. Common codes:
+
+| Code | When it fires |
+|---|---|
+| `outside-workspace` | The input resolves outside the root, or contains a `..` segment that would escape it. |
+| `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). |
+| `not-file` | A read or copy targeted a non-regular file (directory, FIFO, socket, …). |
+| `already-exists` | `create()` or `move()` without `overwrite` hit an existing target. |
+| `symlink` | A path component is a symlink, and the call's `symlinks` policy is `reject`. |
+| `hardlink` | The target's `nlink > 1` and `hardlinks` policy is `reject`. |
+| `path-mismatch` | Post-open identity check failed — the opened fd does not match the resolved path. |
+| `too-large` | Read exceeded `maxBytes`. |
+
+Full list in the [Errors](errors.md) reference.
+
+## Defaults vs per-call options
+
+Defaults reduce repetition; per-call options handle exceptions:
+
+```ts
+const fs = await root("/srv/workspace", {
+  symlinks: "reject",
+  hardlinks: "reject",
+  mkdir: true,
+});
+
+// Default: symlinks rejected.
+await fs.readText("config.toml");
+
+// One specific path needs to follow a symlink that lands inside the root.
+await fs.readText("links/current.log", { symlinks: "follow-within-root" });
+```
+
+For text encoding, the default `encoding` from `RootDefaults` flows into `readText` and `readJson`; pass `encoding` per call to override.
+
+## Common patterns
+
+### Read-only loader
+
+```ts
+const fs = await root("/srv/workspace", { symlinks: "reject", hardlinks: "reject" });
+const load = fs.reader();
+const a = await load("notes/today.txt");        // relative
+const b = await load("/srv/workspace/state.bin"); // absolute, but inside the root
+```
+
+`fs.reader()` returns a `(path) => Promise<Buffer>` callback. Useful when wiring `fs-safe` into APIs that accept a generic loader function. Absolute paths outside the root are rejected with `outside-workspace`.
+
+### "Touch only if missing" seeding
+
+```ts
+try {
+  await fs.create("config/seed.json", initialJson);
+} catch (err) {
+  if (err instanceof FsSafeError && err.code === "already-exists") {
+    // existing config wins
+  } else {
+    throw err;
+  }
+}
+```
+
+### Replace + verify
+
+```ts
+await fs.write("state.json", JSON.stringify(state, null, 2));
+const echoed = await fs.readJson<State>("state.json");
+assertDeepEqual(echoed, state);
+```
+
+`write` is atomic, so the file is either old or new — never half-written. Re-reading lets you detect a parallel writer, if one exists.
+
+## See also
+
+- [Reading](reading.md) — read variants in depth, plus stream patterns.
+- [Writing](writing.md) — write/create/move/remove in depth.
+- [pathScope()](path-scope.md) — the same boundary semantics over an absolute path you already trust.
+- [Atomic writes](atomic.md) — the lower-level helpers used by `fs.write`.
+- [Errors](errors.md) — the closed code union you'll be catching.
