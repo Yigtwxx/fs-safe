@@ -1196,7 +1196,6 @@ async function copyFileInRoot(
     }
 
     const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath);
-    const sourceStream = createBoundedReadStream(source, params.maxBytes);
     const identity = await runPinnedWriteHelper({
       rootPath: pinned.rootReal,
       relativeParentPath: pinned.relativeParentPath,
@@ -1204,9 +1203,10 @@ async function copyFileInRoot(
       mkdir: params.mkdir !== false,
       mode: pinned.mode,
       overwrite: true,
+      maxBytes: params.maxBytes,
       input: {
         kind: "stream",
-        stream: sourceStream,
+        stream: source.handle.createReadStream(),
       },
     }).catch((error) => {
       throw normalizePinnedWriteError(error);

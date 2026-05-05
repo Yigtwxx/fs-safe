@@ -1,5 +1,5 @@
 import { appendFileSync } from "node:fs";
-import { mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -215,6 +215,7 @@ describe("@openclaw/fs-safe", () => {
       code: "too-large",
     });
     await expect(root.exists("copied.txt")).resolves.toBe(false);
+    await expect(readdir(rootPath)).resolves.toEqual([]);
   });
 
   it("removes symlink leaves without following them", async () => {

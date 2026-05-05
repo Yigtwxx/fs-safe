@@ -3,13 +3,64 @@ import { once } from "node:events";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { Readable } from "node:stream";
+import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 
 type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding }
   | { kind: "stream"; stream: Readable };
+
+function byteLength(input: string | Buffer, encoding: BufferEncoding | undefined): number {
+  return typeof input === "string"
+    ? Buffer.byteLength(input, encoding ?? "utf8")
+    : input.byteLength;
+}
+
+function assertWithinMaxBytes(bytes: number, maxBytes: number | undefined): void {
+  if (maxBytes !== undefined && bytes > maxBytes) {
+    throw new FsSafeError(
+      "too-large",
+      `file exceeds limit of ${maxBytes} bytes (got at least ${bytes})`,
+    );
+  }
+}
+
+function createMaxBytesTransform(maxBytes: number | undefined): Transform | undefined {
+  if (maxBytes === undefined) {
+    return undefined;
+  }
+  let bytes = 0;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.byteLength;
+      if (bytes > maxBytes) {
+        callback(
+          new FsSafeError(
+            "too-large",
+            `file exceeds limit of ${maxBytes} bytes (got at least ${bytes})`,
+          ),
+        );
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+}
+
+async function pipelineWithMaxBytes(
+  stream: Readable,
+  destination: NodeJS.WritableStream,
+  maxBytes: number | undefined,
+): Promise<void> {
+  const limiter = createMaxBytesTransform(maxBytes);
+  if (limiter) {
+    await pipeline(stream, limiter, destination);
+    return;
+  }
+  await pipeline(stream, destination);
+}
 
 const LOCAL_PINNED_WRITE_PYTHON = [
   "import errno",
@@ -24,6 +75,7 @@ const LOCAL_PINNED_WRITE_PYTHON = [
   'mkdir_enabled = sys.argv[4] == "1"',
   "file_mode = int(sys.argv[5], 8)",
   'overwrite_enabled = sys.argv[6] == "1"',
+  "max_bytes = int(sys.argv[7])",
   "",
   "DIR_FLAGS = os.O_RDONLY",
   "if hasattr(os, 'O_DIRECTORY'):",
@@ -76,11 +128,21 @@ const LOCAL_PINNED_WRITE_PYTHON = [
   "try:",
   "    parent_fd = walk_parent(root_fd, relative_parent, mkdir_enabled)",
   "    temp_name, temp_fd = create_temp_file(parent_fd, basename, file_mode)",
+  "    written_bytes = 0",
   "    while True:",
   "        chunk = sys.stdin.buffer.read(65536)",
   "        if not chunk:",
   "            break",
-  "        os.write(temp_fd, chunk)",
+  "        next_size = written_bytes + len(chunk)",
+  "        if max_bytes >= 0 and next_size > max_bytes:",
+  "            raise RuntimeError(f'fs-safe-too-large:{max_bytes}:{next_size}')",
+  "        view = memoryview(chunk)",
+  "        while view:",
+  "            written = os.write(temp_fd, view)",
+  "            if written <= 0:",
+  "                raise OSError(errno.EIO, 'short write')",
+  "            view = view[written:]",
+  "        written_bytes = next_size",
   "    os.fsync(temp_fd)",
   "    os.close(temp_fd)",
   "    temp_fd = None",
@@ -164,6 +226,7 @@ export async function runPinnedWriteHelper(params: {
   mkdir: boolean;
   mode: number;
   overwrite?: boolean;
+  maxBytes?: number;
   input: PinnedWriteInput;
 }): Promise<FileIdentityStat> {
   const child = spawn(
@@ -177,6 +240,7 @@ export async function runPinnedWriteHelper(params: {
       params.mkdir ? "1" : "0",
       (params.mode || 0o600).toString(8),
       params.overwrite === false ? "0" : "1",
+      params.maxBytes === undefined ? "-1" : String(params.maxBytes),
     ],
     {
       stdio: ["pipe", "pipe", "pipe"],
@@ -218,6 +282,14 @@ export async function runPinnedWriteHelper(params: {
 
     const [code, signal] = await exitPromise;
     if (code !== 0) {
+      const tooLarge = stderr.match(/fs-safe-too-large:(\d+):(\d+)/);
+      if (tooLarge) {
+        const [, limit, got] = tooLarge;
+        throw new FsSafeError(
+          "too-large",
+          `file exceeds limit of ${limit} bytes (got at least ${got})`,
+        );
+      }
       throw new Error(
         stderr.trim() ||
           `Pinned write helper failed with code ${code ?? "null"} (${signal ?? "?"})`,
@@ -238,6 +310,7 @@ async function runPinnedWriteFallback(params: {
   mkdir: boolean;
   mode: number;
   overwrite?: boolean;
+  maxBytes?: number;
   input: PinnedWriteInput;
 }): Promise<FileIdentityStat> {
   const parentPath = params.relativeParentPath
@@ -256,13 +329,21 @@ async function runPinnedWriteFallback(params: {
     let created = true;
     try {
       if (params.input.kind === "buffer") {
+        assertWithinMaxBytes(
+          byteLength(params.input.data, params.input.encoding),
+          params.maxBytes,
+        );
         if (typeof params.input.data === "string") {
           await handle.writeFile(params.input.data, params.input.encoding ?? "utf8");
         } else {
           await handle.writeFile(params.input.data);
         }
       } else {
-        await pipeline(params.input.stream, handle.createWriteStream());
+        await pipelineWithMaxBytes(
+          params.input.stream,
+          handle.createWriteStream(),
+          params.maxBytes,
+        );
       }
       const stat = await handle.stat();
       created = false;
@@ -276,24 +357,37 @@ async function runPinnedWriteFallback(params: {
   }
 
   const tempPath = path.join(parentPath, `.${params.basename}.fallback.tmp`);
-  if (params.input.kind === "buffer") {
-    if (typeof params.input.data === "string") {
-      await fs.writeFile(tempPath, params.input.data, {
-        encoding: params.input.encoding ?? "utf8",
-        mode: params.mode,
-      });
+  try {
+    if (params.input.kind === "buffer") {
+      assertWithinMaxBytes(
+        byteLength(params.input.data, params.input.encoding),
+        params.maxBytes,
+      );
+      if (typeof params.input.data === "string") {
+        await fs.writeFile(tempPath, params.input.data, {
+          encoding: params.input.encoding ?? "utf8",
+          mode: params.mode,
+        });
+      } else {
+        await fs.writeFile(tempPath, params.input.data, { mode: params.mode });
+      }
     } else {
-      await fs.writeFile(tempPath, params.input.data, { mode: params.mode });
+      const handle = await fs.open(tempPath, "w", params.mode);
+      try {
+        await pipelineWithMaxBytes(
+          params.input.stream,
+          handle.createWriteStream(),
+          params.maxBytes,
+        );
+      } finally {
+        await handle.close().catch(() => {});
+      }
     }
-  } else {
-    const handle = await fs.open(tempPath, "w", params.mode);
-    try {
-      await pipeline(params.input.stream, handle.createWriteStream());
-    } finally {
-      await handle.close().catch(() => {});
-    }
+    await fs.rename(tempPath, targetPath);
+  } catch (error) {
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
   }
-  await fs.rename(tempPath, targetPath);
   const stat = await fs.stat(targetPath);
   return { dev: stat.dev, ino: stat.ino };
 }
