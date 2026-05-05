@@ -1,11 +1,14 @@
 import crypto from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
+import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 
-export type TempFileTarget = {
+export type TempFile = {
   dir: string;
   path: string;
+  file(fileName?: string): string;
   cleanup: () => Promise<void>;
+  [Symbol.asyncDispose](): Promise<void>;
 };
 
 function sanitizePrefix(prefix: string): string {
@@ -30,12 +33,13 @@ export function sanitizeTempFileName(fileName: string): string {
 }
 
 export function buildRandomTempFilePath(params: {
-  rootDir: string;
+  rootDir?: string;
   prefix: string;
   extension?: string;
   now?: number;
   uuid?: string;
 }): string {
+  const rootDir = resolveTempRoot(params.rootDir);
   const prefix = sanitizePrefix(params.prefix);
   const extension = sanitizeExtension(params.extension);
   const nowCandidate = params.now;
@@ -44,7 +48,7 @@ export function buildRandomTempFilePath(params: {
       ? Math.trunc(nowCandidate)
       : Date.now();
   const uuid = params.uuid?.trim() || crypto.randomUUID();
-  return path.join(params.rootDir, `${prefix}-${now}-${uuid}${extension}`);
+  return path.join(rootDir, `${prefix}-${now}-${uuid}${extension}`);
 }
 
 function isNodeErrorWithCode(err: unknown, code: string): boolean {
@@ -66,33 +70,43 @@ async function cleanupTempDir(dir: string, onCleanupError?: (error: unknown) => 
   }
 }
 
-export async function createTempFileTarget(params: {
-  rootDir: string;
+function resolveTempRoot(rootDir?: string): string {
+  return rootDir ?? resolveSecureTempRoot({ fallbackPrefix: "fs-safe" });
+}
+
+export async function tempFile(params: {
+  rootDir?: string;
   prefix: string;
   fileName?: string;
   onCleanupError?: (error: unknown) => void;
-}): Promise<TempFileTarget> {
+}): Promise<TempFile> {
+  const rootDir = resolveTempRoot(params.rootDir);
   const prefix = `${sanitizePrefix(params.prefix)}-`;
-  const dir = await mkdtemp(path.join(params.rootDir, prefix));
+  const dir = await mkdtemp(path.join(rootDir, prefix));
+  const file = (fileName?: string) =>
+    path.join(dir, sanitizeTempFileName(fileName ?? params.fileName ?? "download.bin"));
+  const cleanup = async () => {
+    await cleanupTempDir(dir, params.onCleanupError);
+  };
   return {
     dir,
-    path: path.join(dir, sanitizeTempFileName(params.fileName ?? "download.bin")),
-    cleanup: async () => {
-      await cleanupTempDir(dir, params.onCleanupError);
-    },
+    path: file(),
+    file,
+    cleanup,
+    [Symbol.asyncDispose]: cleanup,
   };
 }
 
-export async function withTempFileTarget<T>(
+export async function withTempFile<T>(
   params: {
-    rootDir: string;
+    rootDir?: string;
     prefix: string;
     fileName?: string;
     onCleanupError?: (error: unknown) => void;
   },
   fn: (tmpPath: string) => Promise<T>,
 ): Promise<T> {
-  const target = await createTempFileTarget(params);
+  const target = await tempFile(params);
   try {
     return await fn(target.path);
   } finally {

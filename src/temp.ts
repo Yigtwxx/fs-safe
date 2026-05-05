@@ -1,20 +1,18 @@
 export {
-  createPrivateTempWorkspace,
-  createPrivateTempWorkspaceSync,
   tempWorkspace,
-  withPrivateTempWorkspace,
-  withPrivateTempWorkspaceSync,
-  type PrivateTempWorkspace,
-  type PrivateTempWorkspaceOptions,
-  type PrivateTempWorkspaceSync,
   type TempWorkspace,
+  type TempWorkspaceOptions,
+  tempWorkspaceSync,
+  type TempWorkspaceSync,
+  withTempWorkspace,
+  withTempWorkspaceSync,
 } from "./private-temp-workspace.js";
 export {
   buildRandomTempFilePath,
-  createTempFileTarget,
   sanitizeTempFileName,
-  withTempFileTarget,
-  type TempFileTarget,
+  type TempFile,
+  tempFile,
+  withTempFile,
 } from "./temp-target.js";
 export {
   writeSiblingTempFile,

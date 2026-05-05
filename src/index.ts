@@ -93,15 +93,29 @@ export { sanitizeUntrustedFileName } from "./filename.js";
 export {
   JsonFileReadError,
   createAsyncLock,
-  loadJsonFile,
-  readDurableJsonFile,
-  readJsonFile,
-  readJsonFileSync,
-  readJsonFileStrict,
-  saveJsonFile,
-  writeJsonAtomic,
-  writeTextAtomic,
+  readJson,
+  readJsonIfExists,
+  readJsonSync,
+  tryReadJson,
+  tryReadJsonSync,
+  writeJson,
+  writeJsonSync,
+  writeText,
 } from "./json.js";
+export {
+  jsonStore,
+  type JsonStore,
+  type JsonStoreLockOptions,
+  type JsonStoreOptions,
+} from "./json-store.js";
+export {
+  copyIntoRoot,
+  fileStore,
+  type FileStore,
+  type FileStoreOptions,
+  type FileStorePruneOptions,
+  type FileStoreWriteOptions,
+} from "./file-store.js";
 export {
   privateFileStore,
   readPrivateJson,
@@ -144,10 +158,12 @@ export {
 } from "./absolute-path.js";
 export {
   createSidecarLockManager,
+  withSidecarLock,
   type SidecarLockAcquireOptions,
   type SidecarLockHandle,
   type SidecarLockHeldEntry,
   type SidecarLockRetryOptions,
+  type WithSidecarLockOptions,
 } from "./sidecar-lock.js";
 export { pathExists, pathExistsSync } from "./fs.js";
 export { withTimeout } from "./timing.js";

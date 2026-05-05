@@ -10,9 +10,9 @@ import {
 } from "../src/archive.js";
 import {
   buildRandomTempFilePath,
-  createTempFileTarget,
   sanitizeTempFileName,
-  withTempFileTarget,
+  tempFile,
+  withTempFile,
 } from "../src/temp-target.js";
 
 const tempDirs: string[] = [];
@@ -86,7 +86,7 @@ describe("temp file targets", () => {
     ).toBe(path.join(root, "demo-123-abc.txt"));
 
     let targetDir = "";
-    await withTempFileTarget(
+    await withTempFile(
       { rootDir: root, prefix: "download", fileName: "../x.txt" },
       async (filePath) => {
         targetDir = path.dirname(filePath);
@@ -99,9 +99,21 @@ describe("temp file targets", () => {
 
   it("creates explicit temp file targets", async () => {
     const root = await tempRoot("fs-safe-temp-target-");
-    const target = await createTempFileTarget({ rootDir: root, prefix: "download" });
+    const target = await tempFile({ rootDir: root, prefix: "download" });
+    expect(target.file("other.txt")).toBe(path.join(target.dir, "other.txt"));
     await fs.writeFile(target.path, "ok", "utf8");
     await target.cleanup();
     await expect(fs.stat(target.dir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("disposes explicit temp file targets", async () => {
+    const root = await tempRoot("fs-safe-temp-target-");
+    let dir = "";
+    {
+      await using target = await tempFile({ rootDir: root, prefix: "download" });
+      dir = target.dir;
+      await fs.writeFile(target.path, "ok", "utf8");
+    }
+    await expect(fs.stat(dir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

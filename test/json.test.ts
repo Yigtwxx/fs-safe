@@ -5,10 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   JsonFileReadError,
   createAsyncLock,
-  readDurableJsonFile,
-  readJsonFile,
-  readJsonFileStrict,
-  writeJsonAtomic,
+  readJson,
+  readJsonIfExists,
+  tryReadJson,
+  writeJson,
 } from "../src/json.js";
 
 const tempDirs: string[] = [];
@@ -28,11 +28,11 @@ describe("json file helpers", () => {
     const root = await tempRoot("fs-safe-json-");
     const filePath = path.join(root, "nested", "state.json");
 
-    await writeJsonAtomic(filePath, { ok: true }, { mode: 0o600, trailingNewline: true });
+    await writeJson(filePath, { ok: true }, { mode: 0o600, trailingNewline: true });
 
     await expect(fs.readFile(filePath, "utf8")).resolves.toBe("{\n  \"ok\": true\n}\n");
-    await expect(readJsonFile(filePath)).resolves.toEqual({ ok: true });
-    await expect(readJsonFileStrict(filePath)).resolves.toEqual({ ok: true });
+    await expect(tryReadJson(filePath)).resolves.toEqual({ ok: true });
+    await expect(readJson(filePath)).resolves.toEqual({ ok: true });
   });
 
   it("separates nullable and durable read failure semantics", async () => {
@@ -41,10 +41,10 @@ describe("json file helpers", () => {
     const invalid = path.join(root, "invalid.json");
     await fs.writeFile(invalid, "{", "utf8");
 
-    await expect(readJsonFile(missing)).resolves.toBeNull();
-    await expect(readJsonFile(invalid)).resolves.toBeNull();
-    await expect(readDurableJsonFile(missing)).resolves.toBeNull();
-    await expect(readDurableJsonFile(invalid)).rejects.toMatchObject({
+    await expect(tryReadJson(missing)).resolves.toBeNull();
+    await expect(tryReadJson(invalid)).resolves.toBeNull();
+    await expect(readJsonIfExists(missing)).resolves.toBeNull();
+    await expect(readJsonIfExists(invalid)).rejects.toMatchObject({
       name: "JsonFileReadError",
       reason: "parse",
     } satisfies Partial<JsonFileReadError>);
@@ -70,11 +70,11 @@ describe("json file helpers", () => {
     });
 
     try {
-      await expect(readJsonFileStrict(filePath)).rejects.toMatchObject({
+      await expect(readJson(filePath)).rejects.toMatchObject({
         name: "JsonFileReadError",
         reason: "read",
       } satisfies Partial<JsonFileReadError>);
-      await expect(readJsonFile(filePath)).resolves.toBeNull();
+      await expect(tryReadJson(filePath)).resolves.toBeNull();
     } finally {
       lstatSpy.mockRestore();
     }

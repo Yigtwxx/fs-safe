@@ -2,35 +2,43 @@ import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { copyIntoRoot } from "./file-store.js";
 
-export type PrivateTempWorkspaceOptions = {
+export type TempWorkspaceOptions = {
   rootDir: string;
   prefix: string;
   dirMode?: number;
-  fileMode?: number;
+  mode?: number;
 };
 
-export type PrivateTempWorkspace = {
+export type TempWorkspace = {
   dir: string;
   file(fileName: string): string;
   path(fileName: string): string;
   writePrivate(fileName: string, data: string | Uint8Array): Promise<string>;
+  writeText(fileName: string, data: string): Promise<string>;
+  writeJson(
+    fileName: string,
+    data: unknown,
+    options?: { trailingNewline?: boolean },
+  ): Promise<string>;
+  copyIn(fileName: string, sourcePath: string): Promise<string>;
   read(fileName: string): Promise<Buffer>;
   cleanup(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 };
 
-export type PrivateTempWorkspaceSync = {
+export type TempWorkspaceSync = {
   dir: string;
   file(fileName: string): string;
   path(fileName: string): string;
   writePrivate(fileName: string, data: string | Uint8Array): string;
+  writeText(fileName: string, data: string): string;
+  writeJson(fileName: string, data: unknown, options?: { trailingNewline?: boolean }): string;
   read(fileName: string): Buffer;
   cleanup(): void;
   [Symbol.dispose](): void;
 };
-
-export type TempWorkspace = PrivateTempWorkspace;
 
 function sanitizeTempPrefix(prefix: string): string {
   const sanitized = prefix.trim().replace(/[^a-zA-Z0-9._-]/g, "-");
@@ -78,11 +86,11 @@ function ensurePrivateDirectorySync(dir: string, mode: number): void {
   }
 }
 
-export async function createPrivateTempWorkspace(
-  options: PrivateTempWorkspaceOptions,
-): Promise<PrivateTempWorkspace> {
+async function createTempWorkspace(
+  options: TempWorkspaceOptions,
+): Promise<TempWorkspace> {
   const dirMode = options.dirMode ?? 0o700;
-  const fileMode = options.fileMode ?? 0o600;
+  const mode = options.mode ?? 0o600;
   const requestedRoot = path.resolve(options.rootDir);
   const root = await fs.realpath(requestedRoot).catch(() => requestedRoot);
   await ensurePrivateDirectory(root, dirMode);
@@ -99,8 +107,32 @@ export async function createPrivateTempWorkspace(
     path: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     writePrivate: async (fileName, data) => {
       const filePath = resolveWorkspaceLeaf(dir, fileName);
-      await fs.writeFile(filePath, data, { mode: fileMode, flag: "wx" });
-      await fs.chmod(filePath, fileMode).catch(() => undefined);
+      await fs.writeFile(filePath, data, { mode, flag: "wx" });
+      await fs.chmod(filePath, mode).catch(() => undefined);
+      return filePath;
+    },
+    writeText: async (fileName, data) => {
+      const filePath = resolveWorkspaceLeaf(dir, fileName);
+      await fs.writeFile(filePath, data, { encoding: "utf8", mode, flag: "wx" });
+      await fs.chmod(filePath, mode).catch(() => undefined);
+      return filePath;
+    },
+    writeJson: async (fileName, data, writeOptions) => {
+      const json = JSON.stringify(data, null, 2);
+      const payload = writeOptions?.trailingNewline === false ? json : `${json}\n`;
+      const filePath = resolveWorkspaceLeaf(dir, fileName);
+      await fs.writeFile(filePath, payload, { encoding: "utf8", mode, flag: "wx" });
+      await fs.chmod(filePath, mode).catch(() => undefined);
+      return filePath;
+    },
+    copyIn: async (fileName, sourcePath) => {
+      const filePath = resolveWorkspaceLeaf(dir, fileName);
+      await copyIntoRoot({
+        rootDir: dir,
+        relativePath: fileName,
+        sourcePath,
+        mode,
+      });
       return filePath;
     },
     read: async (fileName) => await fs.readFile(resolveWorkspaceLeaf(dir, fileName)),
@@ -114,16 +146,16 @@ export async function createPrivateTempWorkspace(
 }
 
 export async function tempWorkspace(
-  options: PrivateTempWorkspaceOptions,
+  options: TempWorkspaceOptions,
 ): Promise<TempWorkspace> {
-  return await createPrivateTempWorkspace(options);
+  return await createTempWorkspace(options);
 }
 
-export async function withPrivateTempWorkspace<T>(
-  options: PrivateTempWorkspaceOptions,
-  run: (workspace: PrivateTempWorkspace) => Promise<T>,
+export async function withTempWorkspace<T>(
+  options: TempWorkspaceOptions,
+  run: (workspace: TempWorkspace) => Promise<T>,
 ): Promise<T> {
-  const workspace = await createPrivateTempWorkspace({
+  const workspace = await createTempWorkspace({
     ...options,
     prefix: `${sanitizeTempPrefix(options.prefix)}${randomUUID()}-`,
   });
@@ -134,11 +166,11 @@ export async function withPrivateTempWorkspace<T>(
   }
 }
 
-export function createPrivateTempWorkspaceSync(
-  options: PrivateTempWorkspaceOptions,
-): PrivateTempWorkspaceSync {
+export function tempWorkspaceSync(
+  options: TempWorkspaceOptions,
+): TempWorkspaceSync {
   const dirMode = options.dirMode ?? 0o700;
-  const fileMode = options.fileMode ?? 0o600;
+  const mode = options.mode ?? 0o600;
   const requestedRoot = path.resolve(options.rootDir);
   let root = requestedRoot;
   try {
@@ -164,9 +196,31 @@ export function createPrivateTempWorkspaceSync(
     path: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     writePrivate: (fileName, data) => {
       const filePath = resolveWorkspaceLeaf(dir, fileName);
-      fsSync.writeFileSync(filePath, data, { mode: fileMode, flag: "wx" });
+      fsSync.writeFileSync(filePath, data, { mode, flag: "wx" });
       try {
-        fsSync.chmodSync(filePath, fileMode);
+        fsSync.chmodSync(filePath, mode);
+      } catch {
+        // Best-effort on platforms that do not enforce POSIX modes.
+      }
+      return filePath;
+    },
+    writeText: (fileName, data) => {
+      const filePath = resolveWorkspaceLeaf(dir, fileName);
+      fsSync.writeFileSync(filePath, data, { encoding: "utf8", mode, flag: "wx" });
+      try {
+        fsSync.chmodSync(filePath, mode);
+      } catch {
+        // Best-effort on platforms that do not enforce POSIX modes.
+      }
+      return filePath;
+    },
+    writeJson: (fileName, data, writeOptions) => {
+      const json = JSON.stringify(data, null, 2);
+      const payload = writeOptions?.trailingNewline === false ? json : `${json}\n`;
+      const filePath = resolveWorkspaceLeaf(dir, fileName);
+      fsSync.writeFileSync(filePath, payload, { encoding: "utf8", mode, flag: "wx" });
+      try {
+        fsSync.chmodSync(filePath, mode);
       } catch {
         // Best-effort on platforms that do not enforce POSIX modes.
       }
@@ -190,11 +244,11 @@ export function createPrivateTempWorkspaceSync(
   };
 }
 
-export function withPrivateTempWorkspaceSync<T>(
-  options: PrivateTempWorkspaceOptions,
-  run: (workspace: PrivateTempWorkspaceSync) => T,
+export function withTempWorkspaceSync<T>(
+  options: TempWorkspaceOptions,
+  run: (workspace: TempWorkspaceSync) => T,
 ): T {
-  const workspace = createPrivateTempWorkspaceSync({
+  const workspace = tempWorkspaceSync({
     ...options,
     prefix: `${sanitizeTempPrefix(options.prefix)}${randomUUID()}-`,
   });

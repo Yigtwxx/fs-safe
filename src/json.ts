@@ -101,16 +101,16 @@ function writeTempJsonFile(pathname: string, payload: string) {
   }
 }
 
-export function loadJsonFile<T = unknown>(pathname: string): T | undefined {
+export function tryReadJsonSync<T = unknown>(pathname: string): T | null {
   try {
     const raw = readRegularFileSync({ filePath: pathname }).buffer.toString("utf8");
     return JSON.parse(raw) as T;
   } catch {
-    return undefined;
+    return null;
   }
 }
 
-export function saveJsonFile(pathname: string, data: unknown) {
+export function writeJsonSync(pathname: string, data: unknown) {
   const { targetPath, followsSymlink } = resolveJsonWriteTarget(pathname);
   const tmpPath = `${targetPath}.${randomUUID()}.tmp`;
   const payload = `${JSON.stringify(data, null, 2)}\n`;
@@ -172,7 +172,7 @@ async function replaceFileWithWindowsFallback(tempPath: string, filePath: string
   await fs.rm(tempPath, { force: true }).catch(() => undefined);
 }
 
-export async function readJsonFile<T>(filePath: string): Promise<T | null> {
+export async function tryReadJson<T>(filePath: string): Promise<T | null> {
   try {
     const raw = (await readRegularFile({ filePath })).buffer.toString("utf8");
     return JSON.parse(raw) as T;
@@ -181,7 +181,7 @@ export async function readJsonFile<T>(filePath: string): Promise<T | null> {
   }
 }
 
-export async function readJsonFileStrict<T>(filePath: string): Promise<T> {
+export async function readJson<T>(filePath: string): Promise<T> {
   let raw: string;
   try {
     raw = (await readRegularFile({ filePath })).buffer.toString("utf8");
@@ -195,7 +195,7 @@ export async function readJsonFileStrict<T>(filePath: string): Promise<T> {
   }
 }
 
-export async function readDurableJsonFile<T>(filePath: string): Promise<T | null> {
+export async function readJsonIfExists<T>(filePath: string): Promise<T | null> {
   let raw: string;
   try {
     raw = (await readRegularFile({ filePath })).buffer.toString("utf8");
@@ -212,7 +212,7 @@ export async function readDurableJsonFile<T>(filePath: string): Promise<T | null
   }
 }
 
-export function readJsonFileSync(filePath: string): unknown {
+export function readJsonSync(filePath: string): unknown {
   try {
     const raw = readRegularFileSync({ filePath }).buffer.toString("utf8");
     return JSON.parse(raw) as unknown;
@@ -221,20 +221,20 @@ export function readJsonFileSync(filePath: string): unknown {
   }
 }
 
-export async function writeJsonAtomic(
+export async function writeJson(
   filePath: string,
   value: unknown,
   options?: { mode?: number; trailingNewline?: boolean; ensureDirMode?: number },
 ) {
   const text = JSON.stringify(value, null, 2);
-  await writeTextAtomic(filePath, text, {
+  await writeText(filePath, text, {
     mode: options?.mode,
     ensureDirMode: options?.ensureDirMode,
     appendTrailingNewline: options?.trailingNewline,
   });
 }
 
-export async function writeTextAtomic(
+export async function writeText(
   filePath: string,
   content: string,
   options?: { mode?: number; ensureDirMode?: number; appendTrailingNewline?: boolean },

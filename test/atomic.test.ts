@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  replaceDirectoryStaged,
+  replaceDirectoryAtomic,
   replaceFileAtomic,
   replaceFileAtomicSync,
 } from "../src/atomic.js";
@@ -92,7 +92,7 @@ describe("atomic helpers", () => {
     await fs.mkdir(stagedDir);
     await fs.writeFile(path.join(stagedDir, "new.txt"), "new", "utf8");
 
-    await replaceDirectoryStaged({ stagedDir, targetDir });
+    await replaceDirectoryAtomic({ stagedDir, targetDir });
 
     await expect(fs.readFile(path.join(targetDir, "new.txt"), "utf8")).resolves.toBe("new");
     await expect(fs.stat(path.join(targetDir, "old.txt"))).rejects.toMatchObject({ code: "ENOENT" });

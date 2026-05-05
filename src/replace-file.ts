@@ -38,7 +38,7 @@ type ReplaceFileAtomicBaseOptions = {
   filePath: string;
   content: string | Uint8Array;
   dirMode?: number;
-  fileMode?: number;
+  mode?: number;
   preserveExistingMode?: boolean;
   tempPrefix?: string;
   renameMaxRetries?: number;
@@ -155,7 +155,7 @@ function buildReplaceTempPath(filePath: string, tempPrefix?: string): string {
 }
 
 async function resolveFileMode(options: ReplaceFileAtomicOptions): Promise<number> {
-  const defaultMode = options.fileMode ?? 0o600;
+  const defaultMode = options.mode ?? 0o600;
   if (!options.preserveExistingMode) {
     return defaultMode;
   }
@@ -169,7 +169,7 @@ async function resolveFileMode(options: ReplaceFileAtomicOptions): Promise<numbe
 }
 
 function resolveFileModeSync(options: ReplaceFileAtomicSyncOptions): number {
-  const defaultMode = options.fileMode ?? 0o600;
+  const defaultMode = options.mode ?? 0o600;
   if (!options.preserveExistingMode) {
     return defaultMode;
   }

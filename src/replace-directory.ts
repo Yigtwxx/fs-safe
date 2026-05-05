@@ -1,14 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-export type ReplaceDirectoryStagedOptions = {
+export type ReplaceDirectoryAtomicOptions = {
   stagedDir: string;
   targetDir: string;
   backupPrefix?: string;
 };
 
-export async function replaceDirectoryStaged(
-  options: ReplaceDirectoryStagedOptions,
+export async function replaceDirectoryAtomic(
+  options: ReplaceDirectoryAtomicOptions,
 ): Promise<void> {
   const targetDir = path.resolve(options.targetDir);
   const stagedDir = path.resolve(options.stagedDir);

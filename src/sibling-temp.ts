@@ -10,7 +10,7 @@ export type WriteSiblingTempFileOptions<T> = {
   resolveFinalPath: (result: T) => string;
   tempPrefix?: string;
   dirMode?: number;
-  fileMode?: number;
+  mode?: number;
   syncTempFile?: boolean;
   syncParentDir?: boolean;
 };
@@ -68,8 +68,8 @@ export async function writeSiblingTempFile<T>(
   try {
     tempExists = true;
     const result = await options.writeTemp(tempPath);
-    if (options.fileMode !== undefined) {
-      await fs.chmod(tempPath, options.fileMode).catch(() => undefined);
+    if (options.mode !== undefined) {
+      await fs.chmod(tempPath, options.mode).catch(() => undefined);
     }
     if (options.syncTempFile) {
       await syncFileBestEffort(tempPath);
@@ -78,8 +78,8 @@ export async function writeSiblingTempFile<T>(
     assertFinalPathIsSibling(dir, filePath);
     await fs.rename(tempPath, filePath);
     tempExists = false;
-    if (options.fileMode !== undefined) {
-      await fs.chmod(filePath, options.fileMode).catch(() => undefined);
+    if (options.mode !== undefined) {
+      await fs.chmod(filePath, options.mode).catch(() => undefined);
     }
     if (options.syncParentDir) {
       await syncDirectoryBestEffort(dir);

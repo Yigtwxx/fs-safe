@@ -56,6 +56,7 @@ export type RootDefaults = {
   hardlinks?: HardlinkPolicy;
   maxBytes?: number;
   mkdir?: boolean;
+  mode?: number;
   nonBlockingRead?: boolean;
   symlinks?: SymlinkPolicy;
 };
@@ -67,19 +68,14 @@ export type RootReadOptions = Pick<
 
 export type RootOpenOptions = Omit<RootReadOptions, "maxBytes">;
 
-export type RootFileModeOptions = {
-  fileMode?: number;
-};
+export type RootWriteOptions = Pick<RootDefaults, "encoding" | "mkdir" | "mode">;
 
-export type RootWriteOptions = Pick<RootDefaults, "encoding" | "mkdir"> & RootFileModeOptions;
-
-export type RootOpenWritableOptions = Pick<RootDefaults, "mkdir"> & {
-  mode?: number;
+export type RootOpenWritableOptions = Pick<RootDefaults, "mkdir" | "mode"> & {
   truncateExisting?: boolean;
   append?: boolean;
 };
 
-export type RootCopyOptions = Pick<RootDefaults, "maxBytes" | "mkdir"> & {
+export type RootCopyOptions = Pick<RootDefaults, "maxBytes" | "mkdir" | "mode"> & {
   sourceHardlinks?: HardlinkPolicy;
 };
 
@@ -323,7 +319,7 @@ export interface Root {
     relativePath: string,
     options?: RootReadOptions & { encoding?: BufferEncoding },
   ): Promise<T>;
-  readPath(filePath: string, options?: RootReadOptions): Promise<ReadResult>;
+  readAbsolute(filePath: string, options?: RootReadOptions): Promise<ReadResult>;
   reader(options?: RootReadOptions): (filePath: string) => Promise<Buffer>;
   openWritable(
     relativePath: string,
@@ -432,7 +428,7 @@ class RootHandle implements Root {
     return JSON.parse(await this.readText(relativePath, options)) as T;
   }
 
-  async readPath(
+  async readAbsolute(
     filePath: string,
     options: RootReadOptions = {},
   ): Promise<ReadResult> {
@@ -445,7 +441,7 @@ class RootHandle implements Root {
 
   reader(options: RootReadOptions = {}) {
     return async (filePath: string): Promise<Buffer> => {
-      return (await this.readPath(filePath, options)).buffer;
+      return (await this.readAbsolute(filePath, options)).buffer;
     };
   }
 
@@ -456,6 +452,7 @@ class RootHandle implements Root {
     return await openWritableFileInRoot(this.context, {
       relativePath,
       mkdir: this.defaults.mkdir,
+      mode: this.defaults.mode,
       ...options,
     });
   }
@@ -470,6 +467,7 @@ class RootHandle implements Root {
       data,
       encoding: this.defaults.encoding,
       mkdir: this.defaults.mkdir,
+      mode: this.defaults.mode,
       ...options,
     });
   }
@@ -496,6 +494,7 @@ class RootHandle implements Root {
       data,
       encoding: this.defaults.encoding,
       mkdir: this.defaults.mkdir,
+      mode: this.defaults.mode,
       ...options,
     });
   }
@@ -510,6 +509,7 @@ class RootHandle implements Root {
       data,
       encoding: this.defaults.encoding,
       mkdir: this.defaults.mkdir,
+      mode: this.defaults.mode,
       ...options,
       overwrite: false,
     });
@@ -545,6 +545,7 @@ class RootHandle implements Root {
       relativePath,
       maxBytes: this.defaults.maxBytes,
       mkdir: this.defaults.mkdir,
+      mode: this.defaults.mode,
       ...options,
     });
   }
@@ -928,7 +929,7 @@ async function openWritableFileInRoot(
     }
   }
 
-  const fileMode = params.mode ?? 0o600;
+  const mode = params.mode ?? 0o600;
 
   let handle: FileHandle;
   let createdForWrite = false;
@@ -936,12 +937,12 @@ async function openWritableFileInRoot(
   const createFlags = params.append ? OPEN_APPEND_CREATE_FLAGS : OPEN_WRITE_CREATE_FLAGS;
   try {
     try {
-      handle = await fs.open(ioPath, existingFlags, fileMode);
+      handle = await fs.open(ioPath, existingFlags, mode);
     } catch (err) {
       if (!isNotFoundPathError(err)) {
         throw err;
       }
-      handle = await fs.open(ioPath, createFlags, fileMode);
+      handle = await fs.open(ioPath, createFlags, mode);
       createdForWrite = true;
     }
   } catch (err) {
@@ -1025,15 +1026,15 @@ async function appendFileInRoot(
     relativePath: string;
     data: string | Buffer;
     encoding?: BufferEncoding;
-    fileMode?: number;
     mkdir?: boolean;
+    mode?: number;
     prependNewlineIfNeeded?: boolean;
   },
 ): Promise<void> {
   const target = await openWritableFileInRoot(root, {
     relativePath: params.relativePath,
     mkdir: params.mkdir,
-    mode: params.fileMode,
+    mode: params.mode,
     truncateExisting: false,
     append: true,
   });
@@ -1120,8 +1121,8 @@ async function writeFileInRoot(
     relativePath: string;
     data: string | Buffer;
     encoding?: BufferEncoding;
-    fileMode?: number;
     mkdir?: boolean;
+    mode?: number;
     overwrite?: boolean;
   },
 ): Promise<void> {
@@ -1130,7 +1131,7 @@ async function writeFileInRoot(
     return;
   }
 
-  const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath);
+  const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath, params.mode);
 
   let identity;
   try {
@@ -1139,7 +1140,7 @@ async function writeFileInRoot(
       relativeParentPath: pinned.relativeParentPath,
       basename: pinned.basename,
       mkdir: params.mkdir !== false,
-      mode: params.fileMode ?? pinned.mode,
+      mode: params.mode ?? pinned.mode,
       overwrite: params.overwrite,
       input: {
         kind: "buffer",
@@ -1175,6 +1176,7 @@ async function copyFileInRoot(
     relativePath: string;
     maxBytes?: number;
     mkdir?: boolean;
+    mode?: number;
     sourceHardlinks?: HardlinkPolicy;
   },
 ): Promise<void> {
@@ -1195,7 +1197,8 @@ async function copyFileInRoot(
       return;
     }
 
-    const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath);
+    const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath, params.mode);
+    const sourceStream = createBoundedReadStream(source, params.maxBytes);
     const identity = await runPinnedWriteHelper({
       rootPath: pinned.rootReal,
       relativeParentPath: pinned.relativeParentPath,
@@ -1206,7 +1209,7 @@ async function copyFileInRoot(
       maxBytes: params.maxBytes,
       input: {
         kind: "stream",
-        stream: source.handle.createReadStream(),
+        stream: sourceStream,
       },
     }).catch((error) => {
       throw normalizePinnedWriteError(error);
@@ -1229,6 +1232,7 @@ async function copyFileInRoot(
 async function resolvePinnedWriteTargetInRoot(
   root: RootContext,
   relativePath: string,
+  requestedMode?: number,
 ): Promise<{
   rootReal: string;
   targetPath: string;
@@ -1258,7 +1262,7 @@ async function resolvePinnedWriteTargetInRoot(
   if (!basename || basename === "." || basename === "/") {
     throw new FsSafeError("invalid-path", "invalid target path");
   }
-  let mode = 0o600;
+  let mode = requestedMode ?? 0o600;
   try {
     const opened = await openFileInRoot(root, {
       relativePath,
@@ -1266,7 +1270,7 @@ async function resolvePinnedWriteTargetInRoot(
       nonBlockingRead: true,
     });
     try {
-      mode = opened.stat.mode & 0o777;
+      mode = requestedMode ?? (opened.stat.mode & 0o777);
       if (!isPathInside(rootWithSep, opened.realPath)) {
         throw new FsSafeError("outside-workspace", "file is outside workspace root");
       }
@@ -1414,8 +1418,8 @@ async function writeFileFallback(
     relativePath: string;
     data: string | Buffer;
     encoding?: BufferEncoding;
-    fileMode?: number;
     mkdir?: boolean;
+    mode?: number;
     overwrite?: boolean;
   },
 ): Promise<void> {
@@ -1427,11 +1431,11 @@ async function writeFileFallback(
   const target = await openWritableFileInRoot(root, {
     relativePath: params.relativePath,
     mkdir: params.mkdir,
-    mode: params.fileMode,
+    mode: params.mode,
     truncateExisting: false,
   });
   const destinationPath = target.realPath;
-  const targetMode = params.fileMode ?? (target.stat.mode & 0o777);
+  const targetMode = params.mode ?? (target.stat.mode & 0o777);
   await target.handle.close().catch(() => {});
   let tempPath: string | null = null;
   try {
@@ -1467,8 +1471,8 @@ async function writeMissingFileFallback(
     relativePath: string;
     data: string | Buffer;
     encoding?: BufferEncoding;
-    fileMode?: number;
     mkdir?: boolean;
+    mode?: number;
   },
 ): Promise<void> {
   const { rootReal, resolved } = await resolvePathInRoot(root, params.relativePath);
@@ -1488,7 +1492,7 @@ async function writeMissingFileFallback(
   let handle: FileHandle | null = null;
   let created = false;
   try {
-    handle = await fs.open(resolved, OPEN_WRITE_CREATE_FLAGS, params.fileMode ?? 0o600);
+    handle = await fs.open(resolved, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600);
     created = true;
     if (typeof params.data === "string") {
       await handle.writeFile(params.data, params.encoding ?? "utf8");
@@ -1526,6 +1530,7 @@ async function copyFileFallback(
     relativePath: string;
     maxBytes?: number;
     mkdir?: boolean;
+    mode?: number;
     sourceHardlinks?: HardlinkPolicy;
   },
   source: OpenResult,
@@ -1540,10 +1545,11 @@ async function copyFileFallback(
     target = await openWritableFileInRoot(root, {
       relativePath: params.relativePath,
       mkdir: params.mkdir,
+      mode: params.mode,
       truncateExisting: false,
     });
     const destinationPath = target.realPath;
-    const targetMode = target.stat.mode & 0o777;
+    const targetMode = params.mode ?? (target.stat.mode & 0o777);
     await target.handle.close().catch(() => {});
     targetClosedByUs = true;
 

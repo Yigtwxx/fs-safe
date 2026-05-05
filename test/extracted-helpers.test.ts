@@ -20,17 +20,17 @@ import {
   isPathInside,
   isWithinDir,
   loadSecretFileSync,
-  loadJsonFile,
+  tryReadJsonSync,
   readSecretFileSync,
-  readJsonFile,
+  tryReadJson,
   resolveSafeBaseDir,
   resolveSafeInstallDir,
   safeDirName,
   safeFileURLToPath,
   safePathSegmentHashed,
-  saveJsonFile,
+  writeJsonSync,
   writePrivateSecretFileAtomic,
-  writeJsonAtomic,
+  writeJson,
 } from "../src/index.js";
 
 const tempDirs: string[] = [];
@@ -105,11 +105,11 @@ describe("json helpers", () => {
     const syncPath = path.join(root, "sync", "state.json");
     const asyncPath = path.join(root, "async", "state.json");
 
-    saveJsonFile(syncPath, { ok: true });
-    expect(loadJsonFile(syncPath)).toEqual({ ok: true });
+    writeJsonSync(syncPath, { ok: true });
+    expect(tryReadJsonSync(syncPath)).toEqual({ ok: true });
 
-    await writeJsonAtomic(asyncPath, { ok: true }, { trailingNewline: true });
-    await expect(readJsonFile(asyncPath)).resolves.toEqual({ ok: true });
+    await writeJson(asyncPath, { ok: true }, { trailingNewline: true });
+    await expect(tryReadJson(asyncPath)).resolves.toEqual({ ok: true });
     await expect(fs.readFile(asyncPath, "utf8")).resolves.toBe("{\n  \"ok\": true\n}\n");
   });
 });

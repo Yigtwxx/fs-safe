@@ -45,6 +45,13 @@ export type SidecarLockHeldEntry = {
   forceRelease: () => Promise<boolean>;
 };
 
+export type WithSidecarLockOptions<TPayload extends Record<string, unknown>> = Omit<
+  SidecarLockAcquireOptions<TPayload>,
+  "targetPath"
+> & {
+  managerKey?: string;
+};
+
 type HeldLock = {
   count: number;
   handle: FileHandle;
@@ -319,4 +326,16 @@ export function createSidecarLockManager(key: string) {
   }
 
   return { acquire, withLock, drain, reset, heldEntries };
+}
+
+export async function withSidecarLock<T, TPayload extends Record<string, unknown>>(
+  targetPath: string,
+  options: WithSidecarLockOptions<TPayload>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const manager = createSidecarLockManager(
+    options.managerKey ?? `fs-safe.sidecar-lock:${targetPath}`,
+  );
+  const { managerKey: _managerKey, ...acquireOptions } = options;
+  return await manager.withLock({ ...acquireOptions, targetPath }, fn);
 }

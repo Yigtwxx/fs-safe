@@ -34,6 +34,14 @@
       "types": "./dist/json.d.ts",
       "default": "./dist/json.js"
     },
+    "./json-store": {
+      "types": "./dist/json-store.d.ts",
+      "default": "./dist/json-store.js"
+    },
+    "./file-store": {
+      "types": "./dist/file-store.d.ts",
+      "default": "./dist/file-store.js"
+    },
     "./fs": {
       "types": "./dist/fs.d.ts",
       "default": "./dist/fs.js"

@@ -20,11 +20,10 @@ import {
   statRegularFile,
 } from "../src/regular-file.js";
 import {
-  createPrivateTempWorkspace,
-  createPrivateTempWorkspaceSync,
   tempWorkspace,
-  withPrivateTempWorkspace,
-  withPrivateTempWorkspaceSync,
+  tempWorkspaceSync,
+  withTempWorkspace,
+  withTempWorkspaceSync,
 } from "../src/private-temp-workspace.js";
 import {
   assertNoSymlinkParents,
@@ -35,6 +34,8 @@ import { replaceFileAtomic, replaceFileAtomicSync } from "../src/replace-file.js
 import { movePathWithCopyFallback } from "../src/move-path.js";
 import { writeSiblingTempFile } from "../src/sibling-temp.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
+import { fileStore } from "../src/file-store.js";
+import { jsonStore } from "../src/json-store.js";
 
 let root: string;
 
@@ -49,7 +50,7 @@ afterEach(async () => {
 describe("private temp workspaces", () => {
   it("writes private files and removes the workspace", async () => {
     let workspaceDir = "";
-    const content = await withPrivateTempWorkspace({ rootDir: root, prefix: "work-" }, async (tmp) => {
+    const content = await withTempWorkspace({ rootDir: root, prefix: "work-" }, async (tmp) => {
       workspaceDir = tmp.dir;
       const filePath = await tmp.writePrivate("input.txt", "hello");
       expect(await fs.readFile(filePath, "utf8")).toBe("hello");
@@ -61,7 +62,7 @@ describe("private temp workspaces", () => {
   });
 
   it("rejects path-like file names", async () => {
-    const tmp = await createPrivateTempWorkspace({ rootDir: root, prefix: "work-" });
+    const tmp = await tempWorkspace({ rootDir: root, prefix: "work-" });
     try {
       await expect(tmp.writePrivate("../escape.txt", "nope")).rejects.toThrow(/Invalid/);
     } finally {
@@ -71,7 +72,7 @@ describe("private temp workspaces", () => {
 
   it("supports sync temp workspaces", async () => {
     let workspaceDir = "";
-    const result = withPrivateTempWorkspaceSync({ rootDir: root, prefix: "sync-" }, (tmp) => {
+    const result = withTempWorkspaceSync({ rootDir: root, prefix: "sync-" }, (tmp) => {
       workspaceDir = tmp.dir;
       const filePath = tmp.writePrivate("input.txt", "hello");
       expect(tmp.read("input.txt").toString("utf8")).toBe("hello");
@@ -80,7 +81,7 @@ describe("private temp workspaces", () => {
     expect(path.basename(result)).toBe("input.txt");
     await expect(fs.stat(workspaceDir)).rejects.toMatchObject({ code: "ENOENT" });
 
-    const tmp = createPrivateTempWorkspaceSync({ rootDir: root, prefix: "sync-" });
+    const tmp = tempWorkspaceSync({ rootDir: root, prefix: "sync-" });
     try {
       expect(tmp.writePrivate("again.txt", "ok")).toContain("again.txt");
     } finally {
@@ -99,6 +100,57 @@ describe("private temp workspaces", () => {
     }
 
     await expect(fs.stat(workspaceDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("writes JSON and copies files through temp workspace helpers", async () => {
+    await using tmp = await tempWorkspace({ rootDir: root, prefix: "helpers-" });
+    const source = path.join(root, "source.txt");
+    await fs.writeFile(source, "copied", "utf8");
+
+    expect(await fs.readFile(await tmp.writeText("text.txt", "hello"), "utf8")).toBe("hello");
+    expect(JSON.parse(await fs.readFile(await tmp.writeJson("state.json", { ok: true }), "utf8")))
+      .toEqual({ ok: true });
+    expect(await fs.readFile(await tmp.copyIn("copy.txt", source), "utf8")).toBe("copied");
+  });
+});
+
+describe("file store", () => {
+  it("writes, reads, copies, and prunes files under the store root", async () => {
+    const store = fileStore({ rootDir: root, maxBytes: 1024 });
+    await store.write("media/a.txt", "hello");
+    await expect(store.readBytes("media/a.txt")).resolves.toEqual(Buffer.from("hello"));
+
+    const source = path.join(root, "source.bin");
+    await fs.writeFile(source, "source", "utf8");
+    await store.copyIn("media/b.txt", source);
+    await expect(store.readBytes("media/b.txt")).resolves.toEqual(Buffer.from("source"));
+
+    await fs.utimes(store.path("media/a.txt"), new Date(0), new Date(0));
+    await store.pruneExpired({ ttlMs: 1, recursive: true, pruneEmptyDirs: true });
+    await expect(store.exists("media/a.txt")).resolves.toBe(false);
+  });
+
+  it("rejects escaped paths and size limit violations", async () => {
+    const store = fileStore({ rootDir: root, maxBytes: 3 });
+    await expect(store.write("../escape.txt", "nope")).rejects.toThrow();
+    await expect(store.write("too-large.txt", "four")).rejects.toMatchObject({
+      code: "too-large",
+    });
+  });
+});
+
+describe("json store", () => {
+  it("reads fallback, writes atomically, and updates under a lock", async () => {
+    const filePath = path.join(root, "state", "store.json");
+    const store = jsonStore({
+      filePath,
+      fallback: { count: 0 },
+      lock: true,
+    });
+
+    await expect(store.read()).resolves.toEqual({ count: 0 });
+    await store.update((current) => ({ count: current.count + 1 }));
+    await expect(store.read()).resolves.toEqual({ count: 1 });
   });
 });
 
@@ -369,7 +421,7 @@ describe("atomic file replacement", () => {
       filePath,
       content: "mode",
       dirMode: 0o755,
-      fileMode: 0o644,
+      mode: 0o644,
     });
 
     if (process.platform !== "win32") {
@@ -384,7 +436,7 @@ describe("atomic file replacement", () => {
       filePath,
       content: "sync",
       dirMode: 0o755,
-      fileMode: 0o644,
+      mode: 0o644,
       tempPrefix: ".sync-replace",
     });
 
@@ -534,7 +586,7 @@ describe("sibling temp files", () => {
     const writtenTempPaths: string[] = [];
     const result = await writeSiblingTempFile({
       dir: root,
-      fileMode: 0o644,
+      mode: 0o644,
       writeTemp: async (tempPath) => {
         writtenTempPaths.push(tempPath);
         await fs.writeFile(tempPath, "streamed");

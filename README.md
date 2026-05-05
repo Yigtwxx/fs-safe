@@ -27,6 +27,7 @@ const fs = await root("/safe/workspace", {
   hardlinks: "reject",
   symlinks: "reject",
   mkdir: true,
+  mode: 0o600,
 });
 
 await fs.write("notes/today.txt", "hello\n");
@@ -52,7 +53,7 @@ const opened = await fs.open("notes/today.txt");
 await fs.create("notes/README.md", "seed\n"); // throws if it already exists
 ```
 
-`move()` also defaults to no clobber. Pass `{ overwrite: true }` when replacing the target is intended.
+`write()` replaces file contents by default; use `create()` when an existing file should be an error. `move()` defaults to no clobber because it can otherwise delete an unrelated target while also consuming the source. Pass `{ overwrite: true }` when replacing the target is intended.
 
 Use `ensureRoot()` when a computed relative directory target resolves to the root itself (`""` or `"."`) and you want the operation to be accepted. `root()` still requires the trusted root directory to already exist.
 
@@ -82,7 +83,7 @@ Root reads default to `DEFAULT_ROOT_MAX_BYTES` (16 MiB). Pass a larger `maxBytes
 for expected large reads, or `Number.POSITIVE_INFINITY` when the caller has a
 separate size budget.
 
-`reader()` returns a callback that reads absolute or relative paths through the same root boundary. It is useful for APIs that accept a `(path) => Promise<Buffer>` loader. Absolute paths outside the root are rejected with `outside-workspace`. `readPath()` has the same absolute-path behavior directly.
+`reader()` returns a callback that reads absolute or relative paths through the same root boundary. It is useful for APIs that accept a `(path) => Promise<Buffer>` loader. Absolute paths outside the root are rejected with `outside-workspace`. `readAbsolute()` has the same absolute-path behavior directly.
 
 When you need a writable `FileHandle`, use `openWritable()` and prefer `await using` for cleanup:
 
@@ -105,10 +106,12 @@ The main entry point re-exports the common surface (`root`, `pathScope`, root pa
 |---|---|
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types |
 | `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
-| `@openclaw/fs-safe/json` | `readJsonFile`, `readJsonFileStrict`, `writeJsonAtomic`, `writeTextAtomic` |
+| `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, `writeText`, sync variants |
+| `@openclaw/fs-safe/json-store` | locked JSON file store with fallback read, atomic write, and update |
+| `@openclaw/fs-safe/file-store` | root-bounded managed file/blob store with atomic writes, stream writes, copy-in, reads, and pruning |
 | `@openclaw/fs-safe/regular-file` | `readRegularFile`, `appendRegularFile`, `appendRegularFileSync`, regular-file stat helpers |
-| `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryStaged`, `movePathWithCopyFallback` |
-| `@openclaw/fs-safe/temp` | `tempWorkspace`, `createPrivateTempWorkspace`, `createTempFileTarget`, `writeSiblingTempFile`, `resolveSecureTempRoot` |
+| `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
+| `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `tempFile`, `writeSiblingTempFile`, `resolveSecureTempRoot` |
 | `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, `ArchiveLimitError`, preflight helpers |
 | `@openclaw/fs-safe/fs` | `pathExists`, `pathExistsSync` |
 | `@openclaw/fs-safe/timing` | `withTimeout` |
@@ -122,10 +125,10 @@ The main entry point re-exports the common surface (`root`, `pathScope`, root pa
 When two helpers behave differently on the same input, the difference is in the name, not the docs.
 
 ```ts
-import { readJsonFile, readJsonFileStrict } from "@openclaw/fs-safe/json";
+import { readJson, tryReadJson } from "@openclaw/fs-safe/json";
 
-await readJsonFile("./config.json");        // returns null on missing or invalid
-await readJsonFileStrict("./manifest.json"); // throws on missing or invalid
+await tryReadJson("./config.json"); // returns null on missing or invalid
+await readJson("./manifest.json");  // throws on missing or invalid
 ```
 
 ```ts
@@ -144,13 +147,63 @@ import { replaceFileAtomic } from "@openclaw/fs-safe/atomic";
 await replaceFileAtomic({
   filePath: "/safe/workspace/state.json",
   content: JSON.stringify(state, null, 2),
-  fileMode: 0o600,
+  mode: 0o600,
   syncTempFile: true,
   syncParentDir: true,
 });
 ```
 
 `replaceFileAtomicSync()` covers the synchronous case with the same options shape. Both accept an injectable `fileSystem` for tests.
+
+## Stores
+
+Use `jsonStore()` for small state files that need fallback reads, atomic writes,
+and optional sidecar locking around read-modify-write updates:
+
+```ts
+import { jsonStore } from "@openclaw/fs-safe/json-store";
+
+const store = jsonStore({
+  filePath: "/safe/workspace/state/settings.json",
+  fallback: { enabled: false },
+  lock: true,
+});
+
+await store.update((current) => ({ ...current, enabled: true }));
+```
+
+Use `fileStore()` for cache/blob/media-style directories where callers
+need safe relative paths, size limits, atomic replacement, stream writes, and
+TTL cleanup behind one root:
+
+```ts
+import { fileStore } from "@openclaw/fs-safe/file-store";
+
+const media = fileStore({
+  rootDir: "/safe/workspace/media",
+  maxBytes: 5 * 1024 * 1024,
+  mode: 0o600,
+});
+
+await media.write("inbound/photo.jpg", bytes);
+const opened = await media.open("inbound/photo.jpg");
+await media.pruneExpired({ ttlMs: 10 * 60 * 1000, recursive: true });
+```
+
+`tempWorkspace()` also exposes `writeText()`, `writeJson()`, and `copyIn()` for
+single-file scratch workflows without hand-rolled path joins.
+
+`tempFile()` is the smaller one-file temp helper. It defaults to the
+secure fs-safe temp root, supports `await using`, and exposes `file(name)` for
+additional sibling paths inside the same private temp directory:
+
+```ts
+import { tempFile } from "@openclaw/fs-safe/temp";
+
+await using target = await tempFile({ prefix: "download", fileName: "payload.bin" });
+await fs.promises.writeFile(target.path, bytes);
+const checksumPath = target.file("payload.sha256");
+```
 
 ## Archive extraction
 
