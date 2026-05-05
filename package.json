@@ -92,7 +92,7 @@
     "check": "pnpm build && pnpm test",
     "docs:site": "node scripts/build-docs-site.mjs"
   },
-  "dependencies": {
+  "optionalDependencies": {
     "jszip": "^3.10.1",
     "tar": "7.5.13"
   },

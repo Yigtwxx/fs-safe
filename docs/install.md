@@ -81,7 +81,7 @@ Use the main entry for the common surface, or the focused subpaths when you want
 
 ## Runtime dependencies
 
-`@openclaw/fs-safe` depends on `jszip` and `tar` for [archive extraction](archive.md). Both are loaded lazily — if your code never touches the archive subpath, the runtime cost is negligible.
+`@openclaw/fs-safe` lists `jszip` and `tar` as optional dependencies for [archive extraction](archive.md). They are loaded lazily and only required when ZIP/TAR helpers run. Installs that omit optional dependencies can still import and use every non-archive subpath; archive calls fail with a clear missing-optional-dependency message.
 
 There are no peer dependencies and no native build step.
 
