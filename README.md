@@ -1,8 +1,8 @@
 # @openclaw/fs-safe
 
-Race-resistant root-bounded filesystem primitives for Node.js.
+Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.
 
-Use this when trusted application code has to touch caller-controlled paths inside a directory it owns. The package gives you one `root()` boundary that survives symlink swaps, `..` traversal, hardlink aliases, and TOCTOU rename races between check and use.
+Use this when trusted application code has to touch caller-controlled paths inside a directory it owns. The package gives you one `root()` handle that survives symlink swaps, `..` traversal, hardlink aliases, and TOCTOU rename races between check and use.
 
 ## Why
 

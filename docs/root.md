@@ -1,6 +1,6 @@
 # root()
 
-`root()` is the primary entry point. It takes a trusted directory and returns a `Root` handle whose methods accept relative paths and refuse to escape the directory.
+`root()` is the primary entry point. It takes a trusted directory and returns a capability-style `Root` handle whose methods accept relative paths and refuse to escape the directory.
 
 ```ts
 import { root } from "@openclaw/fs-safe";

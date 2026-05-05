@@ -1,6 +1,6 @@
 # Security model
 
-`fs-safe` is a library-level guardrail. It assumes the calling process already has whatever filesystem permissions it needs and aims to stop trivial path tricks from broadening that authority. It is not a sandbox and does not replace operating-system isolation.
+`fs-safe` is a library-level guardrail: a capability-style root handle for Node.js code that handles untrusted relative paths. It assumes the calling process already has whatever filesystem permissions it needs and aims to stop trivial path tricks from broadening that authority. It is not a sandbox and does not replace operating-system isolation.
 
 ## Threat model
 
@@ -18,6 +18,7 @@ It does **not** defend against:
 
 - a process running with permissions to write anywhere on the filesystem and choosing to ignore the library
 - another process with the same UID racing to mutate the same directory between two separate `fs-safe` calls — the boundary is per-call, not per-session
+- traversal across filesystem boundaries, bind mounts, device files, `/proc`-style virtual filesystems, or any other path your process can normally access from inside the root
 - container escape, TOCTOU between fork and exec of helpers, or kernel-level vulnerabilities
 - semantic content checks: file types, archive payload schemas, signature verification
 
@@ -70,6 +71,9 @@ The library does not advertise different security guarantees per platform — it
 
 ## Limitations to keep in mind
 
+- **This is not ambient authority removal.** Code that can import `node:fs` can still bypass the handle. Keep caller-controlled path operations behind `root()` by convention, review, and tests.
+- **Absolute paths are escape hatches.** APIs that accept or return absolute paths exist for audit, ingest, and advanced composition. Prefer root-relative names in normal application flow.
+- **Mount and device boundaries are outside the model.** `root()` keeps path traversal inside the directory tree; it does not make device files, bind mounts, or virtual filesystems safe to expose.
 - **Hardlink rejection** depends on platform-supplied link counts and is best-effort; do not use it as an authorization mechanism for capability decisions.
 - **`fs.fchown` / mode bits** are not enforced beyond what `replaceFileAtomic` and the secret-file helpers do — if you need stronger mode enforcement, set umask and inspect mode after writes.
 - **Archive extraction** rejects unsafe entries by default but does not interpret payload semantics. A "malicious safe" archive (valid paths, dangerous content) is your application layer's problem.

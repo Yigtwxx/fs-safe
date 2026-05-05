@@ -1,12 +1,12 @@
 ---
 title: Overview
 permalink: /
-description: "Race-resistant root-bounded filesystem primitives for Node.js. One root() boundary that survives symlink swaps, traversal, hardlink aliases, and TOCTOU rename races between check and use."
+description: "Capability-style filesystem roots for Node.js apps that handle untrusted relative paths."
 ---
 
 # fs-safe
 
-Trusted Node.js code that has to touch caller-controlled paths inside a directory it owns gets one boundary it can rely on. `root()` returns a handle that resolves every relative path against a real directory, refuses anything that escapes it, pins the file you opened, and verifies the write landed where you intended.
+Trusted Node.js code that has to touch caller-controlled paths inside a directory it owns gets one boundary it can rely on. `root()` returns a capability-style handle that resolves every relative path against a real directory, refuses anything that escapes it, pins the file you opened, and verifies the write landed where you intended.
 
 ## Why
 
@@ -36,7 +36,7 @@ await fs.remove("notes/archive/today.txt");
 ## Pick your path
 
 - **First time?** [Install](install.md), then walk through the [Quickstart](quickstart.md). Five minutes from `pnpm add` to a working root.
-- **Designing a sandboxed feature.** Read the [Security model](security-model.md) before you trust the boundary, and the [Errors](errors.md) reference so you know what to catch.
+- **Designing a workspace feature.** Read the [Security model](security-model.md) before you trust the boundary, and the [Errors](errors.md) reference so you know what to catch.
 - **Replacing ad-hoc atomic writes.** Jump to [Atomic writes](atomic.md) or, for keyed JSON state, [JSON files](json.md).
 - **Extracting an upload.** Start at [Archive extraction](archive.md) — handles ZIP and TAR with traversal, link, count, and byte limits.
 - **Running an agent in a sandbox.** [Private temp workspaces](temp.md) plus [secret files](secret-file.md) cover the common scratch-and-credentials shape.
