@@ -50,9 +50,9 @@ export type RootOptions = {
 
 export type SymlinkPolicy = "reject" | "follow-within-root";
 export type HardlinkPolicy = "reject" | "allow";
+export type WritableOpenMode = "truncate" | "append" | "preserve";
 
 export type RootDefaults = {
-  encoding?: BufferEncoding;
   hardlinks?: HardlinkPolicy;
   maxBytes?: number;
   mkdir?: boolean;
@@ -68,11 +68,13 @@ export type RootReadOptions = Pick<
 
 export type RootOpenOptions = Omit<RootReadOptions, "maxBytes">;
 
-export type RootWriteOptions = Pick<RootDefaults, "encoding" | "mkdir" | "mode">;
+export type RootWriteOptions = Pick<RootDefaults, "mkdir" | "mode"> & {
+  encoding?: BufferEncoding;
+  overwrite?: boolean;
+};
 
 export type RootOpenWritableOptions = Pick<RootDefaults, "mkdir" | "mode"> & {
-  truncateExisting?: boolean;
-  append?: boolean;
+  writeMode?: WritableOpenMode;
 };
 
 export type RootCopyOptions = Pick<RootDefaults, "maxBytes" | "mkdir" | "mode"> & {
@@ -417,7 +419,7 @@ class RootHandle implements Root {
     relativePath: string,
     options: RootReadOptions & { encoding?: BufferEncoding } = {},
   ): Promise<string> {
-    const { encoding = this.defaults.encoding ?? "utf8", ...readOptions } = options;
+    const { encoding = "utf8", ...readOptions } = options;
     return (await this.read(relativePath, readOptions)).buffer.toString(encoding);
   }
 
@@ -449,11 +451,14 @@ class RootHandle implements Root {
     relativePath: string,
     options: RootOpenWritableOptions = {},
   ): Promise<WritableOpenResult> {
+    const writeMode = options.writeMode ?? "truncate";
     return await openWritableFileInRoot(this.context, {
       relativePath,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...options,
+      append: writeMode === "append",
+      truncateExisting: writeMode === "truncate",
     });
   }
 
@@ -465,7 +470,6 @@ class RootHandle implements Root {
     await appendFileInRoot(this.context, {
       relativePath,
       data,
-      encoding: this.defaults.encoding,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...options,
@@ -492,7 +496,6 @@ class RootHandle implements Root {
     await writeFileInRoot(this.context, {
       relativePath,
       data,
-      encoding: this.defaults.encoding,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...options,
@@ -507,7 +510,6 @@ class RootHandle implements Root {
     await writeFileInRoot(this.context, {
       relativePath,
       data,
-      encoding: this.defaults.encoding,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...options,

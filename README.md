@@ -53,7 +53,7 @@ const opened = await fs.open("notes/today.txt");
 await fs.create("notes/README.md", "seed\n"); // throws if it already exists
 ```
 
-`write()` replaces file contents by default; use `create()` when an existing file should be an error. `move()` defaults to no clobber because it can otherwise delete an unrelated target while also consuming the source. Pass `{ overwrite: true }` when replacing the target is intended.
+`write()` replaces file contents by default; pass `{ overwrite: false }` or use `create()` when an existing file should be an error. `move()` defaults to no clobber because it can otherwise delete an unrelated target while also consuming the source. Pass `{ overwrite: true }` when replacing the target is intended.
 
 Use `ensureRoot()` when a computed relative directory target resolves to the root itself (`""` or `"."`) and you want the operation to be accepted. `root()` still requires the trusted root directory to already exist.
 
@@ -88,19 +88,19 @@ separate size budget.
 When you need a writable `FileHandle`, use `openWritable()` and prefer `await using` for cleanup:
 
 ```ts
-await using opened = await fs.openWritable("logs/current.log", { append: true });
+await using opened = await fs.openWritable("logs/current.log", { writeMode: "append" });
 {
   await opened.handle.appendFile("line\n");
 }
 ```
 
-`nonBlockingRead` is the only I/O scheduling knob in `RootDefaults`; it applies to read/open operations. Filesystem safety policy remains explicit through `hardlinks` and `symlinks`.
+`nonBlockingRead` is the only I/O scheduling knob in `RootDefaults`; it applies to read/open operations because it changes how file descriptors are opened. Filesystem safety policy remains explicit through `hardlinks` and `symlinks`.
 
 `stat()`, `exists()`, and `list()` are boundary-checked, but they cannot pin a later operation to the same filesystem object. Use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()` for operations that must be race-resistant at the point of use.
 
 ## Subpaths
 
-The main entry point re-exports the common surface (`root`, `pathScope`, root path resolver helpers, `FsSafeError`, `pathExists`, `extractArchive`, …). Focused subpaths are useful when you want a leaner import or to depend on a narrower contract. Archive entry path plumbing is intentionally available from the archive subpath only.
+The main entry point is curated around the common story: `root`, `pathScope`, `fileStore`, `jsonStore`, temp workspaces, archive extraction, and `FsSafeError`. Lower-level helpers live behind focused subpaths so their stability boundary is explicit.
 
 | Subpath | Contents |
 |---|---|
@@ -109,13 +109,21 @@ The main entry point re-exports the common surface (`root`, `pathScope`, root pa
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, `writeText`, sync variants |
 | `@openclaw/fs-safe/json-store` | locked JSON file store with fallback read, atomic write, and update |
 | `@openclaw/fs-safe/file-store` | root-bounded managed file/blob store with atomic writes, stream writes, copy-in, reads, and pruning |
+| `@openclaw/fs-safe/private-file-store` | small private JSON/text store with mode-0600 files and mode-0700 dirs |
+| `@openclaw/fs-safe/secret-file` | strict and result-shaped secret file read/write helpers |
 | `@openclaw/fs-safe/regular-file` | `readRegularFile`, `appendRegularFile`, `appendRegularFileSync`, regular-file stat helpers |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `tempFile`, `writeSiblingTempFile`, `resolveSecureTempRoot` |
+| `@openclaw/fs-safe/secure-file` | fd-pinned absolute file reads with owner, mode, ACL, trusted-dir, size, and timeout checks |
+| `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection plus remediation formatting helpers |
+| `@openclaw/fs-safe/walk` | bounded directory walking with symlink policy, filters, and truncation accounting |
 | `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, `ArchiveLimitError`, preflight helpers |
 | `@openclaw/fs-safe/fs` | `pathExists`, `pathExistsSync` |
 | `@openclaw/fs-safe/timing` | `withTimeout` |
 | `@openclaw/fs-safe/home` | `resolveHomeRelativePath` |
+| `@openclaw/fs-safe/sidecar-lock` | `createSidecarLockManager`, `withSidecarLock` |
+| `@openclaw/fs-safe/install-path` | install target path segment and canonical-directory helpers |
+| `@openclaw/fs-safe/pinned-open` | sync pinned open primitive for advanced compatibility code |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode` |
 | `@openclaw/fs-safe/types` | shared types: `DirEntry`, `PathStat`, … |
 | `@openclaw/fs-safe/test-hooks` | hooks the test suite uses to inject races; only active under `NODE_ENV=test` |
@@ -204,6 +212,52 @@ await using target = await tempFile({ prefix: "download", fileName: "payload.bin
 await fs.promises.writeFile(target.path, bytes);
 const checksumPath = target.file("payload.sha256");
 ```
+
+## Secure absolute file reads
+
+Use `readSecureFile()` when the caller gives you an absolute credential path
+instead of a root-relative workspace path. It opens the file first, validates the
+same handle it will read from, checks trusted directories, owner, POSIX mode or
+Windows ACLs, hardlink count, size, and optional timeout, then reads through the
+pinned handle.
+
+```ts
+import { readSecureFile } from "@openclaw/fs-safe/secure-file";
+
+const { buffer } = await readSecureFile({
+  filePath: "/var/lib/app/token",
+  label: "auth token",
+  trustedDirs: ["/var/lib/app"],
+  maxBytes: 16 * 1024,
+  timeoutMs: 5_000,
+});
+```
+
+Use `allowInsecurePath: true` only for migration or explicit local-development
+flows where a warning is preferable to refusing the file.
+
+## Directory walking
+
+`walkDirectory()` and `walkDirectorySync()` replace ad-hoc recursive
+`readdir()` loops with entry and depth budgets, a symlink policy, and stable
+relative paths.
+
+```ts
+import { walkDirectory } from "@openclaw/fs-safe/walk";
+
+const scan = await walkDirectory("/safe/workspace", {
+  maxDepth: 4,
+  maxEntries: 10_000,
+  symlinks: "skip",
+  include: (entry) => entry.kind === "file",
+});
+
+for (const file of scan.entries) {
+  console.log(file.relativePath);
+}
+```
+
+Check `scan.truncated` before treating the result as complete.
 
 ## Archive extraction
 

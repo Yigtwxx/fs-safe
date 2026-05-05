@@ -63,9 +63,9 @@ Async lenient reader. Returns `null` for any failure (missing, unreadable, inval
 const optional = (await tryReadJson<Settings>("./settings.json")) ?? defaults;
 ```
 
-### `readJsonSync(filePath)`
+### `readJsonSync<T>(filePath)`
 
-Synchronous lenient variant. Returns `unknown` on success, `null` on any failure. Cast and validate at the boundary.
+Synchronous strict reader. Throws `JsonFileReadError` on missing or invalid input, matching the async `readJson` contract.
 
 ### `tryReadJsonSync<T>(pathname)`
 

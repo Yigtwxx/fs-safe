@@ -17,7 +17,7 @@ import {
   statRegularFileSync,
   type AppendRegularFileOptions,
   type RegularFileStatResult,
-} from "@openclaw/fs-safe";
+} from "@openclaw/fs-safe/regular-file";
 ```
 
 ## Stat
@@ -35,7 +35,7 @@ type RegularFileStatResult =
 A non-regular file (directory, FIFO, …) returns `{ missing: false }` with a `stat` whose `isFile()` is false — the helper does not throw, you decide what to do.
 
 ```ts
-import { statRegularFile } from "@openclaw/fs-safe";
+import { statRegularFile } from "@openclaw/fs-safe/regular-file";
 
 const r = await statRegularFile("/var/log/app.log");
 if (r.missing) return;
@@ -54,7 +54,7 @@ Synchronous variant. Same shape.
 Async. Reads the entire file into a Buffer if it is a regular file, with `maxBytes` enforcement.
 
 ```ts
-import { readRegularFile } from "@openclaw/fs-safe";
+import { readRegularFile } from "@openclaw/fs-safe/regular-file";
 
 const result = await readRegularFile({
   filePath: "/var/log/app.log",
@@ -87,7 +87,7 @@ Synchronous variant. Same shape; the only required field is `filePath`. `maxByte
 Async. Opens the file in append mode, writes data, closes. Refuses non-regular targets:
 
 ```ts
-import { appendRegularFile } from "@openclaw/fs-safe";
+import { appendRegularFile } from "@openclaw/fs-safe/regular-file";
 
 await appendRegularFile({
   filePath: "/var/log/app.log",
@@ -121,7 +121,7 @@ Synchronous. Same options.
 Helper that returns the right open-flag bitmask for combinations of "append" / "truncate". Use it when you're building your own open path and want to match the append helpers' behavior:
 
 ```ts
-import { resolveRegularFileAppendFlags } from "@openclaw/fs-safe";
+import { resolveRegularFileAppendFlags } from "@openclaw/fs-safe/regular-file";
 
 const flags = resolveRegularFileAppendFlags(true, false); // O_WRONLY | O_APPEND | O_CREAT
 ```

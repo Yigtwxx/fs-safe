@@ -3,7 +3,7 @@
 `privateFileStore(rootDir)` returns a small handle for reading and writing **JSON or text** files inside a trusted root directory. Every write atomically creates the parent directory tree at mode `0o700` and the file at mode `0o600` — the no-frills sibling of [`secret-file`](secret-file.md) when you want a per-root handle.
 
 ```ts
-import { privateFileStore } from "@openclaw/fs-safe";
+import { privateFileStore } from "@openclaw/fs-safe/private-file-store";
 
 const store = privateFileStore("/var/lib/app");
 
@@ -54,7 +54,7 @@ import {
   readPrivateTextSync,           // sync
   readPrivateJson,               // async
   readPrivateJsonSync,           // sync
-} from "@openclaw/fs-safe";
+} from "@openclaw/fs-safe/private-file-store";
 ```
 
 Each standalone takes `{ rootDir, filePath, ... }` directly:
@@ -85,7 +85,7 @@ await store.writeJson("state.json", state, { trailingNewline: true });
 ### Sync at boot
 
 ```ts
-import { readPrivateJsonSync } from "@openclaw/fs-safe";
+import { readPrivateJsonSync } from "@openclaw/fs-safe/private-file-store";
 
 const config =
   readPrivateJsonSync({ rootDir: "/etc/app", filePath: "/etc/app/config.json" }) ??

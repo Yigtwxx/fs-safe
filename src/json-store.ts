@@ -1,6 +1,6 @@
 import path from "node:path";
 import { createSidecarLockManager, type SidecarLockRetryOptions } from "./sidecar-lock.js";
-import { readJsonIfExists, writeJson } from "./json.js";
+import { readJson, readJsonIfExists, writeJson } from "./json.js";
 
 export type JsonStoreLockOptions = {
   staleMs?: number;
@@ -11,7 +11,7 @@ export type JsonStoreLockOptions = {
 
 export type JsonStoreOptions<T> = {
   filePath: string;
-  fallback: T;
+  fallback?: T;
   dirMode?: number;
   mode?: number;
   trailingNewline?: boolean;
@@ -20,9 +20,11 @@ export type JsonStoreOptions<T> = {
 
 export type JsonStore<T> = {
   readonly filePath: string;
-  read(): Promise<T>;
+  read(): Promise<T | undefined>;
+  readOr(fallback: T): Promise<T>;
+  require(): Promise<T>;
   write(value: T): Promise<void>;
-  update(run: (current: T) => T | Promise<T>): Promise<T>;
+  update(run: (current: T | undefined) => T | Promise<T>): Promise<T>;
 };
 
 function cloneFallback<T>(value: T): T {
@@ -50,8 +52,20 @@ export function jsonStore<T>(options: JsonStoreOptions<T>): JsonStore<T> {
   const lockOptions = resolveLockOptions({ ...options, filePath });
   const locks = lockOptions ? createSidecarLockManager(lockOptions.managerKey) : null;
 
-  async function read(): Promise<T> {
-    return (await readJsonIfExists<T>(filePath)) ?? cloneFallback(options.fallback);
+  async function read(): Promise<T | undefined> {
+    const value = await readJsonIfExists<T>(filePath);
+    if (value !== null) {
+      return value;
+    }
+    return options.fallback === undefined ? undefined : cloneFallback(options.fallback);
+  }
+
+  async function readOr(fallback: T): Promise<T> {
+    return (await read()) ?? cloneFallback(fallback);
+  }
+
+  async function requireValue(): Promise<T> {
+    return await readJson<T>(filePath);
   }
 
   async function write(value: T): Promise<void> {
@@ -82,6 +96,8 @@ export function jsonStore<T>(options: JsonStoreOptions<T>): JsonStore<T> {
   return {
     filePath,
     read,
+    readOr,
+    require: requireValue,
     write: async (value) => {
       await withOptionalLock(async () => {
         await write(value);

@@ -3,15 +3,11 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  FsSafeError,
-  openPinnedFileSync,
-  openRootFile,
-  openRootFileSync,
-  pathScope,
-  resolveAbsolutePathForRead,
-  root as openRoot,
-} from "../src/index.js";
+import { resolveAbsolutePathForRead } from "../src/absolute-path.js";
+import { FsSafeError, root as openRoot } from "../src/index.js";
+import { openPinnedFileSync } from "../src/pinned-open.js";
+import { pathScope } from "../src/path-scope.js";
+import { openRootFile, openRootFileSync } from "../src/root-file.js";
 
 type TempLayout = {
   outside: string;

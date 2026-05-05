@@ -53,8 +53,11 @@ await fs.remove("notes/archive/today.txt");
 | [`jsonStore`](json-store.md) | Single JSON state file with fallback, atomic writes, and optional locking. |
 | [`fileStore`](file-store.md) | Managed multi-file/blob store with modes, stream writes, copy-in, and pruning. |
 | [`tempWorkspace`](temp.md) | 0700 scratch dir with auto-cleanup. |
+| [`readSecureFile`](secure-file.md) | Absolute file reads with fd pinning, permissions, owner, size, and timeout checks. |
+| [`walkDirectory`](walk.md) | Bounded recursive directory scan with symlink policy and filters. |
 | [`extractArchive`](archive.md) | ZIP/TAR extraction with size, count, link, and traversal limits. |
 | [Secret files](secret-file.md) | Mode-0600 credentials with size and TOCTOU defense. |
+| [Permissions](permissions.md) | POSIX mode and Windows ACL inspection/remediation helpers. |
 | [`createSidecarLockManager`](sidecar-lock.md) | Cross-process file lock with retry and stale-lock recovery. |
 | [`FsSafeError`](errors.md) | Closed code union you can branch on. |
 

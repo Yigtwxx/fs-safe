@@ -7,6 +7,7 @@ import {
   createAsyncLock,
   readJson,
   readJsonIfExists,
+  readJsonSync,
   tryReadJson,
   writeJson,
   writeText,
@@ -69,6 +70,7 @@ describe("json file helpers", () => {
       name: "JsonFileReadError",
       reason: "parse",
     } satisfies Partial<JsonFileReadError>);
+    expect(() => readJsonSync(invalid)).toThrow(JsonFileReadError);
   });
 
   it("does not follow symlink swaps while reading", async () => {

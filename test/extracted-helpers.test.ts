@@ -11,27 +11,23 @@ import {
   validateArchiveEntryPath,
 } from "../src/archive.js";
 import {
+  assertCanonicalPathWithinBase,
+  resolveSafeInstallDir,
+  safeDirName,
+  safePathSegmentHashed,
+} from "../src/install-path.js";
+import { basenameFromMediaSource, safeFileURLToPath } from "../src/local-file-access.js";
+import { formatPosixMode } from "../src/mode.js";
+import { isPathInside, isWithinDir, resolveSafeBaseDir } from "../src/path.js";
+import { tryReadJson, tryReadJsonSync, writeJson, writeJsonSync } from "../src/json.js";
+import {
   DEFAULT_SECRET_FILE_MAX_BYTES,
   PRIVATE_SECRET_DIR_MODE,
   PRIVATE_SECRET_FILE_MODE,
-  assertCanonicalPathWithinBase,
-  basenameFromMediaSource,
-  formatPosixMode,
-  isPathInside,
-  isWithinDir,
   loadSecretFileSync,
-  tryReadJsonSync,
   readSecretFileSync,
-  tryReadJson,
-  resolveSafeBaseDir,
-  resolveSafeInstallDir,
-  safeDirName,
-  safeFileURLToPath,
-  safePathSegmentHashed,
-  writeJsonSync,
   writePrivateSecretFileAtomic,
-  writeJson,
-} from "../src/index.js";
+} from "../src/secret-file.js";
 
 const tempDirs: string[] = [];
 

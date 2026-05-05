@@ -18,7 +18,6 @@ const fs = await root("/srv/workspace", {
 function root(rootDir: string, defaults?: RootDefaults): Promise<Root>;
 
 type RootDefaults = {
-  encoding?: BufferEncoding;       // text encoding for read/write helpers; defaults to "utf8"
   hardlinks?: "reject" | "allow";  // refuse files with nlink > 1 on read; defaults to "reject"
   maxBytes?: number;               // refuse reads larger than this many bytes; defaults to 16 MiB
   mkdir?: boolean;                 // create missing parent dirs on write/openWritable/append
@@ -79,7 +78,7 @@ fs.ensureRoot()                          // accepts "" / "." as the root itself
 
 `copyIn` is a one-shot ingest from a trusted absolute source path: it streams the source through the boundary, atomically renames into the root, and respects `maxBytes`.
 
-`openWritable` opens a writable file with options `mode?: number`, `truncateExisting?: boolean`, `append?: boolean`. Use it for streaming output. Prefer `await using` for cleanup.
+`openWritable` opens a writable file with options `mode?: number` and `writeMode?: "truncate" | "append" | "preserve"`. Use it for streaming output. Prefer `await using` for cleanup.
 
 ### Inspection (advisory)
 
@@ -137,7 +136,7 @@ await fs.readText("config.toml");
 await fs.readText("links/current.log", { symlinks: "follow-within-root" });
 ```
 
-For text encoding, the default `encoding` from `RootDefaults` flows into `readText` and `readJson`; pass `encoding` per call to override.
+Text helpers default to UTF-8. Pass `encoding` per call to `readText`, `readJson`, `write`, `create`, or `append` when you need another encoding.
 
 ## Common patterns
 

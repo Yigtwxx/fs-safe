@@ -35,7 +35,7 @@ await fs.write("state/last-run.json", JSON.stringify(run));
 await fs.write("notes/today.txt", "hello\n", { encoding: "utf8" });
 ```
 
-`data` accepts `string | Buffer`. `options` are `{ encoding?: BufferEncoding; mkdir?: boolean; mode?: number }`. `mode` sets the file's POSIX mode; if omitted, falls back to the `mode` from `RootDefaults` and then to umask.
+`data` accepts `string | Buffer`. `options` are `{ encoding?: BufferEncoding; mkdir?: boolean; mode?: number; overwrite?: boolean }`. `mode` sets the file's POSIX mode; if omitted, falls back to the `mode` from `RootDefaults` and then to umask. `overwrite` defaults to `true`; set it to `false` for the same no-clobber behavior as `create()`.
 
 ### `fs.create(rel, data, options?)`
 
@@ -139,7 +139,7 @@ await fs.ensureRoot(); // accepts "" without throwing
 When `write` doesn't fit (very large outputs, slow producers), open a writable handle:
 
 ```ts
-const opened = await fs.openWritable("logs/current.log", { append: true });
+const opened = await fs.openWritable("logs/current.log", { writeMode: "append" });
 try {
   for await (const chunk of source) {
     await opened.handle.appendFile(chunk);
@@ -149,19 +149,18 @@ try {
 }
 ```
 
-Options: `{ mkdir?, mode?, truncateExisting?, append? }`. Streaming writes go directly to the destination — there is no atomic-rename step. If you need both streaming and atomicity, write to a sibling temp yourself and rename when done; the [`atomic`](atomic.md) helpers can do this for you.
+Options: `{ mkdir?, mode?, writeMode? }`, where `writeMode` is `"truncate"` (default), `"append"`, or `"preserve"`. Streaming writes go directly to the destination — there is no atomic-rename step. If you need both streaming and atomicity, write to a sibling temp yourself and rename when done; the [`atomic`](atomic.md) helpers can do this for you.
 
 ## Write defaults vs per-call options
 
-Set `mkdir: true` and `encoding: "utf8"` once on `root()`; pass overrides per call when needed:
+Set `mkdir: true` once on `root()`; pass text encodings per call when needed:
 
 ```ts
 const fs = await root("/srv/workspace", {
   mkdir: true,
-  encoding: "utf8",
 });
 
-await fs.write("notes/today.txt", "ascii"); // utf8
+await fs.write("notes/today.txt", "ascii", { encoding: "utf8" });
 await fs.write("data/blob.bin", buffer);     // mkdir true, no encoding because data is Buffer
 await fs.write("data/blob.bin", buffer, { mkdir: false }); // override
 ```

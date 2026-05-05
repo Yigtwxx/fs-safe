@@ -3,7 +3,7 @@ import { mkdtemp, readdir, readFile, stat, symlink, writeFile } from "node:fs/pr
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { root as openRoot } from "../src/index.js";
+import { FsSafeError, root as openRoot } from "../src/index.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
 const tempDirs: string[] = [];
@@ -117,7 +117,10 @@ describe("@openclaw/fs-safe", () => {
     const root = await openRoot(await tempRoot("fs-safe-traversal-"));
 
     await expect(root.stat("../outside")).rejects.toMatchObject({ code: "invalid-path" });
-    await expect(root.read("/etc/passwd")).rejects.toMatchObject({ code: "outside-workspace" });
+    await expect(root.read("/etc/passwd")).rejects.toMatchObject({
+      category: "policy",
+      code: "outside-workspace",
+    } satisfies Partial<FsSafeError>);
     await expect(root.write("../write", "")).rejects.toMatchObject({
       code: "outside-workspace",
     });
@@ -262,6 +265,15 @@ describe("@openclaw/fs-safe", () => {
     }
 
     await expect(readFile(path.join(rootPath, "write.txt"), "utf8")).resolves.toBe("written");
+
+    {
+      await using writable = await root.openWritable("write.txt", { writeMode: "append" });
+      await writable.handle.appendFile(" again");
+    }
+
+    await expect(readFile(path.join(rootPath, "write.txt"), "utf8")).resolves.toBe(
+      "written again",
+    );
   });
 
   it("honors mode on root text and JSON writes", async () => {

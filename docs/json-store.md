@@ -1,6 +1,6 @@
 # JSON store
 
-`@openclaw/fs-safe/json-store` is a small read-modify-write wrapper around a single JSON file. It bakes in atomic writes, a typed fallback when the file is missing, and optional cross-process locking via [`createSidecarLockManager`](sidecar-lock.md).
+`@openclaw/fs-safe/json-store` is a small read-modify-write wrapper around a single JSON file. It bakes in atomic writes, optional fallback reads, and optional cross-process locking via [`createSidecarLockManager`](sidecar-lock.md).
 
 ```ts
 import { jsonStore } from "@openclaw/fs-safe/json-store";
@@ -10,14 +10,14 @@ const settings = jsonStore<{ theme: "light" | "dark"; volume: number }>({
   fallback: { theme: "dark", volume: 0.7 },
 });
 
-const current = await settings.read();         // returns fallback if file missing
+const current = await settings.readOr({ theme: "dark", volume: 0.7 });
 await settings.write({ ...current, volume: 1 });
-await settings.update((prev) => ({ ...prev, theme: "light" }));
+await settings.update((prev) => ({ ...(prev ?? { theme: "dark", volume: 0.7 }), theme: "light" }));
 ```
 
 ## When to reach for it
 
-- You have a single JSON state file and want `read / write / update` semantics with fallback baked in.
+- You have a single JSON state file and want `read / readOr / require / write / update` semantics.
 - You want every write atomic at file mode `0o600` and parents at `0o700` by default.
 - You want optional cross-process locking with one boolean.
 
@@ -28,7 +28,7 @@ For ad-hoc read/write of multiple JSON files, use the standalone helpers in [`js
 ```ts
 type JsonStoreOptions<T> = {
   filePath: string;
-  fallback: T;                                     // returned when file is missing
+  fallback?: T;                                    // returned by read() when file is missing
   dirMode?: number;                                // default 0o700
   mode?: number;                                   // default 0o600
   trailingNewline?: boolean;                       // default true
@@ -44,22 +44,40 @@ type JsonStoreLockOptions = {
 
 type JsonStore<T> = {
   readonly filePath: string;
-  read(): Promise<T>;
+  read(): Promise<T | undefined>;
+  readOr(fallback: T): Promise<T>;
+  require(): Promise<T>;
   write(value: T): Promise<void>;
-  update(run: (current: T) => T | Promise<T>): Promise<T>;
+  update(run: (current: T | undefined) => T | Promise<T>): Promise<T>;
 };
 ```
 
-`fallback` is **deep-cloned** on every read so the caller can safely mutate the returned object without poisoning the next call.
+`fallback` is **deep-cloned** on every read so the caller can safely mutate the returned object without poisoning the next call. If no store fallback is configured, `read()` returns `undefined` when the file is missing.
 
 The store does **not** validate the parsed value against `T` at runtime — the cast is unchecked. Wrap with a schema (zod/valibot) if the file might be hand-edited or written by another process you don't control.
 
 ## `read()`
 
-Returns the parsed contents, or `fallback` (cloned) if the file does not exist. Invalid JSON throws (via [`readJsonIfExists`](json.md)).
+Returns the parsed contents, the store fallback (cloned) when configured, or `undefined` if the file does not exist. Invalid JSON throws (via [`readJsonIfExists`](json.md)).
 
 ```ts
 const state = await store.read();
+```
+
+## `readOr(fallback)`
+
+Returns the parsed contents, the store fallback, or the per-call fallback:
+
+```ts
+const state = await store.readOr(defaultState);
+```
+
+## `require()`
+
+Strict disk read. Throws when the file is missing or invalid, even when the store has a fallback:
+
+```ts
+const state = await store.require();
 ```
 
 ## `write(value)`
@@ -75,7 +93,7 @@ await store.write({ ...state, lastSeen: Date.now() });
 Read, transform, write — under the lock if locking is enabled. Returns the new value:
 
 ```ts
-const next = await store.update((prev) => ({ ...prev, count: prev.count + 1 }));
+const next = await store.update((prev) => ({ count: (prev?.count ?? 0) + 1 }));
 ```
 
 `run` is async-friendly. The whole `read → run → write` sequence runs inside one `withLock` call, so concurrent updaters from different processes serialize cleanly.
@@ -113,10 +131,13 @@ const settings = jsonStore<Settings>({
 });
 
 // Read on boot
-applySettings(await settings.read());
+applySettings(await settings.readOr({ theme: "dark", muted: false }));
 
 // Toggle on UI action
-await settings.update((prev) => ({ ...prev, muted: !prev.muted }));
+await settings.update((prev) => {
+  const current = prev ?? { theme: "dark", muted: false };
+  return { ...current, muted: !current.muted };
+});
 ```
 
 ### Cross-process counter
@@ -128,7 +149,7 @@ const counter = jsonStore<{ count: number }>({
   lock: true,
 });
 
-const { count } = await counter.update((prev) => ({ count: prev.count + 1 }));
+const { count } = await counter.update((prev) => ({ count: (prev?.count ?? 0) + 1 }));
 console.log("now at", count);
 ```
 
@@ -136,7 +157,7 @@ console.log("now at", count);
 
 ```ts
 const config = jsonStore<Config>({ filePath, fallback: defaultConfig });
-const current = await config.read();
+const current = await config.readOr(defaultConfig);
 if (current.version !== CURRENT_VERSION) {
   await config.write(migrate(current));
 }

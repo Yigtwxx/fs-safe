@@ -12,13 +12,18 @@ import { FsSafeError, type FsSafeErrorCode } from "@openclaw/fs-safe";
 class FsSafeError extends Error {
   readonly name: "FsSafeError";
   readonly code: FsSafeErrorCode;
-  readonly cause?: unknown;
+  readonly category: "policy" | "operational";
 
   constructor(code: FsSafeErrorCode, message: string, options?: { cause?: unknown });
 }
 ```
 
-`cause` is the underlying error when the failure was triggered by a `NodeJS.ErrnoException` (e.g. a wrapped `EACCES`). Inspect it for the original `code` / `errno` / `syscall` if you need finer-grained reporting.
+`cause` is available through the standard `Error` `cause` property when the failure was triggered by a `NodeJS.ErrnoException` (e.g. a wrapped `EACCES`). Inspect it for the original `code` / `errno` / `syscall` if you need finer-grained reporting.
+
+`category` separates caller-policy failures from operational failures:
+
+- `"policy"` — unsafe input or target state, such as `outside-workspace`, `symlink`, `hardlink`, or `too-large`.
+- `"operational"` — environment/runtime failures, such as helper startup, platform support, timeout, or unverifiable permissions.
 
 ## Code union
 
@@ -28,15 +33,19 @@ type FsSafeErrorCode =
   | "hardlink"
   | "helper-failed"
   | "helper-unavailable"
+  | "insecure-permissions"
   | "invalid-path"
   | "not-empty"
   | "not-file"
   | "not-found"
+  | "not-owned"
   | "not-removable"
   | "outside-workspace"
   | "path-alias"
   | "path-mismatch"
+  | "permission-unverified"
   | "symlink"
+  | "timeout"
   | "too-large"
   | "unsupported-platform";
 ```
@@ -49,15 +58,19 @@ type FsSafeErrorCode =
 | `hardlink` | Read or copy with `hardlinks: "reject"` saw `nlink > 1`. | File is hardlinked — possibly an alias of an out-of-tree inode. |
 | `helper-failed` | Internal POSIX helper (Python-based fd-relative ops, sidecar lock acquire) failed. | Inspect `cause` for the underlying error. |
 | `helper-unavailable` | Helper could not be spawned at all. | Python missing in PATH; restricted sandbox. Library falls back to Node-only path where possible. |
+| `insecure-permissions` | A secure file or path permission check found a mode/ACL that allows broader access than requested. | File or directory is group/world writable/readable; Windows ACL grants broad read. |
 | `invalid-path` | Input was empty, contained NUL, was an unparseable URL, or otherwise unusable. | Caller didn't validate input; input was a network path on Windows. |
 | `not-empty` | `remove()` on a non-empty directory. | Use `replaceDirectoryAtomic` or remove children first. |
 | `not-file` | Read or copy targeted a non-regular file. | Target was a directory, FIFO, socket, device. |
 | `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). | Typical missing-file case. |
+| `not-owned` | A secure file owner check failed. | File is owned by another UID. |
 | `not-removable` | `remove()` couldn't `unlink`/`rmdir` for a reason other than non-empty. | Permissions, device busy, immutable bit. |
 | `outside-workspace` | Path resolves outside the configured root. | `..` traversal; absolute path outside the root; symlink resolved out. |
 | `path-alias` | A path alias check failed (e.g. canonical-real-path moved out of the root). | Symlink resolution lands outside the root. |
 | `path-mismatch` | Post-open identity check failed: the opened fd does not match the resolved path. | TOCTOU — something else swapped the path between resolve and open. |
+| `permission-unverified` | A secure file check could not verify required permissions. | Windows ACL inspection failed; POSIX ownership/mode was unavailable. |
 | `symlink` | Path component is a symlink, policy is `reject`. | Caller followed a symlink they shouldn't have, or `symlinks: "reject"` is set. |
+| `timeout` | An operation with a wall-clock budget overran. | Secure file read or timed operation exceeded `timeoutMs`. |
 | `too-large` | Read exceeded `maxBytes`. | Caller gave a too-permissive file or didn't size-cap correctly. |
 | `unsupported-platform` | The requested operation is not supported on the current platform. | E.g. POSIX-only helper invoked on Windows. |
 

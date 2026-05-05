@@ -1,6 +1,6 @@
 # Types
 
-The types most callers reach for. The full type surface is exported from `@openclaw/fs-safe/types` and from the main entry; this page collects the ones you'll see in everyday code.
+The types most callers reach for. Shared data shapes are exported from `@openclaw/fs-safe/types`; method-specific option/result types live next to their subpath.
 
 ```ts
 import type {
@@ -82,7 +82,6 @@ type ReadResult = {
 
 ```ts
 type RootDefaults = {
-  encoding?: BufferEncoding;
   hardlinks?: "reject" | "allow";
   maxBytes?: number;
   mkdir?: boolean;
@@ -103,13 +102,15 @@ type RootOptions = {
 
 ```ts
 type RootReadOptions = Pick<RootDefaults, "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks">;
-type RootWriteOptions = Pick<RootDefaults, "encoding" | "mkdir" | "mode">;
+type RootWriteOptions = Pick<RootDefaults, "mkdir" | "mode"> & {
+  encoding?: BufferEncoding;
+  overwrite?: boolean;
+};
 type RootCopyOptions = Pick<RootDefaults, "maxBytes" | "mkdir" | "mode"> & {
   sourceHardlinks?: "reject" | "allow";
 };
 type RootOpenWritableOptions = Pick<RootDefaults, "mkdir" | "mode"> & {
-  truncateExisting?: boolean;
-  append?: boolean;
+  writeMode?: "truncate" | "append" | "preserve";
 };
 type RootWriteJsonOptions = RootWriteOptions & {
   replacer?: Parameters<typeof JSON.stringify>[1];
@@ -132,17 +133,20 @@ type HardlinkPolicy = "reject" | "allow";
 
 The two policy unions you'll see throughout. `"reject"` is conservative; `"follow-within-root"` allows symlinks whose final target is still inside the root; `"allow"` (hardlinks only) is permissive. Defaults for both symlinks and hardlinks are `"reject"`; switch hardlinks to `"allow"` only when you intentionally accept hardlink aliases.
 
-## `FsSafeErrorCode`
+## `FsSafeErrorCode` / `FsSafeErrorCategory`
 
 ```ts
 type FsSafeErrorCode =
   | "already-exists" | "hardlink" | "helper-failed" | "helper-unavailable"
-  | "invalid-path" | "not-empty" | "not-file" | "not-found"
-  | "not-removable" | "outside-workspace" | "path-alias" | "path-mismatch"
-  | "symlink" | "too-large" | "unsupported-platform";
+  | "insecure-permissions" | "invalid-path" | "not-empty" | "not-file"
+  | "not-found" | "not-owned" | "not-removable" | "outside-workspace"
+  | "path-alias" | "path-mismatch" | "permission-unverified"
+  | "symlink" | "timeout" | "too-large" | "unsupported-platform";
 ```
 
 Closed union you switch on. See the [Errors](errors.md) reference for what each one means.
+
+`FsSafeError.category` is `"policy"` for unsafe input/target-state failures and `"operational"` for environment/runtime failures.
 
 ## See also
 

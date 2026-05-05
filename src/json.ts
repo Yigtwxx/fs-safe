@@ -201,12 +201,17 @@ export async function readJsonIfExists<T>(filePath: string): Promise<T | null> {
   }
 }
 
-export function readJsonSync(filePath: string): unknown {
+export function readJsonSync<T = unknown>(filePath: string): T {
+  let raw: string;
   try {
-    const raw = readRegularFileSync({ filePath }).buffer.toString("utf8");
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return null;
+    raw = readRegularFileSync({ filePath }).buffer.toString("utf8");
+  } catch (err) {
+    throw new JsonFileReadError(filePath, "read", err);
+  }
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    throw new JsonFileReadError(filePath, "parse", err);
   }
 }
 

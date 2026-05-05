@@ -36,6 +36,13 @@ import { writeSiblingTempFile } from "../src/sibling-temp.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { fileStore } from "../src/file-store.js";
 import { jsonStore } from "../src/json-store.js";
+import {
+  createIcaclsResetCommand,
+  inspectWindowsAcl,
+  parseIcaclsOutput,
+} from "../src/permissions.js";
+import { readSecureFile } from "../src/secure-file.js";
+import { walkDirectory, walkDirectorySync } from "../src/walk.js";
 
 let root: string;
 
@@ -44,6 +51,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await fs.rm(root, { recursive: true, force: true });
 });
 
@@ -149,8 +157,147 @@ describe("json store", () => {
     });
 
     await expect(store.read()).resolves.toEqual({ count: 0 });
-    await store.update((current) => ({ count: current.count + 1 }));
+    await expect(store.readOr({ count: 10 })).resolves.toEqual({ count: 0 });
+    await expect(store.require()).rejects.toMatchObject({ name: "JsonFileReadError" });
+    await store.update((current) => ({ count: (current?.count ?? 0) + 1 }));
     await expect(store.read()).resolves.toEqual({ count: 1 });
+    await expect(store.require()).resolves.toEqual({ count: 1 });
+
+    const strictStore = jsonStore<{ count: number }>({ filePath: path.join(root, "missing.json") });
+    await expect(strictStore.read()).resolves.toBeUndefined();
+    await expect(strictStore.readOr({ count: 2 })).resolves.toEqual({ count: 2 });
+  });
+});
+
+describe("secure file reads", () => {
+  it("reads from a validated file handle", async () => {
+    const filePath = path.join(root, "secret.json");
+    await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
+    await fs.chmod(filePath, 0o600).catch(() => undefined);
+
+    const result = await readSecureFile({
+      filePath,
+      label: "test secret",
+      maxBytes: 1024,
+    });
+
+    expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
+    expect(result.realPath).toBe(await fs.realpath(filePath));
+  });
+
+  it("rejects symlinks and files outside trusted dirs", async () => {
+    const trusted = path.join(root, "trusted");
+    const outside = path.join(root, "outside");
+    await fs.mkdir(trusted);
+    await fs.mkdir(outside);
+    const trustedFile = path.join(trusted, "secret.txt");
+    const outsideFile = path.join(outside, "secret.txt");
+    const link = path.join(trusted, "link.txt");
+    await fs.writeFile(trustedFile, "ok", { mode: 0o600 });
+    await fs.writeFile(outsideFile, "no", { mode: 0o600 });
+    await fs.symlink(outsideFile, link);
+
+    await expect(readSecureFile({ filePath: link })).rejects.toMatchObject({ code: "symlink" });
+    await expect(
+      readSecureFile({ filePath: outsideFile, trustedDirs: [trusted] }),
+    ).rejects.toMatchObject({ code: "outside-workspace" });
+  });
+
+  it("rejects overly broad POSIX permissions", async () => {
+    if (process.platform === "win32") return;
+    const filePath = path.join(root, "too-open.txt");
+    await fs.writeFile(filePath, "secret", { mode: 0o644 });
+    await fs.chmod(filePath, 0o644);
+
+    await expect(readSecureFile({ filePath })).rejects.toMatchObject({
+      code: "insecure-permissions",
+    });
+  });
+
+  it("parses icacls output into ACL entries", () => {
+    const entries = parseIcaclsOutput(
+      String.raw`C:\Users\me\secret.txt *S-1-5-18:(F)
+                                *S-1-1-0:(R)`,
+      String.raw`C:\Users\me\secret.txt`,
+    );
+
+    expect(entries).toMatchObject([
+      { principal: "*S-1-5-18", canWrite: true },
+      { principal: "*S-1-1-0", canRead: true },
+    ]);
+  });
+
+  it("resolves Windows system commands from trusted absolute roots", async () => {
+    vi.stubEnv("SystemRoot", "D:\\Windows");
+    const exec = vi.fn().mockResolvedValue({
+      stdout: String.raw`C:\Users\me\secret.txt *S-1-5-18:(F)`,
+      stderr: "",
+    });
+
+    const result = await inspectWindowsAcl(String.raw`C:\Users\me\secret.txt`, { exec });
+    expect(result.ok).toBe(true);
+    expect(exec).toHaveBeenCalledWith("D:\\Windows\\System32\\icacls.exe", [
+      String.raw`C:\Users\me\secret.txt`,
+      "/sid",
+    ]);
+
+    const fallbackExec = vi.fn().mockResolvedValue({
+      stdout: String.raw`C:\Users\me\secret.txt *S-1-5-18:(F)`,
+      stderr: "",
+    });
+    await inspectWindowsAcl(String.raw`C:\Users\me\secret.txt`, {
+      exec: fallbackExec,
+      env: { SystemRoot: ".\\fake-root", WINDIR: "E:\\Windows" },
+    });
+    expect(fallbackExec).toHaveBeenCalledWith("E:\\Windows\\System32\\icacls.exe", [
+      String.raw`C:\Users\me\secret.txt`,
+      "/sid",
+    ]);
+
+    const command = createIcaclsResetCommand(String.raw`C:\Users\me\secret.txt`, {
+      isDir: false,
+      env: { systemroot: ".\\fake-root", username: "me" },
+      userInfo: () => ({ username: "me" }),
+    });
+    expect(command?.command).toBe("C:\\Windows\\System32\\icacls.exe");
+  });
+});
+
+describe("directory walking", () => {
+  it("walks bounded trees and reports truncation", async () => {
+    await fs.mkdir(path.join(root, "a", "b"), { recursive: true });
+    await fs.writeFile(path.join(root, "a", "one.txt"), "1");
+    await fs.writeFile(path.join(root, "a", "b", "two.txt"), "2");
+
+    const shallow = walkDirectorySync(root, { maxDepth: 1 });
+    expect(shallow.entries.map((entry) => entry.relativePath)).toEqual(["a"]);
+
+    const files = await walkDirectory(root, {
+      include: (entry) => entry.kind === "file",
+    });
+    expect(files.entries.map((entry) => entry.relativePath).sort()).toEqual([
+      path.join("a", "b", "two.txt"),
+      path.join("a", "one.txt"),
+    ]);
+
+    const truncated = walkDirectorySync(root, { maxEntries: 1 });
+    expect(truncated.truncated).toBe(true);
+    expect(truncated.scannedEntryCount).toBe(1);
+  });
+
+  it("does not recurse forever through followed symlink cycles", async () => {
+    if (process.platform === "win32") return;
+    await fs.mkdir(path.join(root, "a"), { recursive: true });
+    await fs.writeFile(path.join(root, "a", "file.txt"), "1");
+    await fs.symlink(root, path.join(root, "a", "loop"));
+
+    const scan = await walkDirectory(root, { symlinks: "follow" });
+    expect(scan.truncated).toBe(false);
+    expect(scan.entries.map((entry) => entry.relativePath).sort()).toEqual([
+      "a",
+      path.join("a", "file.txt"),
+      path.join("a", "loop"),
+    ]);
   });
 });
 
