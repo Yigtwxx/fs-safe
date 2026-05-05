@@ -154,7 +154,7 @@ function buildReplaceTempPath(filePath: string, tempPrefix?: string): string {
   return path.join(dir, `${tempPrefix ?? ".fs-safe-replace"}.${process.pid}.${randomUUID()}.tmp`);
 }
 
-async function resolveFileMode(options: ReplaceFileAtomicOptions): Promise<number> {
+async function resolveMode(options: ReplaceFileAtomicOptions): Promise<number> {
   const defaultMode = options.mode ?? 0o600;
   if (!options.preserveExistingMode) {
     return defaultMode;
@@ -168,7 +168,7 @@ async function resolveFileMode(options: ReplaceFileAtomicOptions): Promise<numbe
   return stat ? stat.mode : defaultMode;
 }
 
-function resolveFileModeSync(options: ReplaceFileAtomicSyncOptions): number {
+function resolveModeSync(options: ReplaceFileAtomicSyncOptions): number {
   const defaultMode = options.mode ?? 0o600;
   if (!options.preserveExistingMode) {
     return defaultMode;
@@ -272,7 +272,7 @@ export async function replaceFileAtomic(
   const fsModule = options.fileSystem?.promises ?? fs;
   const dir = path.dirname(filePath);
   const dirMode = options.dirMode ?? 0o700;
-  const fileMode = await resolveFileMode(options);
+  const mode = await resolveMode(options);
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
   let tempExists = false;
   let originalError: unknown;
@@ -281,7 +281,7 @@ export async function replaceFileAtomic(
   await fsModule.chmod(dir, dirMode).catch(() => undefined);
   try {
     tempExists = true;
-    await fsModule.writeFile(tempPath, options.content, { mode: fileMode, flag: "wx" });
+    await fsModule.writeFile(tempPath, options.content, { mode, flag: "wx" });
     if (options.syncTempFile) {
       await syncTempFile(fsModule, tempPath);
     }
@@ -297,7 +297,7 @@ export async function replaceFileAtomic(
       copyFallbackOnPermissionError: options.copyFallbackOnPermissionError === true,
     });
     tempExists = false;
-    await fsModule.chmod(filePath, fileMode).catch(() => undefined);
+    await fsModule.chmod(filePath, mode).catch(() => undefined);
     if (options.syncParentDir) {
       await syncDirectoryBestEffort(fsModule, dir);
     }
@@ -325,7 +325,7 @@ export function replaceFileAtomicSync(
   const fsModule = options.fileSystem ?? syncFs;
   const dir = path.dirname(filePath);
   const dirMode = options.dirMode ?? 0o700;
-  const fileMode = resolveFileModeSync(options);
+  const mode = resolveModeSync(options);
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
   let tempExists = false;
   let originalError: unknown;
@@ -338,7 +338,7 @@ export function replaceFileAtomicSync(
   }
   try {
     tempExists = true;
-    fsModule.writeFileSync(tempPath, options.content, { mode: fileMode, flag: "wx" });
+    fsModule.writeFileSync(tempPath, options.content, { mode, flag: "wx" });
     if (options.syncTempFile) {
       syncTempFileSync(fsModule, tempPath);
     }
@@ -355,7 +355,7 @@ export function replaceFileAtomicSync(
     });
     tempExists = false;
     try {
-      fsModule.chmodSync(filePath, fileMode);
+      fsModule.chmodSync(filePath, mode);
     } catch {
       // Best-effort on platforms that do not enforce POSIX modes.
     }

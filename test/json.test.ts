@@ -9,6 +9,7 @@ import {
   readJsonIfExists,
   tryReadJson,
   writeJson,
+  writeText,
 } from "../src/json.js";
 
 const tempDirs: string[] = [];
@@ -33,6 +34,25 @@ describe("json file helpers", () => {
     await expect(fs.readFile(filePath, "utf8")).resolves.toBe("{\n  \"ok\": true\n}\n");
     await expect(tryReadJson(filePath)).resolves.toEqual({ ok: true });
     await expect(readJson(filePath)).resolves.toEqual({ ok: true });
+  });
+
+  it("uses dirMode and trailingNewline consistently for text writes", async () => {
+    const root = await tempRoot("fs-safe-json-");
+    const filePath = path.join(root, "nested", "note.txt");
+
+    await writeText(filePath, "hello", {
+      dirMode: 0o700,
+      mode: 0o600,
+      trailingNewline: true,
+    });
+
+    await expect(fs.readFile(filePath, "utf8")).resolves.toBe("hello\n");
+    if (process.platform !== "win32") {
+      const dirStat = await fs.stat(path.dirname(filePath));
+      const fileStat = await fs.stat(filePath);
+      expect(dirStat.mode & 0o777).toBe(0o700);
+      expect(fileStat.mode & 0o777).toBe(0o600);
+    }
   });
 
   it("separates nullable and durable read failure semantics", async () => {

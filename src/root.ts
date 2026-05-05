@@ -1435,7 +1435,7 @@ async function writeFileFallback(
     truncateExisting: false,
   });
   const destinationPath = target.realPath;
-  const targetMode = params.mode ?? (target.stat.mode & 0o777);
+  const mode = params.mode ?? (target.stat.mode & 0o777);
   await target.handle.close().catch(() => {});
   let tempPath: string | null = null;
   try {
@@ -1444,7 +1444,7 @@ async function writeFileFallback(
       tempPath,
       data: params.data,
       encoding: params.encoding,
-      mode: targetMode || 0o600,
+      mode: mode || 0o600,
     });
     await fs.rename(tempPath, destinationPath);
     tempPath = null;
@@ -1549,12 +1549,12 @@ async function copyFileFallback(
       truncateExisting: false,
     });
     const destinationPath = target.realPath;
-    const targetMode = params.mode ?? (target.stat.mode & 0o777);
+    const mode = params.mode ?? (target.stat.mode & 0o777);
     await target.handle.close().catch(() => {});
     targetClosedByUs = true;
 
     tempPath = buildAtomicWriteTempPath(destinationPath);
-    tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, targetMode || 0o600);
+    tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, mode || 0o600);
     const sourceStream = createBoundedReadStream(source, params.maxBytes);
     const targetStream = tempHandle.createWriteStream();
     sourceStream.once("close", () => {

@@ -57,7 +57,7 @@ export function jsonStore<T>(options: JsonStoreOptions<T>): JsonStore<T> {
   async function write(value: T): Promise<void> {
     await writeJson(filePath, value, {
       mode: options.mode ?? 0o600,
-      ensureDirMode: options.dirMode ?? 0o700,
+      dirMode: options.dirMode ?? 0o700,
       trailingNewline: options.trailingNewline ?? true,
     });
   }

@@ -224,27 +224,26 @@ export function readJsonSync(filePath: string): unknown {
 export async function writeJson(
   filePath: string,
   value: unknown,
-  options?: { mode?: number; trailingNewline?: boolean; ensureDirMode?: number },
+  options?: { mode?: number; trailingNewline?: boolean; dirMode?: number },
 ) {
   const text = JSON.stringify(value, null, 2);
   await writeText(filePath, text, {
     mode: options?.mode,
-    ensureDirMode: options?.ensureDirMode,
-    appendTrailingNewline: options?.trailingNewline,
+    dirMode: options?.dirMode,
+    trailingNewline: options?.trailingNewline,
   });
 }
 
 export async function writeText(
   filePath: string,
   content: string,
-  options?: { mode?: number; ensureDirMode?: number; appendTrailingNewline?: boolean },
+  options?: { mode?: number; dirMode?: number; trailingNewline?: boolean },
 ) {
   const mode = options?.mode ?? 0o600;
-  const payload =
-    options?.appendTrailingNewline && !content.endsWith("\n") ? `${content}\n` : content;
+  const payload = options?.trailingNewline && !content.endsWith("\n") ? `${content}\n` : content;
   const mkdirOptions: { recursive: true; mode?: number } = { recursive: true };
-  if (typeof options?.ensureDirMode === "number") {
-    mkdirOptions.mode = options.ensureDirMode;
+  if (typeof options?.dirMode === "number") {
+    mkdirOptions.mode = options.dirMode;
   }
   await fs.mkdir(path.dirname(filePath), mkdirOptions);
   const parentDir = path.dirname(filePath);

@@ -71,6 +71,27 @@ describe("secret file helpers", () => {
     }
   });
 
+  it("accepts stricter private secret file and directory modes", async () => {
+    const root = await tempRoot("fs-safe-secret-");
+    const filePath = path.join(root, "nested", "token.txt");
+
+    await writePrivateSecretFileAtomic({
+      rootDir: root,
+      filePath,
+      content: "secret\n",
+      mode: 0o400,
+      dirMode: 0o700,
+    });
+
+    expect(readSecretFileSync(filePath, "API token")).toBe("secret");
+    if (process.platform !== "win32") {
+      const dirStat = await fs.stat(path.dirname(filePath));
+      const fileStat = await fs.stat(filePath);
+      expect(dirStat.mode & 0o777).toBe(0o700);
+      expect(fileStat.mode & 0o777).toBe(0o400);
+    }
+  });
+
   it("rejects writes outside the private secret root", async () => {
     const root = await tempRoot("fs-safe-secret-");
     const outside = await tempRoot("fs-safe-secret-outside-");
