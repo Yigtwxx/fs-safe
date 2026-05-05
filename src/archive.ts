@@ -46,6 +46,13 @@ export type ArchiveLogger = {
   warn?: (message: string) => void;
 };
 
+export {
+  isWindowsDrivePath,
+  normalizeArchiveEntryPath,
+  resolveArchiveOutputPath,
+  stripArchivePath,
+  validateArchiveEntryPath,
+} from "./archive-entry.js";
 export { resolveArchiveKind, resolvePackedRootDir, type ArchiveKind } from "./archive-kind.js";
 export {
   ARCHIVE_LIMIT_ERROR_CODE,

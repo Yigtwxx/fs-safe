@@ -1,12 +1,5 @@
 export { FsSafeError, type FsSafeErrorCode } from "./errors.js";
 export {
-  isWindowsDrivePath,
-  normalizeArchiveEntryPath,
-  resolveArchiveOutputPath,
-  stripArchivePath,
-  validateArchiveEntryPath,
-} from "./archive-entry.js";
-export {
   DEFAULT_SECRET_FILE_MAX_BYTES,
   PRIVATE_SECRET_DIR_MODE,
   PRIVATE_SECRET_FILE_MODE,
@@ -25,7 +18,14 @@ export {
   type ResolvedRootPath,
   type RootPathAliasPolicy,
 } from "./root-path.js";
-export * from "./root-paths.js";
+export {
+  ensureDirectoryWithinRoot,
+  resolveExistingPathsWithinRoot,
+  resolvePathsWithinRoot,
+  resolvePathWithinRoot,
+  resolveStrictExistingPathsWithinRoot,
+  resolveWritablePathWithinRoot,
+} from "./root-paths.js";
 export {
   canUseRootFileOpen,
   matchRootFileOpenFailure,

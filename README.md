@@ -16,7 +16,7 @@ This is a library-level guardrail, not OS-level isolation. It does not replace c
 pnpm add @openclaw/fs-safe
 ```
 
-Node 20.11 or newer. No runtime npm dependencies.
+Node 20.11 or newer. Core root/path/json/temp helpers avoid framework dependencies; archive helpers use `jszip` and `tar` for ZIP/TAR support.
 
 ## Quick start
 
@@ -99,7 +99,7 @@ try {
 
 ## Subpaths
 
-The main entry point re-exports the common surface (`root`, `pathScope`, `FsSafeError`, `pathExists`, `extractArchive`, …). Focused subpaths are useful when you want a leaner import or to depend on a narrower contract.
+The main entry point re-exports the common surface (`root`, `pathScope`, root path resolver helpers, `FsSafeError`, `pathExists`, `extractArchive`, …). Focused subpaths are useful when you want a leaner import or to depend on a narrower contract. Archive entry path plumbing is intentionally available from the archive subpath only.
 
 | Subpath | Contents |
 |---|---|
@@ -107,11 +107,12 @@ The main entry point re-exports the common surface (`root`, `pathScope`, `FsSafe
 | `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
 | `@openclaw/fs-safe/json` | `readJsonFile`, `readJsonFileStrict`, `writeJsonAtomic`, `writeTextAtomic` |
 | `@openclaw/fs-safe/regular-file` | `readRegularFile`, `appendRegularFile`, `appendRegularFileSync`, regular-file stat helpers |
-| `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceDirectoryStaged`, `movePathWithCopyFallback` |
+| `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryStaged`, `movePathWithCopyFallback` |
 | `@openclaw/fs-safe/temp` | `createPrivateTempWorkspace`, `createTempFileTarget`, `writeSiblingTempFile`, `resolveSecureTempRoot` |
 | `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, `ArchiveLimitError`, preflight helpers |
 | `@openclaw/fs-safe/fs` | `pathExists`, `pathExistsSync` |
 | `@openclaw/fs-safe/timing` | `withTimeout` |
+| `@openclaw/fs-safe/home` | `resolveHomeRelativePath` |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode` |
 | `@openclaw/fs-safe/types` | shared types: `DirEntry`, `PathStat`, … |
 | `@openclaw/fs-safe/test-hooks` | hooks the test suite uses to inject races; only active under `NODE_ENV=test` |

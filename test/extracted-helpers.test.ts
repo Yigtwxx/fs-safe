@@ -4,6 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  isWindowsDrivePath,
+  normalizeArchiveEntryPath,
+  resolveArchiveOutputPath,
+  stripArchivePath,
+  validateArchiveEntryPath,
+} from "../src/archive.js";
+import {
   DEFAULT_SECRET_FILE_MAX_BYTES,
   PRIVATE_SECRET_DIR_MODE,
   PRIVATE_SECRET_FILE_MODE,
@@ -11,22 +18,17 @@ import {
   basenameFromMediaSource,
   formatPosixMode,
   isPathInside,
-  isWindowsDrivePath,
   isWithinDir,
   loadSecretFileSync,
   loadJsonFile,
-  normalizeArchiveEntryPath,
   readSecretFileSync,
   readJsonFile,
-  resolveArchiveOutputPath,
   resolveSafeBaseDir,
   resolveSafeInstallDir,
   safeDirName,
   safeFileURLToPath,
   safePathSegmentHashed,
   saveJsonFile,
-  stripArchivePath,
-  validateArchiveEntryPath,
   writePrivateSecretFileAtomic,
   writeJsonAtomic,
 } from "../src/index.js";
