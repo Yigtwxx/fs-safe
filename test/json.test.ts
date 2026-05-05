@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   JsonFileReadError,
   createAsyncLock,
@@ -48,6 +48,36 @@ describe("json file helpers", () => {
       name: "JsonFileReadError",
       reason: "parse",
     } satisfies Partial<JsonFileReadError>);
+  });
+
+  it("does not follow symlink swaps while reading", async () => {
+    const root = await tempRoot("fs-safe-json-swap-");
+    const filePath = path.join(root, "state.json");
+    const secretPath = path.join(root, "secret.json");
+    await fs.writeFile(filePath, "{\"ok\":true}", "utf8");
+    await fs.writeFile(secretPath, "{\"secret\":true}", "utf8");
+
+    const originalLstat = fs.lstat.bind(fs);
+    let swapped = false;
+    const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+      const stat = await originalLstat(...args);
+      if (!swapped && args[0] === filePath) {
+        swapped = true;
+        await fs.rm(filePath, { force: true });
+        await fs.symlink(secretPath, filePath);
+      }
+      return stat;
+    });
+
+    try {
+      await expect(readJsonFileStrict(filePath)).rejects.toMatchObject({
+        name: "JsonFileReadError",
+        reason: "read",
+      } satisfies Partial<JsonFileReadError>);
+      await expect(readJsonFile(filePath)).resolves.toBeNull();
+    } finally {
+      lstatSpy.mockRestore();
+    }
   });
 
   it("serializes work through createAsyncLock", async () => {

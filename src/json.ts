@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import fsSync, { readFileSync } from "node:fs";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { readRegularFile, readRegularFileSync } from "./regular-file.js";
 
 const JSON_FILE_MODE = 0o600;
 const JSON_DIR_MODE = 0o700;
@@ -102,7 +103,7 @@ function writeTempJsonFile(pathname: string, payload: string) {
 
 export function loadJsonFile<T = unknown>(pathname: string): T | undefined {
   try {
-    const raw = fsSync.readFileSync(pathname, "utf8");
+    const raw = readRegularFileSync({ filePath: pathname }).buffer.toString("utf8");
     return JSON.parse(raw) as T;
   } catch {
     return undefined;
@@ -173,7 +174,7 @@ async function replaceFileWithWindowsFallback(tempPath: string, filePath: string
 
 export async function readJsonFile<T>(filePath: string): Promise<T | null> {
   try {
-    const raw = await fs.readFile(filePath, "utf8");
+    const raw = (await readRegularFile({ filePath })).buffer.toString("utf8");
     return JSON.parse(raw) as T;
   } catch {
     return null;
@@ -181,14 +182,23 @@ export async function readJsonFile<T>(filePath: string): Promise<T | null> {
 }
 
 export async function readJsonFileStrict<T>(filePath: string): Promise<T> {
-  const raw = await fs.readFile(filePath, "utf8");
-  return JSON.parse(raw) as T;
+  let raw: string;
+  try {
+    raw = (await readRegularFile({ filePath })).buffer.toString("utf8");
+  } catch (err) {
+    throw new JsonFileReadError(filePath, "read", err);
+  }
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    throw new JsonFileReadError(filePath, "parse", err);
+  }
 }
 
 export async function readDurableJsonFile<T>(filePath: string): Promise<T | null> {
   let raw: string;
   try {
-    raw = await fs.readFile(filePath, "utf8");
+    raw = (await readRegularFile({ filePath })).buffer.toString("utf8");
   } catch (err) {
     if (getErrorCode(err) === "ENOENT") {
       return null;
@@ -204,7 +214,7 @@ export async function readDurableJsonFile<T>(filePath: string): Promise<T | null
 
 export function readJsonFileSync(filePath: string): unknown {
   try {
-    const raw = readFileSync(filePath, "utf8");
+    const raw = readRegularFileSync({ filePath }).buffer.toString("utf8");
     return JSON.parse(raw) as unknown;
   } catch {
     return null;

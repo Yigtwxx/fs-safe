@@ -2,6 +2,7 @@ import type { Stats } from "node:fs";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { sameFileIdentity } from "./file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { assertNoSymlinkParents, assertNoSymlinkParentsSync } from "./symlink-parents.js";
 
@@ -31,6 +32,15 @@ export function resolveRegularFileAppendFlags(
     constants.O_APPEND |
     constants.O_WRONLY |
     (typeof noFollow === "number" ? noFollow : 0)
+  );
+}
+
+function resolveRegularFileReadFlags(): number {
+  return (
+    fsSync.constants.O_RDONLY |
+    (typeof fsSync.constants.O_NOFOLLOW === "number" && process.platform !== "win32"
+      ? fsSync.constants.O_NOFOLLOW
+      : 0)
   );
 }
 
@@ -77,11 +87,67 @@ export async function readRegularFile(params: {
   if (params.maxBytes !== undefined && result.stat.size > params.maxBytes) {
     throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
   }
-  const buffer = await fs.readFile(params.filePath);
+
+  const handle = await fs.open(params.filePath, resolveRegularFileReadFlags());
+  try {
+    const stat = await handle.stat();
+    verifyStableReadTarget({
+      filePath: params.filePath,
+      pathStat: await fs.lstat(params.filePath),
+      postOpenStat: stat,
+      preOpenStat: result.stat,
+    });
+    if (params.maxBytes !== undefined && stat.size > params.maxBytes) {
+      throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
+    }
+    const buffer = await handle.readFile();
+    if (params.maxBytes !== undefined && buffer.byteLength > params.maxBytes) {
+      throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
+    }
+    return { buffer, stat };
+  } finally {
+    await handle.close();
+  }
+}
+
+function verifyStableReadTarget(params: {
+  preOpenStat: Stats;
+  postOpenStat: Stats;
+  pathStat: Stats;
+  filePath: string;
+}): void {
+  if (!params.postOpenStat.isFile() || params.pathStat.isSymbolicLink() || !params.pathStat.isFile()) {
+    throw new Error(`File is not a regular file: ${params.filePath}`);
+  }
+  if (
+    !sameFileIdentity(params.preOpenStat, params.postOpenStat) ||
+    !sameFileIdentity(params.pathStat, params.postOpenStat)
+  ) {
+    throw new Error(`File changed during read: ${params.filePath}`);
+  }
+}
+
+function readOpenedRegularFileSync(params: {
+  fd: number;
+  filePath: string;
+  preOpenStat: Stats;
+  maxBytes?: number;
+}): { buffer: Buffer; stat: Stats } {
+  const stat = fsSync.fstatSync(params.fd);
+  verifyStableReadTarget({
+    filePath: params.filePath,
+    pathStat: fsSync.lstatSync(params.filePath),
+    postOpenStat: stat,
+    preOpenStat: params.preOpenStat,
+  });
+  if (params.maxBytes !== undefined && stat.size > params.maxBytes) {
+    throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
+  }
+  const buffer = fsSync.readFileSync(params.fd);
   if (params.maxBytes !== undefined && buffer.byteLength > params.maxBytes) {
     throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
   }
-  return { buffer, stat: result.stat };
+  return { buffer, stat };
 }
 
 export function readRegularFileSync(params: { filePath: string; maxBytes?: number }): {
@@ -95,11 +161,18 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
   if (params.maxBytes !== undefined && result.stat.size > params.maxBytes) {
     throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
   }
-  const buffer = fsSync.readFileSync(params.filePath);
-  if (params.maxBytes !== undefined && buffer.byteLength > params.maxBytes) {
-    throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
+
+  const fd = fsSync.openSync(params.filePath, resolveRegularFileReadFlags());
+  try {
+    return readOpenedRegularFileSync({
+      fd,
+      filePath: params.filePath,
+      preOpenStat: result.stat,
+      maxBytes: params.maxBytes,
+    });
+  } finally {
+    fsSync.closeSync(fd);
   }
-  return { buffer, stat: result.stat };
 }
 
 function verifyStableAppendTarget(params: {

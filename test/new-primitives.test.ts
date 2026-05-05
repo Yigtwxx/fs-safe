@@ -14,6 +14,8 @@ import {
 import {
   appendRegularFile,
   appendRegularFileSync,
+  readRegularFile,
+  readRegularFileSync,
   resolveRegularFileAppendFlags,
   statRegularFile,
 } from "../src/regular-file.js";
@@ -228,6 +230,58 @@ describe("regular file append", () => {
     await expect(fs.stat(path.join(targetDir, "events.jsonl"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("pins regular file reads against symlink swaps", async () => {
+    const filePath = path.join(root, "read-target.txt");
+    const secretPath = path.join(root, "read-secret.txt");
+    await fs.writeFile(filePath, "safe", "utf8");
+    await fs.writeFile(secretPath, "secret", "utf8");
+
+    const originalLstat = fs.lstat.bind(fs);
+    let swapped = false;
+    const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+      const stat = await originalLstat(...args);
+      if (!swapped && args[0] === filePath) {
+        swapped = true;
+        await fs.rm(filePath, { force: true });
+        await fs.symlink(secretPath, filePath);
+      }
+      return stat;
+    });
+
+    try {
+      await expect(readRegularFile({ filePath })).rejects.toThrow();
+      await expect(fs.readFile(secretPath, "utf8")).resolves.toBe("secret");
+    } finally {
+      lstatSpy.mockRestore();
+    }
+  });
+
+  it("pins sync regular file reads against symlink swaps", async () => {
+    const filePath = path.join(root, "sync-read-target.txt");
+    const secretPath = path.join(root, "sync-read-secret.txt");
+    await fs.writeFile(filePath, "safe", "utf8");
+    await fs.writeFile(secretPath, "secret", "utf8");
+
+    const originalLstatSync = syncFs.lstatSync.bind(syncFs);
+    let swapped = false;
+    const lstatSpy = vi.spyOn(syncFs, "lstatSync").mockImplementation((...args) => {
+      const stat = originalLstatSync(...args);
+      if (!swapped && args[0] === filePath) {
+        swapped = true;
+        syncFs.rmSync(filePath, { force: true });
+        syncFs.symlinkSync(secretPath, filePath);
+      }
+      return stat;
+    });
+
+    try {
+      expect(() => readRegularFileSync({ filePath })).toThrow();
+      await expect(fs.readFile(secretPath, "utf8")).resolves.toBe("secret");
+    } finally {
+      lstatSpy.mockRestore();
+    }
   });
 });
 
