@@ -14,18 +14,9 @@ export type SecretFileReadOptions = {
   rejectSymlink?: boolean;
 };
 
-export type SecretFileReadResult =
-  | {
-      ok: true;
-      secret: string;
-      resolvedPath: string;
-    }
-  | {
-      ok: false;
-      message: string;
-      resolvedPath?: string;
-      error?: unknown;
-    };
+type SecretFileReadOutcome =
+  | { ok: true; secret: string }
+  | { ok: false; message: string; error?: unknown };
 
 function normalizeSecretReadError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
@@ -35,11 +26,11 @@ function resolveUserPath(input: string): string {
   return resolveHomeRelativePath(input);
 }
 
-export function loadSecretFileSync(
+function readSecretFileOutcomeSync(
   filePath: string,
   label: string,
   options: SecretFileReadOptions = {},
-): SecretFileReadResult {
+): SecretFileReadOutcome {
   const trimmedPath = filePath.trim();
   const resolvedPath = resolveUserPath(trimmedPath);
   if (!resolvedPath) {
@@ -55,7 +46,6 @@ export function loadSecretFileSync(
     const normalized = normalizeSecretReadError(error);
     return {
       ok: false,
-      resolvedPath,
       error: normalized,
       message: `Failed to inspect ${label} file at ${resolvedPath}: ${String(normalized)}`,
     };
@@ -64,21 +54,18 @@ export function loadSecretFileSync(
   if (options.rejectSymlink && previewStat.isSymbolicLink()) {
     return {
       ok: false,
-      resolvedPath,
       message: `${label} file at ${resolvedPath} must not be a symlink.`,
     };
   }
   if (!previewStat.isFile()) {
     return {
       ok: false,
-      resolvedPath,
       message: `${label} file at ${resolvedPath} must be a regular file.`,
     };
   }
   if (previewStat.size > maxBytes) {
     return {
       ok: false,
-      resolvedPath,
       message: `${label} file at ${resolvedPath} exceeds ${maxBytes} bytes.`,
     };
   }
@@ -94,7 +81,6 @@ export function loadSecretFileSync(
     );
     return {
       ok: false,
-      resolvedPath,
       error,
       message: `Failed to read ${label} file at ${resolvedPath}: ${String(error)}`,
     };
@@ -106,16 +92,14 @@ export function loadSecretFileSync(
     if (!secret) {
       return {
         ok: false,
-        resolvedPath,
         message: `${label} file at ${resolvedPath} is empty.`,
       };
     }
-    return { ok: true, secret, resolvedPath };
+    return { ok: true, secret };
   } catch (error) {
     const normalized = normalizeSecretReadError(error);
     return {
       ok: false,
-      resolvedPath,
       error: normalized,
       message: `Failed to read ${label} file at ${resolvedPath}: ${String(normalized)}`,
     };
@@ -129,7 +113,7 @@ export function readSecretFileSync(
   label: string,
   options: SecretFileReadOptions = {},
 ): string {
-  const result = loadSecretFileSync(filePath, label, options);
+  const result = readSecretFileOutcomeSync(filePath, label, options);
   if (result.ok) {
     return result.secret;
   }
@@ -144,7 +128,7 @@ export function tryReadSecretFileSync(
   if (!filePath?.trim()) {
     return undefined;
   }
-  const result = loadSecretFileSync(filePath, label, options);
+  const result = readSecretFileOutcomeSync(filePath, label, options);
   return result.ok ? result.secret : undefined;
 }
 

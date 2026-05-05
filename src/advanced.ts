@@ -106,6 +106,19 @@ export {
   type RegularFileStatResult,
 } from "./regular-file.js";
 export {
+  buildRandomTempFilePath,
+  sanitizeTempFileName,
+  type TempFile,
+  tempFile,
+  withTempFile,
+} from "./temp-target.js";
+export {
+  writeSiblingTempFile,
+  writeViaSiblingTempPath,
+  type WriteSiblingTempFileOptions,
+  type WriteSiblingTempFileResult,
+} from "./sibling-temp.js";
+export {
   createIcaclsResetCommand,
   formatIcaclsResetCommand,
   formatWindowsAclSummary,
@@ -131,7 +144,3 @@ export {
   type PrivateStateStore,
   type PrivateStateStoreOptions,
 } from "./private-file-store.js";
-export {
-  loadSecretFileSync,
-  type SecretFileReadResult,
-} from "./secret-file.js";

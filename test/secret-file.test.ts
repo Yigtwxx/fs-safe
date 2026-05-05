@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   PRIVATE_SECRET_DIR_MODE,
   PRIVATE_SECRET_FILE_MODE,
-  loadSecretFileSync,
   readSecretFileSync,
   tryReadSecretFileSync,
   writeSecretFileAtomic,
@@ -32,11 +31,6 @@ describe("secret file helpers", () => {
     expect(readSecretFileSync(filePath, "API token")).toBe("secret");
     expect(tryReadSecretFileSync(filePath, "API token")).toBe("secret");
     expect(tryReadSecretFileSync(undefined, "API token")).toBeUndefined();
-    expect(loadSecretFileSync(filePath, "API token")).toMatchObject({
-      ok: true,
-      resolvedPath: filePath,
-      secret: "secret",
-    });
   });
 
   it("can reject symlinked secret paths", async () => {
@@ -46,10 +40,10 @@ describe("secret file helpers", () => {
     await fs.writeFile(target, "secret", "utf8");
     await fs.symlink(target, link);
 
-    expect(loadSecretFileSync(link, "API token", { rejectSymlink: true })).toMatchObject({
-      ok: false,
-      message: `API token file at ${link} must not be a symlink.`,
-    });
+    expect(() => readSecretFileSync(link, "API token", { rejectSymlink: true })).toThrow(
+      `API token file at ${link} must not be a symlink.`,
+    );
+    expect(tryReadSecretFileSync(link, "API token", { rejectSymlink: true })).toBeUndefined();
   });
 
   it("writes private secret files under a non-symlink root", async () => {

@@ -111,14 +111,14 @@ that OpenClaw needs to compose higher-level APIs are grouped under
 | `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants |
 | `@openclaw/fs-safe/store` | `fileStore`, `jsonStore`, and `privateStateStore` |
-| `@openclaw/fs-safe/secret` | strict and result-shaped secret file read/write helpers |
+| `@openclaw/fs-safe/secret` | strict and try-style secret file read/write helpers |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
-| `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `tempFile`, `writeSiblingTempFile`, `resolveSecureTempRoot` |
+| `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `withTempWorkspace`, `resolveSecureTempRoot` |
 | `@openclaw/fs-safe/secure-file` | fd-pinned absolute file reads with owner, mode, ACL, trusted-dir, size, and timeout checks |
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection plus remediation formatting helpers |
 | `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
 | `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, `ArchiveLimitError`, preflight helpers |
-| `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, pinned open, sidecar locks, install paths, filename sanitizing, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
+| `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, pinned open, sidecar locks, install paths, filename sanitizing, temp-file targets, sibling-temp writes, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode` |
 | `@openclaw/fs-safe/types` | shared types: `DirEntry`, `PathStat`, … |
 | `@openclaw/fs-safe/test-hooks` | hooks the test suite uses to inject races; only active under `NODE_ENV=test` |
@@ -200,12 +200,12 @@ await media.pruneExpired({ ttlMs: 10 * 60 * 1000, recursive: true });
 `tempWorkspace()` also exposes `writeText()`, `writeJson()`, and `copyIn()` for
 single-file scratch workflows without hand-rolled path joins.
 
-`tempFile()` is the smaller one-file temp helper. It defaults to the
-secure fs-safe temp root, supports `await using`, and exposes `file(name)` for
-additional sibling paths inside the same private temp directory:
+`tempFile()` is the smaller one-file temp helper. It is intentionally an
+advanced primitive: use `tempWorkspace()` for the stable temp surface and reach
+for `tempFile()` only when you need a raw file target.
 
 ```ts
-import { tempFile } from "@openclaw/fs-safe/temp";
+import { tempFile } from "@openclaw/fs-safe/advanced";
 
 await using target = await tempFile({ prefix: "download", fileName: "payload.bin" });
 await fs.promises.writeFile(target.path, bytes);

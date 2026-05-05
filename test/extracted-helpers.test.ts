@@ -24,8 +24,8 @@ import {
   DEFAULT_SECRET_FILE_MAX_BYTES,
   PRIVATE_SECRET_DIR_MODE,
   PRIVATE_SECRET_FILE_MODE,
-  loadSecretFileSync,
   readSecretFileSync,
+  tryReadSecretFileSync,
   writeSecretFileAtomic,
 } from "../src/secret-file.js";
 
@@ -151,11 +151,7 @@ describe("secret file helpers", () => {
     await fs.writeFile(filePath, " top-secret \n", "utf8");
 
     expect(readSecretFileSync(filePath, "Gateway password")).toBe("top-secret");
-    expect(loadSecretFileSync(filePath, "Gateway password")).toMatchObject({
-      ok: true,
-      resolvedPath: filePath,
-      secret: "top-secret",
-    });
+    expect(tryReadSecretFileSync(filePath, "Gateway password")).toBe("top-secret");
 
     await fs.writeFile(filePath, "x".repeat(DEFAULT_SECRET_FILE_MAX_BYTES + 1), "utf8");
     expect(() => readSecretFileSync(filePath, "Gateway password")).toThrow(
@@ -172,10 +168,7 @@ describe("secret file helpers", () => {
       content: '{"ok":true}\n',
     });
 
-    expect(loadSecretFileSync(filePath, "Gateway password")).toMatchObject({
-      ok: true,
-      secret: '{"ok":true}',
-    });
+    expect(readSecretFileSync(filePath, "Gateway password")).toBe('{"ok":true}');
     if (process.platform !== "win32") {
       const dirStat = await fs.stat(path.dirname(filePath));
       const fileStat = await fs.stat(filePath);

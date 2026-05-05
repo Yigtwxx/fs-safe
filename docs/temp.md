@@ -1,6 +1,6 @@
 # Temp workspaces
 
-`@openclaw/fs-safe/temp` covers four overlapping needs: a private temp **directory** with auto-cleanup, a private temp **file path** for sibling writes, the secure per-user temp root the helpers default to, and ad-hoc sibling-temp file creation.
+`@openclaw/fs-safe/temp` is the stable temp surface: private temp **workspaces** with auto-cleanup plus the secure per-user temp root the helpers default to.
 
 ```ts
 import {
@@ -8,10 +8,6 @@ import {
   withTempWorkspace,
   tempWorkspaceSync,
   withTempWorkspaceSync,
-  tempFile,
-  withTempFile,
-  writeSiblingTempFile,
-  writeViaSiblingTempPath,
   resolveSecureTempRoot,
 } from "@openclaw/fs-safe/temp";
 ```
@@ -94,14 +90,16 @@ type TempWorkspaceOptions = {
 };
 ```
 
-## Temp file targets
+## Advanced temp primitives
 
-When you don't need a whole directory — just one temp file path under your control — use the file-target helpers. They produce a path inside a private workspace and clean up the enclosing directory.
+When you don't need the stable workspace abstraction, the lower-level temp-file
+and sibling-temp helpers live behind `@openclaw/fs-safe/advanced`. They are
+composition primitives for stores and atomic writers, not the primary API.
 
 ### `tempFile`
 
 ```ts
-import { tempFile } from "@openclaw/fs-safe/temp";
+import { tempFile } from "@openclaw/fs-safe/advanced";
 
 const target = await tempFile({ fileName: "report.pdf", prefix: "render-" });
 try {
@@ -129,7 +127,7 @@ type TempFile = {
 Same shape with auto-cleanup:
 
 ```ts
-import { withTempFile } from "@openclaw/fs-safe/temp";
+import { withTempFile } from "@openclaw/fs-safe/advanced";
 
 await withTempFile({ fileName: "out.zip", prefix: "pack-" }, async (filePath) => {
   await pack(filePath);
@@ -144,7 +142,7 @@ When you want to write to a temp file in **the same directory** as a future dest
 ### `writeSiblingTempFile`
 
 ```ts
-import { writeSiblingTempFile } from "@openclaw/fs-safe/temp";
+import { writeSiblingTempFile } from "@openclaw/fs-safe/advanced";
 
 const result = await writeSiblingTempFile<string>({
   dir: "/srv/workspace",
@@ -165,7 +163,7 @@ const result = await writeSiblingTempFile<string>({
 A higher-level convenience — write content + rename in one call:
 
 ```ts
-import { writeViaSiblingTempPath } from "@openclaw/fs-safe/temp";
+import { writeViaSiblingTempPath } from "@openclaw/fs-safe/advanced";
 
 await writeViaSiblingTempPath({
   rootDir: "/srv/workspace",
@@ -220,7 +218,7 @@ await withTempWorkspace({ rootDir: "/srv/site/tmp", prefix: "build-" }, async (w
 ### Stream a download to a sibling temp, then commit
 
 ```ts
-import { writeSiblingTempFile } from "@openclaw/fs-safe/temp";
+import { writeSiblingTempFile } from "@openclaw/fs-safe/advanced";
 import fs from "node:fs/promises";
 
 const r = await writeSiblingTempFile({

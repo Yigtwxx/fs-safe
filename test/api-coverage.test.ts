@@ -69,7 +69,6 @@ import {
 import { replaceDirectoryAtomic } from "../src/replace-directory.js";
 import { openLocalFileSafely, readLocalFileSafely, root as openRoot } from "../src/root.js";
 import {
-  loadSecretFileSync,
   readSecretFileSync,
   tryReadSecretFileSync,
   writeSecretFileAtomic,
@@ -809,18 +808,18 @@ describe("secret files and temp roots", () => {
     const root = await tempRoot("fs-safe-secret-extra-");
     const empty = path.join(root, "empty.txt");
     await fs.writeFile(empty, " \n", "utf8");
-    expect(loadSecretFileSync("", "Token")).toMatchObject({ ok: false });
-    expect(loadSecretFileSync(path.join(root, "missing.txt"), "Token")).toMatchObject({
-      ok: false,
-    });
-    expect(loadSecretFileSync(root, "Token")).toMatchObject({ ok: false });
-    expect(loadSecretFileSync(empty, "Token")).toMatchObject({ ok: false });
+    expect(() => readSecretFileSync("", "Token")).toThrow("Token file path is empty.");
+    expect(() => readSecretFileSync(path.join(root, "missing.txt"), "Token")).toThrow(
+      "Failed to inspect Token file",
+    );
+    expect(() => readSecretFileSync(root, "Token")).toThrow("must be a regular file");
+    expect(() => readSecretFileSync(empty, "Token")).toThrow("is empty");
     expect(tryReadSecretFileSync("", "Token")).toBeUndefined();
     expect(tryReadSecretFileSync(path.join(root, "missing.txt"), "Token")).toBeUndefined();
 
     const big = path.join(root, "big.txt");
     await fs.writeFile(big, "12345", "utf8");
-    expect(loadSecretFileSync(big, "Token", { maxBytes: 2 })).toMatchObject({ ok: false });
+    expect(() => readSecretFileSync(big, "Token", { maxBytes: 2 })).toThrow("exceeds 2 bytes");
 
     const target = path.join(root, "private", "token.txt");
     await writeSecretFileAtomic({ rootDir: root, filePath: target, content: "secret\n" });
