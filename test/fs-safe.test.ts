@@ -65,12 +65,16 @@ describe("@openclaw/fs-safe", () => {
     const rootPath = await tempRoot("fs-safe-if-missing-");
     const root = await openRoot(rootPath);
 
-    await expect(root.create("nested/file.txt", "first")).resolves.toBe(true);
-    await expect(root.create("nested/file.txt", "second")).resolves.toBe(false);
+    await expect(root.create("nested/file.txt", "first")).resolves.toBeUndefined();
+    await expect(root.create("nested/file.txt", "second")).rejects.toMatchObject({
+      code: "already-exists",
+    });
     await expect(readFile(path.join(rootPath, "nested/file.txt"), "utf8")).resolves.toBe("first");
 
-    await expect(root.createJson("state.json", { ok: true })).resolves.toBe(true);
-    await expect(root.createJson("state.json", { ok: false })).resolves.toBe(false);
+    await expect(root.createJson("state.json", { ok: true })).resolves.toBeUndefined();
+    await expect(root.createJson("state.json", { ok: false })).rejects.toMatchObject({
+      code: "already-exists",
+    });
     await expect(readFile(path.join(rootPath, "state.json"), "utf8")).resolves.toBe(
       '{"ok":true}\n',
     );
@@ -88,6 +92,8 @@ describe("@openclaw/fs-safe", () => {
     const stat = await root.stat("nested/file.txt");
     expect(stat.isFile).toBe(true);
     expect(stat.size).toBe(5);
+    await expect(root.exists("nested/file.txt")).resolves.toBe(true);
+    await expect(root.exists("nested/missing.txt")).resolves.toBe(false);
 
     await expect(root.list("nested")).resolves.toEqual(["file.txt"]);
     const entries = await root.list("nested", { withFileTypes: true });
@@ -142,6 +148,21 @@ describe("@openclaw/fs-safe", () => {
     await expect(root.move("link", "moved-link")).rejects.toMatchObject({
       code: "path-alias",
     });
+  });
+
+  it("requires explicit overwrite for moves that replace a target", async () => {
+    const rootPath = await tempRoot("fs-safe-rename-overwrite-");
+    const root = await openRoot(rootPath);
+    await root.write("from.txt", "source");
+    await root.write("to.txt", "target");
+
+    await expect(root.move("from.txt", "to.txt")).rejects.toMatchObject({
+      code: "already-exists",
+    });
+    await expect(readFile(path.join(rootPath, "to.txt"), "utf8")).resolves.toBe("target");
+
+    await root.move("from.txt", "to.txt", { overwrite: true });
+    await expect(readFile(path.join(rootPath, "to.txt"), "utf8")).resolves.toBe("source");
   });
 
   it("removes symlink leaves without following them", async () => {

@@ -121,6 +121,23 @@ export function resolveHomeRelativePath(
   return path.resolve(trimmed);
 }
 
+export function resolveUserPath(
+  input: string,
+  optsOrEnv?:
+    | {
+        env?: NodeJS.ProcessEnv;
+        homedir?: () => string;
+      }
+    | NodeJS.ProcessEnv,
+  homedir?: () => string,
+): string {
+  const opts =
+    optsOrEnv && ("env" in optsOrEnv || "homedir" in optsOrEnv)
+      ? optsOrEnv
+      : { env: optsOrEnv as NodeJS.ProcessEnv | undefined, homedir };
+  return resolveHomeRelativePath(input, opts);
+}
+
 export function resolveOsHomeRelativePath(
   input: string,
   opts?: {

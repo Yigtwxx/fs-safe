@@ -3,7 +3,7 @@ import fsSync from "node:fs";
 
 import { FsSafeError } from "./errors.js";
 import { splitSafeRelativePath } from "./path.js";
-import type { SafeDirEntry, SafePathStat } from "./types.js";
+import type { DirEntry, PathStat } from "./types.js";
 
 const PINNED_HELPER_SOURCE = String.raw`
 import base64
@@ -417,11 +417,11 @@ export async function runPinnedHelper<T>(
 
 export type HelperReadResult = {
   base64: string;
-  stat: SafePathStat;
+  stat: PathStat;
 };
 
-export async function helperStat(rootDir: string, relativePath: string): Promise<SafePathStat> {
-  return await runPinnedHelper<SafePathStat>("stat", rootDir, { relativePath });
+export async function helperStat(rootDir: string, relativePath: string): Promise<PathStat> {
+  return await runPinnedHelper<PathStat>("stat", rootDir, { relativePath });
 }
 
 export async function helperReaddir(
@@ -433,13 +433,13 @@ export async function helperReaddir(
   rootDir: string,
   relativePath: string,
   withFileTypes: true,
-): Promise<SafeDirEntry[]>;
+): Promise<DirEntry[]>;
 export async function helperReaddir(
   rootDir: string,
   relativePath: string,
   withFileTypes: boolean,
-): Promise<string[] | SafeDirEntry[]> {
-  return await runPinnedHelper<string[] | SafeDirEntry[]>("readdir", rootDir, {
+): Promise<string[] | DirEntry[]> {
+  return await runPinnedHelper<string[] | DirEntry[]>("readdir", rootDir, {
     relativePath,
     withFileTypes,
   });

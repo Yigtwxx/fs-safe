@@ -1,4 +1,5 @@
-import fs from "node:fs/promises";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
 
 /**
  * Returns true when `fs.stat()` can stat the path.
@@ -8,7 +9,20 @@ import fs from "node:fs/promises";
  */
 export async function pathExists(filePath: string): Promise<boolean> {
   try {
-    await fs.stat(filePath);
+    await fsp.stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Synchronous counterpart to `pathExists()`, with the same `fs.statSync()`
+ * semantics.
+ */
+export function pathExistsSync(filePath: string): boolean {
+  try {
+    fs.statSync(filePath);
     return true;
   } catch {
     return false;

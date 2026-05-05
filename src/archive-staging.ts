@@ -199,7 +199,7 @@ export async function mergeExtractedTreeIntoDestination(params: {
         originalPath,
         isDirectory: false,
       });
-      await targetRoot.copyFrom(sourcePath, relPath, { mkdir: true });
+      await targetRoot.copyIn(relPath, sourcePath, { mkdir: true });
       await applyStagedEntryMode({
         destinationRealDir: params.destinationRealDir,
         relPath,

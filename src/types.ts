@@ -2,7 +2,7 @@ export type FastPathMode = "auto" | "never" | "require";
 
 export type SafeEncoding = BufferEncoding | null;
 
-export type SafePathStat = {
+export type PathStat = {
   dev: number;
   gid: number;
   ino: number;
@@ -16,7 +16,7 @@ export type SafePathStat = {
   uid: number;
 };
 
-export type SafeDirEntry = SafePathStat & {
+export type DirEntry = PathStat & {
   name: string;
 };
 

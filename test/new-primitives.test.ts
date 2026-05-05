@@ -3,8 +3,20 @@ import syncFs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { privateFileStore, writePrivateJsonAtomicSync } from "../src/private-file-store.js";
-import { statRegularFile } from "../src/regular-file.js";
+import {
+  privateFileStore,
+  readPrivateJson,
+  readPrivateJsonSync,
+  readPrivateText,
+  readPrivateTextSync,
+  writePrivateJsonAtomicSync,
+} from "../src/private-file-store.js";
+import {
+  appendRegularFile,
+  appendRegularFileSync,
+  resolveRegularFileAppendFlags,
+  statRegularFile,
+} from "../src/regular-file.js";
 import {
   createPrivateTempWorkspace,
   createPrivateTempWorkspaceSync,
@@ -80,17 +92,107 @@ describe("private file store", () => {
     expect(await fs.readFile(path.join(root, "nested", "state.json"), "utf8")).toBe(
       '{\n  "ok": true\n}\n',
     );
+    await expect(store.readJson("nested/state.json")).resolves.toEqual({ ok: true });
   });
 
   it("rejects paths outside the store root", async () => {
     const store = privateFileStore(root);
     await expect(store.writeText("../escape.txt", "nope")).rejects.toThrow(/stay under/);
+    await expect(store.readText("../escape.txt")).rejects.toThrow(/stay under/);
   });
 
   it("supports sync JSON writes", async () => {
     const filePath = path.join(root, "sync.json");
     writePrivateJsonAtomicSync({ rootDir: root, filePath, value: { ok: true } });
     expect(JSON.parse(await fs.readFile(filePath, "utf8"))).toEqual({ ok: true });
+  });
+
+  it("reads private text and JSON by absolute path", async () => {
+    const textPath = path.join(root, "state.txt");
+    const jsonPath = path.join(root, "state.json");
+    await fs.writeFile(textPath, "hello", "utf8");
+    await fs.writeFile(jsonPath, '{"ok":true}', "utf8");
+
+    await expect(readPrivateText({ rootDir: root, filePath: textPath })).resolves.toBe("hello");
+    await expect(readPrivateJson({ rootDir: root, filePath: jsonPath })).resolves.toEqual({
+      ok: true,
+    });
+    await expect(readPrivateText({ rootDir: root, filePath: path.join(root, "missing") }))
+      .resolves
+      .toBeNull();
+  });
+
+  it("reads private text and JSON synchronously", async () => {
+    const textPath = path.join(root, "sync-state.txt");
+    const jsonPath = path.join(root, "sync-state.json");
+    await fs.writeFile(textPath, "hello", "utf8");
+    await fs.writeFile(jsonPath, '{"ok":true}', "utf8");
+
+    expect(readPrivateTextSync({ rootDir: root, filePath: textPath })).toBe("hello");
+    expect(readPrivateJsonSync({ rootDir: root, filePath: jsonPath })).toEqual({ ok: true });
+    expect(readPrivateTextSync({ rootDir: root, filePath: path.join(root, "missing") })).toBeNull();
+  });
+});
+
+describe("regular file append", () => {
+  it("keeps append flags usable when O_NOFOLLOW is unavailable", () => {
+    expect(
+      resolveRegularFileAppendFlags({
+        O_APPEND: 0x01,
+        O_CREAT: 0x02,
+        O_WRONLY: 0x04,
+      }),
+    ).toBe(0x07);
+  });
+
+  it("appends with restrictive permissions and honors max bytes", async () => {
+    const filePath = path.join(root, "events.jsonl");
+    await appendRegularFile({ filePath, content: "12345\n", maxFileBytes: 6 });
+    await appendRegularFile({ filePath, content: "after\n", maxFileBytes: 6 });
+
+    expect(await fs.readFile(filePath, "utf8")).toBe("12345\n");
+    if (process.platform !== "win32") {
+      expect((await fs.stat(filePath)).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it("appends synchronously with restrictive permissions and honors max bytes", async () => {
+    const filePath = path.join(root, "sync-events.jsonl");
+    appendRegularFileSync({ filePath, content: "12345\n", maxFileBytes: 6 });
+    appendRegularFileSync({ filePath, content: "after\n", maxFileBytes: 6 });
+
+    expect(await fs.readFile(filePath, "utf8")).toBe("12345\n");
+    if (process.platform !== "win32") {
+      expect((await fs.stat(filePath)).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it.runIf(process.platform !== "win32")("rejects symlink leaves synchronously", async () => {
+    const target = path.join(root, "target.txt");
+    const link = path.join(root, "link.txt");
+    await fs.writeFile(target, "secret", "utf8");
+    await fs.symlink(target, link);
+
+    expect(() => appendRegularFileSync({ filePath: link, content: "line\n" })).toThrow(/symlink/);
+    expect(await fs.readFile(target, "utf8")).toBe("secret");
+  });
+
+  it.runIf(process.platform !== "win32")("rejects symlink parents", async () => {
+    const targetDir = path.join(root, "target");
+    const linkDir = path.join(root, "link");
+    await fs.mkdir(targetDir);
+    await fs.symlink(targetDir, linkDir);
+
+    await expect(
+      appendRegularFile({
+        filePath: path.join(linkDir, "events.jsonl"),
+        content: "line\n",
+        rejectSymlinkParents: true,
+      }),
+    ).rejects.toThrow(/symlinked directory/);
+    await expect(fs.stat(path.join(targetDir, "events.jsonl"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });
 

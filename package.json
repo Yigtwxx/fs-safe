@@ -35,9 +35,21 @@
       "types": "./dist/fs.d.ts",
       "default": "./dist/fs.js"
     },
+    "./regular-file": {
+      "types": "./dist/regular-file.d.ts",
+      "default": "./dist/regular-file.js"
+    },
+    "./local-roots": {
+      "types": "./dist/local-roots.d.ts",
+      "default": "./dist/local-roots.js"
+    },
     "./timing": {
       "types": "./dist/timing.d.ts",
       "default": "./dist/timing.js"
+    },
+    "./home": {
+      "types": "./dist/home-dir.d.ts",
+      "default": "./dist/home-dir.js"
     },
     "./temp": {
       "types": "./dist/temp.d.ts",
@@ -62,18 +74,6 @@
     "./test-hooks": {
       "types": "./dist/test-hooks.d.ts",
       "default": "./dist/test-hooks.js"
-    },
-    "./internal/pinned-open": {
-      "types": "./dist/pinned-open.d.ts",
-      "default": "./dist/pinned-open.js"
-    },
-    "./internal/pinned-path": {
-      "types": "./dist/pinned-path.d.ts",
-      "default": "./dist/pinned-path.js"
-    },
-    "./internal/pinned-write": {
-      "types": "./dist/pinned-write.d.ts",
-      "default": "./dist/pinned-write.js"
     }
   },
   "scripts": {

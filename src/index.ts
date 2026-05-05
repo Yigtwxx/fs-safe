@@ -54,6 +54,15 @@ export {
   trySafeFileURLToPath,
 } from "./local-file-access.js";
 export {
+  readLocalFileFromRoots,
+  resolveLocalPathFromRootsSync,
+  type LocalRootsInputOptions,
+  type LocalRootsPathResult,
+  type LocalRootsReadResult,
+  type ReadLocalFileFromRootsOptions,
+  type ResolveLocalPathFromRootsSyncOptions,
+} from "./local-roots.js";
+export {
   isPathInside,
   isPathInsideWithRealpath,
   isWithinDir,
@@ -95,13 +104,27 @@ export {
 } from "./json.js";
 export {
   privateFileStore,
+  readPrivateJson,
+  readPrivateJsonSync,
+  readPrivateText,
+  readPrivateTextSync,
   writePrivateJsonAtomic,
   writePrivateJsonAtomicSync,
   writePrivateTextAtomic,
   writePrivateTextAtomicSync,
   type PrivateFileStore,
 } from "./private-file-store.js";
-export { readRegularFile, statRegularFile, type RegularFileStatResult } from "./regular-file.js";
+export {
+  appendRegularFile,
+  appendRegularFileSync,
+  readRegularFile,
+  readRegularFileSync,
+  resolveRegularFileAppendFlags,
+  statRegularFile,
+  statRegularFileSync,
+  type AppendRegularFileOptions,
+  type RegularFileStatResult,
+} from "./regular-file.js";
 export * from "./atomic.js";
 export * from "./temp.js";
 export {
@@ -126,7 +149,7 @@ export {
   type SidecarLockHeldEntry,
   type SidecarLockRetryOptions,
 } from "./sidecar-lock.js";
-export { pathExists } from "./fs.js";
+export { pathExists, pathExistsSync } from "./fs.js";
 export { withTimeout } from "./timing.js";
 export { movePathToTrash, type MovePathToTrashOptions } from "./trash.js";
 export {
@@ -158,9 +181,9 @@ export {
 export type {
   BasePathOptions,
   FastPathMode,
-  SafeDirEntry,
+  DirEntry,
   SafeEncoding,
-  SafePathStat,
+  PathStat,
 } from "./types.js";
 
 export * from "./root.js";

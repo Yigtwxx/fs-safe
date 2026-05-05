@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { readLocalFileFromRoots, resolveLocalPathFromRootsSync } from "../src/local-roots.js";
 import {
   pathScope,
   resolveExistingPathsWithinRoot,
@@ -128,5 +129,76 @@ describe("root path list helpers", () => {
     });
 
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("local roots helpers", () => {
+  it("reads a regular file from one configured root", async () => {
+    await withFixtureRoot(async ({ uploadsDir }) => {
+      const filePath = path.join(uploadsDir, "ok.txt");
+      await fs.writeFile(filePath, "ok", "utf8");
+
+      const result = await readLocalFileFromRoots({
+        filePath,
+        roots: [uploadsDir],
+        label: "media roots",
+      });
+
+      expect(result?.buffer.toString("utf8")).toBe("ok");
+      expect(result?.realPath).toBe(await fs.realpath(filePath));
+      expect(result?.root).toBe(await fs.realpath(uploadsDir));
+    });
+  });
+
+  it.runIf(process.platform !== "win32")("rejects symlink escapes while reading", async () => {
+    await withFixtureRoot(async ({ baseDir, uploadsDir }) => {
+      const outsideDir = path.join(baseDir, "outside");
+      await fs.mkdir(outsideDir, { recursive: true });
+      await fs.writeFile(path.join(outsideDir, "secret.txt"), "secret", "utf8");
+      await fs.symlink(outsideDir, path.join(uploadsDir, "alias"));
+
+      const result = await readLocalFileFromRoots({
+        filePath: path.join(uploadsDir, "alias", "secret.txt"),
+        roots: [uploadsDir],
+        label: "media roots",
+      });
+
+      expect(result).toBeNull();
+    });
+  });
+
+  it("resolves existing and missing paths only when canonicalized inside a root", async () => {
+    await withFixtureRoot(async ({ baseDir, uploadsDir }) => {
+      const filePath = path.join(uploadsDir, "ok.txt");
+      const missingPath = path.join(uploadsDir, "new", "later.txt");
+      const outsidePath = path.join(baseDir, "outside.txt");
+      await fs.writeFile(filePath, "ok", "utf8");
+      const uploadsReal = await fs.realpath(uploadsDir);
+
+      expect(
+        resolveLocalPathFromRootsSync({
+          filePath,
+          roots: [uploadsDir],
+          label: "media roots",
+          requireFile: true,
+        }),
+      ).toEqual({ path: await fs.realpath(filePath), root: uploadsReal });
+      expect(
+        resolveLocalPathFromRootsSync({
+          filePath: missingPath,
+          roots: [uploadsDir],
+          label: "media roots",
+          allowMissing: true,
+        })?.path,
+      ).toBe(path.join(uploadsReal, "new", "later.txt"));
+      expect(
+        resolveLocalPathFromRootsSync({
+          filePath: outsidePath,
+          roots: [uploadsDir],
+          label: "media roots",
+          allowMissing: true,
+        }),
+      ).toBeNull();
+    });
   });
 });

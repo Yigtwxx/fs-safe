@@ -21,29 +21,29 @@ import {
 import { helperReaddir, helperStat, runPinnedHelper } from "./pinned-helper.js";
 import { resolveRootPath } from "./root-path.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
-import type { SafeDirEntry, SafePathStat } from "./types.js";
+import type { DirEntry, PathStat } from "./types.js";
 
-export type SafeOpenResult = {
+export type OpenResult = {
   handle: FileHandle;
   realPath: string;
   stat: Stats;
 };
 
-export type SafeLocalReadResult = {
+export type ReadResult = {
   buffer: Buffer;
   realPath: string;
   stat: Stats;
 };
 
-export type SafeRootContext = {
+type RootContext = {
   rootDir: string;
   rootReal: string;
   rootWithSep: string;
 };
 
-export type SafeRootOptions = {
+export type RootOptions = {
   rootDir: string;
-  defaults?: SafeRootDefaults;
+  defaults?: RootDefaults;
 };
 
 export type SymlinkPolicy = "reject" | "follow-within-root";
@@ -58,41 +58,39 @@ export type RootDefaults = {
   symlinks?: SymlinkPolicy;
 };
 
-export type SafeRootDefaults = RootDefaults;
-
-export type SafeRootReadOptions = Pick<
+export type RootReadOptions = Pick<
   RootDefaults,
   "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks"
 >;
 
-export type SafeRootOpenOptions = Omit<SafeRootReadOptions, "maxBytes">;
+export type RootOpenOptions = Omit<RootReadOptions, "maxBytes">;
 
-export type SafeRootWriteOptions = Pick<RootDefaults, "encoding" | "mkdir">;
+export type RootWriteOptions = Pick<RootDefaults, "encoding" | "mkdir">;
 
-export type SafeRootOpenWritableOptions = Pick<RootDefaults, "mkdir"> & {
+export type RootOpenWritableOptions = Pick<RootDefaults, "mkdir"> & {
   mode?: number;
   truncateExisting?: boolean;
   append?: boolean;
 };
 
-export type SafeRootCopyOptions = Pick<RootDefaults, "maxBytes" | "mkdir"> & {
+export type RootCopyOptions = Pick<RootDefaults, "maxBytes" | "mkdir"> & {
   sourceHardlinks?: HardlinkPolicy;
 };
 
-export type SafeRootWriteJsonOptions = SafeRootWriteOptions & {
+export type RootWriteJsonOptions = RootWriteOptions & {
   replacer?: Parameters<typeof JSON.stringify>[1];
   space?: Parameters<typeof JSON.stringify>[2];
   trailingNewline?: boolean;
 };
 
-export type SafeRootCreateOptions = SafeRootWriteOptions;
-export type SafeRootCreateJsonOptions = SafeRootWriteJsonOptions;
+export type RootCreateOptions = RootWriteOptions;
+export type RootCreateJsonOptions = RootWriteJsonOptions;
 
-export type SafeRootAppendOptions = SafeRootWriteOptions & {
+export type RootAppendOptions = RootWriteOptions & {
   prependNewlineIfNeeded?: boolean;
 };
 
-type SafeRootReadParams = SafeRootReadOptions;
+type RootReadParams = RootReadOptions;
 
 function logWarn(message: string): void {
   if (process.env.FS_SAFE_DEBUG_WARNINGS === "1") {
@@ -147,7 +145,7 @@ async function openVerifiedLocalFile(
     nonBlockingRead?: boolean;
     symlinks?: SymlinkPolicy;
   },
-): Promise<SafeOpenResult> {
+): Promise<OpenResult> {
   const fsSafeTestHooks = getFsSafeTestHooks();
   // Reject directories before opening so we never surface EISDIR to callers (e.g. tool
   // results that get sent to messaging channels). See openclaw/openclaw#31186.
@@ -241,7 +239,7 @@ async function openVerifiedLocalFile(
   }
 }
 
-async function resolveSafeRootContext(rootDir: string): Promise<SafeRootContext> {
+async function resolveRootContext(rootDir: string): Promise<RootContext> {
   let rootReal: string;
   try {
     rootReal = await fs.realpath(rootDir);
@@ -258,8 +256,8 @@ async function resolveSafeRootContext(rootDir: string): Promise<SafeRootContext>
   };
 }
 
-async function resolvePathInSafeRoot(
-  root: SafeRootContext,
+async function resolvePathInRoot(
+  root: RootContext,
   relativePath: string,
 ): Promise<{ rootReal: string; rootWithSep: string; resolved: string }> {
   const expanded = await expandRelativePathWithHome(relativePath);
@@ -274,26 +272,86 @@ async function resolvePathWithinRoot(params: {
   rootDir: string;
   relativePath: string;
 }): Promise<{ rootReal: string; rootWithSep: string; resolved: string }> {
-  return await resolvePathInSafeRoot(
-    await resolveSafeRootContext(params.rootDir),
+  return await resolvePathInRoot(
+    await resolveRootContext(params.rootDir),
     params.relativePath,
   );
 }
 
-export class SafeRoot {
+export interface Root {
   readonly rootDir: string;
   readonly rootReal: string;
   readonly rootWithSep: string;
-  readonly defaults: SafeRootDefaults;
+  readonly defaults: RootDefaults;
 
-  constructor(context: SafeRootContext, defaults: SafeRootDefaults = {}) {
+  resolve(relativePath: string): Promise<string>;
+  open(relativePath: string, options?: RootOpenOptions): Promise<OpenResult>;
+  read(relativePath: string, options?: RootReadOptions): Promise<ReadResult>;
+  readBytes(relativePath: string, options?: RootReadOptions): Promise<Buffer>;
+  readText(
+    relativePath: string,
+    options?: RootReadOptions & { encoding?: BufferEncoding },
+  ): Promise<string>;
+  readJson<T = unknown>(
+    relativePath: string,
+    options?: RootReadOptions & { encoding?: BufferEncoding },
+  ): Promise<T>;
+  readPath(filePath: string, options?: RootReadOptions): Promise<ReadResult>;
+  reader(options?: RootReadOptions): (filePath: string) => Promise<Buffer>;
+  openWritable(
+    relativePath: string,
+    options?: RootOpenWritableOptions,
+  ): Promise<WritableOpenResult>;
+  append(
+    relativePath: string,
+    data: string | Buffer,
+    options?: RootAppendOptions,
+  ): Promise<void>;
+  remove(relativePath: string): Promise<void>;
+  mkdir(relativePath: string): Promise<void>;
+  ensureRoot(): Promise<void>;
+  write(
+    relativePath: string,
+    data: string | Buffer,
+    options?: RootWriteOptions,
+  ): Promise<void>;
+  create(
+    relativePath: string,
+    data: string | Buffer,
+    options?: RootCreateOptions,
+  ): Promise<void>;
+  writeJson(
+    relativePath: string,
+    data: unknown,
+    options?: RootWriteJsonOptions,
+  ): Promise<void>;
+  createJson(
+    relativePath: string,
+    data: unknown,
+    options?: RootCreateJsonOptions,
+  ): Promise<void>;
+  copyIn(relativePath: string, sourcePath: string, options?: RootCopyOptions): Promise<void>;
+  exists(relativePath: string): Promise<boolean>;
+  stat(relativePath: string): Promise<PathStat>;
+  list(relativePath: string, options?: { withFileTypes?: false }): Promise<string[]>;
+  list(relativePath: string, options: { withFileTypes: true }): Promise<DirEntry[]>;
+  move(from: string, to: string, options?: { overwrite?: boolean }): Promise<void>;
+}
+
+class RootHandle implements Root {
+  readonly rootDir: string;
+  readonly rootReal: string;
+  readonly rootWithSep: string;
+  readonly defaults: RootDefaults;
+
+  constructor(context: RootContext, defaults: RootDefaults = {}) {
     this.rootDir = context.rootDir;
     this.rootReal = context.rootReal;
     this.rootWithSep = context.rootWithSep;
     this.defaults = defaults;
   }
 
-  private get context(): SafeRootContext {
+  private get context(): RootContext {
     return {
       rootDir: this.rootDir,
       rootReal: this.rootReal,
@@ -302,11 +360,11 @@ export class SafeRoot {
   }
 
   async resolve(relativePath: string): Promise<string> {
-    return (await resolvePathInSafeRoot(this.context, relativePath)).resolved;
+    return (await resolvePathInRoot(this.context, relativePath)).resolved;
   }
 
-  async open(relativePath: string, options: SafeRootOpenOptions = {}): Promise<SafeOpenResult> {
-    return await openFileInSafeRoot(this.context, {
+  async open(relativePath: string, options: RootOpenOptions = {}): Promise<OpenResult> {
+    return await openFileInRoot(this.context, {
       relativePath,
       ...readDefaults(this.defaults),
       ...options,
@@ -315,22 +373,22 @@ export class SafeRoot {
 
   async read(
     relativePath: string,
-    options: SafeRootReadOptions = {},
-  ): Promise<SafeLocalReadResult> {
-    return await readFileInSafeRoot(this.context, {
+    options: RootReadOptions = {},
+  ): Promise<ReadResult> {
+    return await readFileInRoot(this.context, {
       relativePath,
       ...readDefaults(this.defaults),
       ...options,
     });
   }
 
-  async readBytes(relativePath: string, options: SafeRootReadOptions = {}): Promise<Buffer> {
+  async readBytes(relativePath: string, options: RootReadOptions = {}): Promise<Buffer> {
     return (await this.read(relativePath, options)).buffer;
   }
 
   async readText(
     relativePath: string,
-    options: SafeRootReadOptions & { encoding?: BufferEncoding } = {},
+    options: RootReadOptions & { encoding?: BufferEncoding } = {},
   ): Promise<string> {
     const { encoding = this.defaults.encoding ?? "utf8", ...readOptions } = options;
     return (await this.read(relativePath, readOptions)).buffer.toString(encoding);
@@ -338,23 +396,23 @@ export class SafeRoot {
 
   async readJson<T = unknown>(
     relativePath: string,
-    options: SafeRootReadOptions & { encoding?: BufferEncoding } = {},
+    options: RootReadOptions & { encoding?: BufferEncoding } = {},
   ): Promise<T> {
     return JSON.parse(await this.readText(relativePath, options)) as T;
   }
 
   async readPath(
     filePath: string,
-    options: Pick<SafeRootReadOptions, "hardlinks" | "maxBytes"> = {},
-  ): Promise<SafeLocalReadResult> {
-    return await readPathInSafeRoot(this.context, {
+    options: RootReadOptions = {},
+  ): Promise<ReadResult> {
+    return await readPathInRoot(this.context, {
       filePath,
       ...readDefaults(this.defaults),
       ...options,
     });
   }
 
-  reader(options: Pick<SafeRootReadOptions, "hardlinks" | "maxBytes"> = {}) {
+  reader(options: RootReadOptions = {}) {
     return async (filePath: string): Promise<Buffer> => {
       return (await this.readPath(filePath, options)).buffer;
     };
@@ -362,9 +420,9 @@ export class SafeRoot {
 
   async openWritable(
     relativePath: string,
-    options: SafeRootOpenWritableOptions = {},
-  ): Promise<SafeWritableOpenResult> {
-    return await openWritableFileInSafeRoot(this.context, {
+    options: RootOpenWritableOptions = {},
+  ): Promise<WritableOpenResult> {
+    return await openWritableFileInRoot(this.context, {
       relativePath,
       mkdir: this.defaults.mkdir,
       ...options,
@@ -374,9 +432,9 @@ export class SafeRoot {
   async append(
     relativePath: string,
     data: string | Buffer,
-    options: SafeRootAppendOptions = {},
+    options: RootAppendOptions = {},
   ): Promise<void> {
-    await appendFileInSafeRoot(this.context, {
+    await appendFileInRoot(this.context, {
       relativePath,
       data,
       encoding: this.defaults.encoding,
@@ -386,19 +444,23 @@ export class SafeRoot {
   }
 
   async remove(relativePath: string): Promise<void> {
-    await removePathInSafeRoot(this.context, relativePath);
+    await removePathInRoot(this.context, relativePath);
   }
 
-  async mkdir(relativePath: string, options: { allowRoot?: boolean } = {}): Promise<void> {
-    await mkdirPathInSafeRoot(this.context, { relativePath, ...options });
+  async mkdir(relativePath: string): Promise<void> {
+    await mkdirPathInRoot(this.context, { relativePath });
+  }
+
+  async ensureRoot(): Promise<void> {
+    await mkdirPathInRoot(this.context, { relativePath: "", allowRoot: true });
   }
 
   async write(
     relativePath: string,
     data: string | Buffer,
-    options: SafeRootWriteOptions = {},
+    options: RootWriteOptions = {},
   ): Promise<void> {
-    await writeFileInSafeRoot(this.context, {
+    await writeFileInRoot(this.context, {
       relativePath,
       data,
       encoding: this.defaults.encoding,
@@ -410,9 +472,9 @@ export class SafeRoot {
   async create(
     relativePath: string,
     data: string | Buffer,
-    options: SafeRootCreateOptions = {},
-  ): Promise<boolean> {
-    return await writeFileInSafeRoot(this.context, {
+    options: RootCreateOptions = {},
+  ): Promise<void> {
+    await writeFileInRoot(this.context, {
       relativePath,
       data,
       encoding: this.defaults.encoding,
@@ -425,7 +487,7 @@ export class SafeRoot {
   async writeJson(
     relativePath: string,
     data: unknown,
-    options: SafeRootWriteJsonOptions = {},
+    options: RootWriteJsonOptions = {},
   ): Promise<void> {
     const { replacer, space, trailingNewline = true, ...writeOptions } = options;
     const json = JSON.stringify(data, replacer, space);
@@ -435,19 +497,19 @@ export class SafeRoot {
   async createJson(
     relativePath: string,
     data: unknown,
-    options: SafeRootCreateJsonOptions = {},
-  ): Promise<boolean> {
+    options: RootCreateJsonOptions = {},
+  ): Promise<void> {
     const { replacer, space, trailingNewline = true, ...writeOptions } = options;
     const json = JSON.stringify(data, replacer, space);
-    return await this.create(relativePath, trailingNewline ? `${json}\n` : json, writeOptions);
+    await this.create(relativePath, trailingNewline ? `${json}\n` : json, writeOptions);
   }
 
-  async copyFrom(
-    sourcePath: string,
+  async copyIn(
     relativePath: string,
-    options: SafeRootCopyOptions = {},
+    sourcePath: string,
+    options: RootCopyOptions = {},
   ): Promise<void> {
-    await copyFileInSafeRoot(this.context, {
+    await copyFileInRoot(this.context, {
       sourcePath,
       relativePath,
       maxBytes: this.defaults.maxBytes,
@@ -456,16 +518,28 @@ export class SafeRoot {
     });
   }
 
-  async stat(relativePath: string): Promise<SafePathStat> {
+  async exists(relativePath: string): Promise<boolean> {
+    try {
+      await this.stat(relativePath);
+      return true;
+    } catch (err) {
+      if (err instanceof FsSafeError && err.code === "not-found") {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  async stat(relativePath: string): Promise<PathStat> {
     return await helperStat(this.rootReal, relativePath);
   }
 
   async list(relativePath: string, options?: { withFileTypes?: false }): Promise<string[]>;
-  async list(relativePath: string, options: { withFileTypes: true }): Promise<SafeDirEntry[]>;
+  async list(relativePath: string, options: { withFileTypes: true }): Promise<DirEntry[]>;
   async list(
     relativePath: string,
     options: { withFileTypes?: boolean } = {},
-  ): Promise<string[] | SafeDirEntry[]> {
+  ): Promise<string[] | DirEntry[]> {
     return options.withFileTypes === true
       ? await helperReaddir(this.rootReal, relativePath, true)
       : await helperReaddir(this.rootReal, relativePath, false);
@@ -474,13 +548,13 @@ export class SafeRoot {
   async move(from: string, to: string, options: { overwrite?: boolean } = {}): Promise<void> {
     await runPinnedHelper<void>("rename", this.rootReal, {
       from,
-      overwrite: options.overwrite ?? true,
+      overwrite: options.overwrite ?? false,
       to,
     });
   }
 }
 
-function readDefaults(defaults: RootDefaults): SafeRootReadParams {
+function readDefaults(defaults: RootDefaults): RootReadParams {
   return {
     hardlinks: defaults.hardlinks,
     maxBytes: defaults.maxBytes,
@@ -492,22 +566,22 @@ function readDefaults(defaults: RootDefaults): SafeRootReadParams {
 export async function root(
   rootDir: string,
   defaults: RootDefaults = {},
-): Promise<SafeRoot> {
-  return new SafeRoot(await resolveSafeRootContext(rootDir), defaults);
+): Promise<Root> {
+  return new RootHandle(await resolveRootContext(rootDir), defaults);
 }
 
-async function openFileInSafeRoot(
-  root: SafeRootContext,
+async function openFileInRoot(
+  root: RootContext,
   params: {
     relativePath: string;
     hardlinks?: HardlinkPolicy;
     nonBlockingRead?: boolean;
     symlinks?: SymlinkPolicy;
   },
-): Promise<SafeOpenResult> {
-  const { rootWithSep, resolved } = await resolvePathInSafeRoot(root, params.relativePath);
+): Promise<OpenResult> {
+  const { rootWithSep, resolved } = await resolvePathInRoot(root, params.relativePath);
 
-  let opened: SafeOpenResult;
+  let opened: OpenResult;
   try {
     opened = await openVerifiedLocalFile(resolved, {
       nonBlockingRead: params.nonBlockingRead,
@@ -533,8 +607,8 @@ async function openFileInSafeRoot(
   return opened;
 }
 
-async function readFileInSafeRoot(
-  root: SafeRootContext,
+async function readFileInRoot(
+  root: RootContext,
   params: {
     relativePath: string;
     hardlinks?: HardlinkPolicy;
@@ -542,8 +616,8 @@ async function readFileInSafeRoot(
     symlinks?: SymlinkPolicy;
     maxBytes?: number;
   },
-): Promise<SafeLocalReadResult> {
-  const opened = await openFileInSafeRoot(root, params);
+): Promise<ReadResult> {
+  const opened = await openFileInRoot(root, params);
   try {
     return await readOpenedFileSafely({ opened, maxBytes: params.maxBytes });
   } finally {
@@ -551,30 +625,34 @@ async function readFileInSafeRoot(
   }
 }
 
-async function readPathInSafeRoot(
-  root: SafeRootContext,
+async function readPathInRoot(
+  root: RootContext,
   params: {
     filePath: string;
     hardlinks?: HardlinkPolicy;
     maxBytes?: number;
+    nonBlockingRead?: boolean;
+    symlinks?: SymlinkPolicy;
   },
-): Promise<SafeLocalReadResult> {
+): Promise<ReadResult> {
   const rootDir = root.rootDir;
   const candidatePath = path.isAbsolute(params.filePath)
     ? path.resolve(params.filePath)
     : path.resolve(rootDir, params.filePath);
   const relativePath = path.relative(rootDir, candidatePath);
-  return await readFileInSafeRoot(root, {
+  return await readFileInRoot(root, {
     relativePath,
     hardlinks: params.hardlinks,
     maxBytes: params.maxBytes,
+    nonBlockingRead: params.nonBlockingRead,
+    symlinks: params.symlinks,
   });
 }
 
 export async function readLocalFileSafely(params: {
   filePath: string;
   maxBytes?: number;
-}): Promise<SafeLocalReadResult> {
+}): Promise<ReadResult> {
   const opened = await openLocalFileSafely({ filePath: params.filePath });
   try {
     return await readOpenedFileSafely({ opened, maxBytes: params.maxBytes });
@@ -583,14 +661,14 @@ export async function readLocalFileSafely(params: {
   }
 }
 
-export async function openLocalFileSafely(params: { filePath: string }): Promise<SafeOpenResult> {
+export async function openLocalFileSafely(params: { filePath: string }): Promise<OpenResult> {
   return await openVerifiedLocalFile(params.filePath);
 }
 
 async function readOpenedFileSafely(params: {
-  opened: SafeOpenResult;
+  opened: OpenResult;
   maxBytes?: number;
-}): Promise<SafeLocalReadResult> {
+}): Promise<ReadResult> {
   if (params.maxBytes !== undefined && params.opened.stat.size > params.maxBytes) {
     throw new FsSafeError(
       "too-large",
@@ -605,7 +683,7 @@ async function readOpenedFileSafely(params: {
   };
 }
 
-export type SafeWritableOpenResult = {
+export type WritableOpenResult = {
   handle: FileHandle;
   createdForWrite: boolean;
   realPath: string;
@@ -642,7 +720,7 @@ async function writeTempFileForAtomicReplace(params: {
 }
 
 async function verifyAtomicWriteResult(params: {
-  root: SafeRootContext;
+  root: RootContext;
   targetPath: string;
   expectedIdentity: { dev: number | bigint; ino: number | bigint };
 }): Promise<void> {
@@ -740,8 +818,8 @@ async function resolveOpenedFileRealPathFromParent(
   return null;
 }
 
-async function openWritableFileInSafeRoot(
-  root: SafeRootContext,
+async function openWritableFileInRoot(
+  root: RootContext,
   params: {
     relativePath: string;
     mkdir?: boolean;
@@ -749,8 +827,8 @@ async function openWritableFileInSafeRoot(
     truncateExisting?: boolean;
     append?: boolean;
   },
-): Promise<SafeWritableOpenResult> {
-  const { rootReal, rootWithSep, resolved } = await resolvePathInSafeRoot(
+): Promise<WritableOpenResult> {
+  const { rootReal, rootWithSep, resolved } = await resolvePathInRoot(
     root,
     params.relativePath,
   );
@@ -871,8 +949,8 @@ async function openWritableFileInSafeRoot(
   }
 }
 
-async function appendFileInSafeRoot(
-  root: SafeRootContext,
+async function appendFileInRoot(
+  root: RootContext,
   params: {
     relativePath: string;
     data: string | Buffer;
@@ -881,7 +959,7 @@ async function appendFileInSafeRoot(
     prependNewlineIfNeeded?: boolean;
   },
 ): Promise<void> {
-  const target = await openWritableFileInSafeRoot(root, {
+  const target = await openWritableFileInRoot(root, {
     relativePath: params.relativePath,
     mkdir: params.mkdir,
     truncateExisting: false,
@@ -916,8 +994,8 @@ async function appendFileInSafeRoot(
   }
 }
 
-async function removePathInSafeRoot(root: SafeRootContext, relativePath: string): Promise<void> {
-  const resolved = await resolvePinnedRemovePathInSafeRoot(root, relativePath);
+async function removePathInRoot(root: RootContext, relativePath: string): Promise<void> {
+  const resolved = await resolvePinnedRemovePathInRoot(root, relativePath);
   if (process.platform === "win32") {
     await removePathFallback(resolved);
     return;
@@ -937,14 +1015,14 @@ async function removePathInSafeRoot(root: SafeRootContext, relativePath: string)
   }
 }
 
-async function mkdirPathInSafeRoot(
-  root: SafeRootContext,
+async function mkdirPathInRoot(
+  root: RootContext,
   params: {
     relativePath: string;
     allowRoot?: boolean;
   },
 ): Promise<void> {
-  const resolved = await resolvePinnedPathInSafeRoot(root, params);
+  const resolved = await resolvePinnedPathInRoot(root, params);
   if (process.platform === "win32") {
     await mkdirPathFallback(resolved);
     return;
@@ -964,8 +1042,8 @@ async function mkdirPathInSafeRoot(
   }
 }
 
-async function writeFileInSafeRoot(
-  root: SafeRootContext,
+async function writeFileInRoot(
+  root: RootContext,
   params: {
     relativePath: string;
     data: string | Buffer;
@@ -973,12 +1051,13 @@ async function writeFileInSafeRoot(
     mkdir?: boolean;
     overwrite?: boolean;
   },
-): Promise<boolean> {
+): Promise<void> {
   if (process.platform === "win32") {
-    return await writeFileFallback(root, params);
+    await writeFileFallback(root, params);
+    return;
   }
 
-  const pinned = await resolvePinnedWriteTargetInSafeRoot(root, params.relativePath);
+  const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath);
 
   let identity;
   try {
@@ -997,7 +1076,9 @@ async function writeFileInSafeRoot(
     });
   } catch (error) {
     if (params.overwrite === false && isAlreadyExistsError(error)) {
-      return false;
+      throw new FsSafeError("already-exists", "file already exists", {
+        cause: error instanceof Error ? error : undefined,
+      });
     }
     throw normalizePinnedWriteError(error);
   }
@@ -1012,11 +1093,10 @@ async function writeFileInSafeRoot(
     emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);
     throw err;
   }
-  return true;
 }
 
-async function copyFileInSafeRoot(
-  root: SafeRootContext,
+async function copyFileInRoot(
+  root: RootContext,
   params: {
     sourcePath: string;
     relativePath: string;
@@ -1042,7 +1122,7 @@ async function copyFileInSafeRoot(
       return;
     }
 
-    const pinned = await resolvePinnedWriteTargetInSafeRoot(root, params.relativePath);
+    const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath);
     const sourceStream = source.handle.createReadStream();
     const identity = await runPinnedWriteHelper({
       rootPath: pinned.rootReal,
@@ -1073,8 +1153,8 @@ async function copyFileInSafeRoot(
   }
 }
 
-async function resolvePinnedWriteTargetInSafeRoot(
-  root: SafeRootContext,
+async function resolvePinnedWriteTargetInRoot(
+  root: RootContext,
   relativePath: string,
 ): Promise<{
   rootReal: string;
@@ -1083,7 +1163,7 @@ async function resolvePinnedWriteTargetInSafeRoot(
   basename: string;
   mode: number;
 }> {
-  const { rootReal, rootWithSep, resolved } = await resolvePathInSafeRoot(root, relativePath);
+  const { rootReal, rootWithSep, resolved } = await resolvePathInRoot(root, relativePath);
   try {
     await assertNoPathAliasEscape({
       absolutePath: resolved,
@@ -1107,7 +1187,7 @@ async function resolvePinnedWriteTargetInSafeRoot(
   }
   let mode = 0o600;
   try {
-    const opened = await openFileInSafeRoot(root, {
+    const opened = await openFileInRoot(root, {
       relativePath,
       hardlinks: "reject",
       nonBlockingRead: true,
@@ -1136,14 +1216,14 @@ async function resolvePinnedWriteTargetInSafeRoot(
   };
 }
 
-async function resolvePinnedPathInSafeRoot(
-  root: SafeRootContext,
+async function resolvePinnedPathInRoot(
+  root: RootContext,
   params: {
     relativePath: string;
     allowRoot?: boolean;
   },
 ): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
-  const resolved = await resolvePinnedRootPathInSafeRoot(root, {
+  const resolved = await resolvePinnedRootPathInRoot(root, {
     relativePath: params.relativePath,
     policy: PATH_ALIAS_POLICIES.strict,
   });
@@ -1168,11 +1248,11 @@ async function resolvePinnedPathInSafeRoot(
   return { rootReal: resolved.rootReal, resolved: resolved.canonicalPath, relativePosix };
 }
 
-async function resolvePinnedRemovePathInSafeRoot(
-  root: SafeRootContext,
+async function resolvePinnedRemovePathInRoot(
+  root: RootContext,
   relativePath: string,
 ): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
-  const resolved = await resolvePinnedRootPathInSafeRoot(root, {
+  const resolved = await resolvePinnedRootPathInRoot(root, {
     relativePath,
     policy: PATH_ALIAS_POLICIES.unlinkTarget,
   });
@@ -1197,8 +1277,8 @@ async function resolvePinnedRemovePathInSafeRoot(
   return { rootReal: resolved.rootReal, resolved: resolved.canonicalPath, relativePosix };
 }
 
-async function resolvePinnedRootPathInSafeRoot(
-  root: SafeRootContext,
+async function resolvePinnedRootPathInRoot(
+  root: RootContext,
   params: {
     relativePath: string;
     policy: (typeof PATH_ALIAS_POLICIES)[keyof typeof PATH_ALIAS_POLICIES];
@@ -1256,7 +1336,7 @@ async function mkdirPathFallback(resolved: { resolved: string }): Promise<void> 
 }
 
 async function writeFileFallback(
-  root: SafeRootContext,
+  root: RootContext,
   params: {
     relativePath: string;
     data: string | Buffer;
@@ -1264,12 +1344,13 @@ async function writeFileFallback(
     mkdir?: boolean;
     overwrite?: boolean;
   },
-): Promise<boolean> {
+): Promise<void> {
   if (params.overwrite === false) {
-    return await writeMissingFileFallback(root, params);
+    await writeMissingFileFallback(root, params);
+    return;
   }
 
-  const target = await openWritableFileInSafeRoot(root, {
+  const target = await openWritableFileInRoot(root, {
     relativePath: params.relativePath,
     mkdir: params.mkdir,
     truncateExisting: false,
@@ -1303,19 +1384,18 @@ async function writeFileFallback(
       await fs.rm(tempPath, { force: true }).catch(() => {});
     }
   }
-  return true;
 }
 
 async function writeMissingFileFallback(
-  root: SafeRootContext,
+  root: RootContext,
   params: {
     relativePath: string;
     data: string | Buffer;
     encoding?: BufferEncoding;
     mkdir?: boolean;
   },
-): Promise<boolean> {
-  const { rootReal, resolved } = await resolvePathInSafeRoot(root, params.relativePath);
+): Promise<void> {
+  const { rootReal, resolved } = await resolvePathInRoot(root, params.relativePath);
   try {
     await assertNoPathAliasEscape({
       absolutePath: resolved,
@@ -1348,10 +1428,11 @@ async function writeMissingFileFallback(
       expectedIdentity: writtenStat,
     });
     created = false;
-    return true;
   } catch (err) {
     if (hasNodeErrorCode(err, "EEXIST")) {
-      return false;
+      throw new FsSafeError("already-exists", "file already exists", {
+        cause: err instanceof Error ? err : undefined,
+      });
     }
     throw err;
   } finally {
@@ -1363,7 +1444,7 @@ async function writeMissingFileFallback(
 }
 
 async function copyFileFallback(
-  root: SafeRootContext,
+  root: RootContext,
   params: {
     sourcePath: string;
     relativePath: string;
@@ -1371,16 +1452,16 @@ async function copyFileFallback(
     mkdir?: boolean;
     sourceHardlinks?: HardlinkPolicy;
   },
-  source: SafeOpenResult,
+  source: OpenResult,
 ): Promise<void> {
-  let target: SafeWritableOpenResult | null = null;
+  let target: WritableOpenResult | null = null;
   let sourceClosedByStream = false;
   let targetClosedByUs = false;
   let tempHandle: FileHandle | null = null;
   let tempPath: string | null = null;
   let tempClosedByStream = false;
   try {
-    target = await openWritableFileInSafeRoot(root, {
+    target = await openWritableFileInRoot(root, {
       relativePath: params.relativePath,
       mkdir: params.mkdir,
       truncateExisting: false,

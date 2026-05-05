@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
+import { FsSafeError } from "./errors.js";
+import { isPathInside } from "./path.js";
+import { readRegularFileSync } from "./regular-file.js";
+import { root } from "./root.js";
 import { writePrivateSecretFileAtomic } from "./secret-file.js";
 
 export type PrivateFileStore = {
   rootDir: string;
   path(relativePath: string): string;
+  readText(relativePath: string, options?: { maxBytes?: number }): Promise<string | null>;
+  readJson<T = unknown>(relativePath: string, options?: { maxBytes?: number }): Promise<T | null>;
   writeText(relativePath: string, content: string | Uint8Array): Promise<void>;
   writeJson(relativePath: string, value: unknown, options?: { trailingNewline?: boolean }): Promise<void>;
 };
@@ -30,6 +36,88 @@ export async function writePrivateTextAtomic(params: {
   content: string | Uint8Array;
 }): Promise<void> {
   await writePrivateSecretFileAtomic(params);
+}
+
+export async function readPrivateText(params: {
+  rootDir: string;
+  filePath: string;
+  maxBytes?: number;
+}): Promise<string | null> {
+  const rootDir = path.resolve(params.rootDir);
+  const filePath = path.resolve(params.filePath);
+  const relative = path.relative(rootDir, filePath);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Private file path must stay under the private store root.");
+  }
+  try {
+    const storeRoot = await root(rootDir, { hardlinks: "reject", maxBytes: params.maxBytes });
+    const result = await storeRoot.read(relative);
+    return result.buffer.toString("utf8");
+  } catch (err) {
+    if (err instanceof FsSafeError && err.code === "not-found") {
+      return null;
+    }
+    throw err;
+  }
+}
+
+function assertPrivateReadPathSync(params: { rootDir: string; filePath: string }): void {
+  const rootDir = path.resolve(params.rootDir);
+  const filePath = path.resolve(params.filePath);
+  const relative = path.relative(rootDir, filePath);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Private file path must stay under the private store root.");
+  }
+  const rootStat = fs.lstatSync(rootDir);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error(`Private file root must be a directory: ${rootDir}`);
+  }
+  const rootReal = fs.realpathSync(rootDir);
+  const fileReal = fs.realpathSync(filePath);
+  if (!isPathInside(rootReal, fileReal)) {
+    throw new Error("Private file path must stay under the private store root.");
+  }
+}
+
+export function readPrivateTextSync(params: {
+  rootDir: string;
+  filePath: string;
+  maxBytes?: number;
+}): string | null {
+  try {
+    assertPrivateReadPathSync(params);
+    const result = readRegularFileSync({
+      filePath: path.resolve(params.filePath),
+      maxBytes: params.maxBytes,
+    });
+    if (result.stat.nlink > 1) {
+      throw new Error(`Private file target must not be hardlinked: ${params.filePath}`);
+    }
+    return result.buffer.toString("utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  }
+}
+
+export async function readPrivateJson<T = unknown>(params: {
+  rootDir: string;
+  filePath: string;
+  maxBytes?: number;
+}): Promise<T | null> {
+  const raw = await readPrivateText(params);
+  return raw === null ? null : (JSON.parse(raw) as T);
+}
+
+export function readPrivateJsonSync<T = unknown>(params: {
+  rootDir: string;
+  filePath: string;
+  maxBytes?: number;
+}): T | null {
+  const raw = readPrivateTextSync(params);
+  return raw === null ? null : (JSON.parse(raw) as T);
 }
 
 function ensurePrivateDirectorySync(rootDir: string, targetDir: string): void {
@@ -149,6 +237,18 @@ export function privateFileStore(rootDir: string): PrivateFileStore {
   return {
     rootDir: root,
     path: (relativePath) => resolvePrivateStorePath(root, relativePath),
+    readText: async (relativePath, options) =>
+      await readPrivateText({
+        rootDir: root,
+        filePath: resolvePrivateStorePath(root, relativePath),
+        maxBytes: options?.maxBytes,
+      }),
+    readJson: async (relativePath, options) =>
+      await readPrivateJson({
+        rootDir: root,
+        filePath: resolvePrivateStorePath(root, relativePath),
+        maxBytes: options?.maxBytes,
+      }),
     writeText: async (relativePath, content) => {
       await writePrivateTextAtomic({
         rootDir: root,

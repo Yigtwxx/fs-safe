@@ -137,7 +137,7 @@ export async function writeViaSiblingTempPath(params: {
   try {
     await params.writeTemp(tempPath);
     const targetRoot = await root(rootDir);
-    await targetRoot.copyFrom(tempPath, relativeTargetPath, { mkdir: false });
+    await targetRoot.copyIn(relativeTargetPath, tempPath, { mkdir: false });
   } finally {
     await fs.rm(tempPath, { force: true }).catch(() => {});
   }
