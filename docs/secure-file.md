@@ -42,6 +42,8 @@ type SecureFileReadOptions = {
   permissions?: {
     allowInsecure?: boolean;
     allowReadableByOthers?: boolean;
+  };
+  inject?: {
     platform?: NodeJS.Platform;
     env?: NodeJS.ProcessEnv;
     exec?: PermissionExec;
@@ -53,7 +55,7 @@ type SecureFileReadOptions = {
 };
 ```
 
-`permissions.allowInsecure` is a migration escape hatch. Prefer fixing permissions and using [`formatPermissionRemediation`](permissions.md) to show the user what to run. `trust.allowNetworkPath` is off by default because UNC paths are remote authority, not local filesystem input.
+`permissions.allowInsecure` is a migration escape hatch. Prefer fixing permissions and using [`formatPermissionRemediation`](permissions.md) to show the user what to run. `trust.allowNetworkPath` is off by default because UNC paths are remote authority, not local filesystem input. `inject` is for tests and platform adapters; production callers usually leave it unset.
 
 ## Errors
 

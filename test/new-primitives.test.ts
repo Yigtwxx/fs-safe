@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  privateFileStore,
+  privateStateStore,
   readPrivateJson,
   readPrivateJsonSync,
   readPrivateText,
@@ -305,9 +305,9 @@ describe("directory walking", () => {
   });
 });
 
-describe("private file store", () => {
+describe("private state store", () => {
   it("writes JSON under the store root", async () => {
-    const store = privateFileStore(root);
+    const store = privateStateStore({ rootDir: root });
     await store.writeJson("nested/state.json", { ok: true }, { trailingNewline: true });
     expect(await fs.readFile(path.join(root, "nested", "state.json"), "utf8")).toBe(
       '{\n  "ok": true\n}\n',
@@ -316,7 +316,7 @@ describe("private file store", () => {
   });
 
   it("rejects paths outside the store root", async () => {
-    const store = privateFileStore(root);
+    const store = privateStateStore({ rootDir: root });
     await expect(store.writeText("../escape.txt", "nope")).rejects.toThrow(/stay under/);
     await expect(store.readText("../escape.txt")).rejects.toThrow(/stay under/);
   });

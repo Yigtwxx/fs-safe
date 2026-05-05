@@ -7,7 +7,11 @@ import { readRegularFileSync } from "./regular-file.js";
 import { root } from "./root.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
 
-export type PrivateFileStore = {
+export type PrivateStateStoreOptions = {
+  rootDir: string;
+};
+
+export type PrivateStateStore = {
   rootDir: string;
   path(relativePath: string): string;
   readText(relativePath: string, options?: { maxBytes?: number }): Promise<string | null>;
@@ -232,8 +236,8 @@ export function writePrivateJsonAtomicSync(params: {
   });
 }
 
-export function privateFileStore(rootDir: string): PrivateFileStore {
-  const root = path.resolve(rootDir);
+export function privateStateStore(options: PrivateStateStoreOptions): PrivateStateStore {
+  const root = path.resolve(options.rootDir);
   return {
     rootDir: root,
     path: (relativePath) => resolvePrivateStorePath(root, relativePath),

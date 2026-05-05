@@ -49,7 +49,7 @@ import {
 } from "../src/path.js";
 import { assertNoHardlinkedFinalPath, assertNoPathAliasEscape } from "../src/path-policy.js";
 import {
-  privateFileStore,
+  privateStateStore,
   readPrivateJsonSync,
   readPrivateTextSync,
   writePrivateJsonAtomicSync,
@@ -771,7 +771,7 @@ describe("file stores and private stores", () => {
 
   it("covers private store sync and async helpers", async () => {
     const root = await tempRoot("fs-safe-private-store-");
-    const store = privateFileStore(root);
+    const store = privateStateStore({ rootDir: root });
 
     await store.writeText("nested/value.txt", "secret");
     await expect(store.readText("nested/value.txt")).resolves.toBe("secret");

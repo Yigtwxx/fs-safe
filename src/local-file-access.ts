@@ -13,8 +13,11 @@ export function hasEncodedFileUrlSeparator(pathname: string): boolean {
   return ENCODED_FILE_URL_SEPARATOR_RE.test(pathname);
 }
 
-export function isWindowsNetworkPath(filePath: string): boolean {
-  if (process.platform !== "win32") {
+export function isWindowsNetworkPath(
+  filePath: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform !== "win32") {
     return false;
   }
   const normalized = filePath.replace(/\//g, "\\");

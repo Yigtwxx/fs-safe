@@ -110,7 +110,7 @@ that OpenClaw needs to compose higher-level APIs are grouped under
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types |
 | `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, `writeText`, sync variants |
-| `@openclaw/fs-safe/store` | `fileStore`, `jsonStore`, and `privateFileStore` |
+| `@openclaw/fs-safe/store` | `fileStore`, `jsonStore`, and `privateStateStore` |
 | `@openclaw/fs-safe/secret` | strict and result-shaped secret file read/write helpers |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `tempFile`, `writeSiblingTempFile`, `resolveSecureTempRoot` |
@@ -173,6 +173,11 @@ const store = jsonStore({
 
 await store.updateOr({ enabled: false }, (current) => ({ ...current, enabled: true }));
 ```
+
+Use `update()` when missing state is part of your model; use `updateOr()` for
+the common merge-into-defaults case. Standalone helpers use options bags
+because they do not carry a bound root and often need multiple authority, path,
+and policy knobs.
 
 Use `fileStore()` for cache/blob/media-style directories where callers
 need safe relative paths, size limits, atomic replacement, stream writes, and

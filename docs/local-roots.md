@@ -114,7 +114,7 @@ import {
 
 - `safeFileURLToPath(fileUrl)` — `url.fileURLToPath` with explicit error throwing. Refuses URLs that decode to network paths.
 - `trySafeFileURLToPath(fileUrl)` — same, returns `undefined` instead of throwing.
-- `isWindowsNetworkPath(p)` — true for `\\server\share` and `//server/share` style paths.
+- `isWindowsNetworkPath(p, platform?)` — true for `\\server\share` and `//server/share` style paths when the platform is Windows.
 - `assertNoWindowsNetworkPath(p, label?)` — throws if it is.
 - `basenameFromMediaSource(source?)` — best-effort filename extraction from URLs / data URIs / paths, for naming downloaded media.
 - `hasEncodedFileUrlSeparator(pathname)` — true for paths containing percent-encoded `/` (`%2F` / `%5C`), which often indicate traversal attempts.

@@ -1,11 +1,11 @@
-# Private file store
+# Private state store
 
-`privateFileStore(rootDir)` returns a small handle for reading and writing **JSON or text** files inside a trusted root directory. Every write atomically creates the parent directory tree at mode `0o700` and the file at mode `0o600` — the no-frills sibling of [`secret-file`](secret-file.md) when you want a per-root handle.
+`privateStateStore({ rootDir })` returns a small handle for reading and writing **JSON or text state** inside a trusted root directory. Every write atomically creates the parent directory tree at mode `0o700` and the file at mode `0o600`.
 
 ```ts
-import { privateFileStore } from "@openclaw/fs-safe/store";
+import { privateStateStore } from "@openclaw/fs-safe/store";
 
-const store = privateFileStore("/var/lib/app");
+const store = privateStateStore({ rootDir: "/var/lib/app" });
 
 await store.writeJson("state.json", state);
 const loaded = await store.readJson<State>("state.json");
@@ -17,12 +17,16 @@ const loaded = await store.readJson<State>("state.json");
 - You want every write to land at mode `0o600` in dirs at `0o700` without thinking about it.
 - You don't need `move`, `remove`, `list`, `copyIn`, or streaming — only read/write.
 
-For richer needs (move, list, atomic directory swap, archives), use [`root()`](root.md). For one-off credential reads, use the [secret-file helpers](secret-file.md).
+For richer file-store needs (remove, exists, open, copy-in, pruning, streams), use [`fileStore`](file-store.md). For general root operations, use [`root()`](root.md). For one-off credential reads, use the [secret-file helpers](secret-file.md).
 
 ## API
 
 ```ts
-type PrivateFileStore = {
+type PrivateStateStoreOptions = {
+  rootDir: string;
+};
+
+type PrivateStateStore = {
   rootDir: string;
   path(relativePath: string): string;
 
@@ -33,7 +37,7 @@ type PrivateFileStore = {
   writeJson(relativePath: string, value: unknown, options?: { trailingNewline?: boolean }): Promise<void>;
 };
 
-function privateFileStore(rootDir: string): PrivateFileStore;
+function privateStateStore(options: PrivateStateStoreOptions): PrivateStateStore;
 ```
 
 `store.path(rel)` returns the absolute path the store would use, useful for logging or for handing to other libraries that take absolute paths.
@@ -75,7 +79,7 @@ await writePrivateJsonAtomic({
 ### Read-modify-write
 
 ```ts
-const store = privateFileStore("/var/lib/app");
+const store = privateStateStore({ rootDir: "/var/lib/app" });
 
 const state = (await store.readJson<State>("state.json")) ?? initialState();
 state.count += 1;
@@ -111,14 +115,14 @@ if (!config) throw new Error("config missing");
 
 ## Difference from `Root`
 
-| `privateFileStore` | `Root` |
+| `privateStateStore` | `Root` |
 |---|---|
 | Reads return `null` on miss. | Reads throw with code `not-found`. |
 | Four verbs (text in/out, JSON in/out). | Full surface (move, remove, list, …). |
 | Writes always set 0600 on the file and 0700 on the parents. | Writes use the umask unless you override. |
 | No streaming. | `open()` returns a `FileHandle`. |
 
-If you find yourself asking "does the store have an X?" — reach for `root()`.
+If you find yourself asking "does the store have an X?" — reach for `fileStore()` or `root()`.
 
 ## See also
 

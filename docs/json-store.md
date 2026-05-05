@@ -95,7 +95,7 @@ const next = await store.update((prev) => ({ count: (prev?.count ?? 0) + 1 }));
 
 `run` is async-friendly. The whole `read → run → write` sequence runs inside one `withLock` call, so concurrent updaters from different processes serialize cleanly.
 
-Use `updateOr(fallback, run)` when the missing-file case should start from a concrete value:
+Use `update(run)` when missing state is part of your model. Use `updateOr(fallback, run)` when the missing-file case should start from a concrete value and you want to merge into defaults:
 
 ```ts
 const next = await store.updateOr({ count: 0 }, (prev) => ({ count: prev.count + 1 }));

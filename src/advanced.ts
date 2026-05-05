@@ -116,7 +116,7 @@ export {
   type WindowsAclSummary,
 } from "./permissions.js";
 export {
-  privateFileStore,
+  privateStateStore,
   readPrivateJson,
   readPrivateJsonSync,
   readPrivateText,
@@ -125,7 +125,8 @@ export {
   writePrivateJsonAtomicSync,
   writePrivateTextAtomic,
   writePrivateTextAtomicSync,
-  type PrivateFileStore,
+  type PrivateStateStore,
+  type PrivateStateStoreOptions,
 } from "./private-file-store.js";
 export {
   loadSecretFileSync,

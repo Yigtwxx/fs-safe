@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
+import { isWindowsNetworkPath } from "./local-file-access.js";
 import { isPathInside, isSymlinkOpenError } from "./path.js";
 import {
   inspectPathPermissions,
@@ -26,6 +27,7 @@ export type SecureFileReadOptions = {
   label?: string;
   trust?: SecureFileTrustOptions;
   permissions?: SecureFilePermissionOptions;
+  inject?: SecureFileInjectOptions;
   io?: SecureFileIoOptions;
 };
 
@@ -35,10 +37,12 @@ export type SecureFileTrustOptions = {
   allowNetworkPath?: boolean;
 };
 
-export type SecureFilePermissionOptions = PermissionCheckOptions & {
+export type SecureFilePermissionOptions = {
   allowInsecure?: boolean;
   allowReadableByOthers?: boolean;
 };
+
+export type SecureFileInjectOptions = PermissionCheckOptions;
 
 export type SecureFileIoOptions = {
   maxBytes?: number;
@@ -53,11 +57,7 @@ export type SecureFileReadResult = {
 };
 
 function isAbsolutePathname(value: string): boolean {
-  return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || /^\\\\[^\\]+\\[^\\]+/.test(value);
-}
-
-function isWindowsNetworkPathname(value: string): boolean {
-  return /^\\\\[^\\]+\\[^\\]+/.test(value);
+  return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || isWindowsNetworkPath(value, "win32");
 }
 
 function label(options: SecureFileReadOptions): string {
@@ -69,7 +69,7 @@ async function openSecureHandle(options: SecureFileReadOptions): Promise<{
   pathStat: Stats;
   realPath: string;
 }> {
-  if (isWindowsNetworkPathname(options.filePath) && !options.trust?.allowNetworkPath) {
+  if (isWindowsNetworkPath(options.filePath, "win32") && !options.trust?.allowNetworkPath) {
     throw new FsSafeError("invalid-path", `${label(options)} must be a local absolute path.`);
   }
   if (!isAbsolutePathname(options.filePath)) {
@@ -166,9 +166,9 @@ async function assertSecurePermissions(
   if (options.permissions?.allowInsecure) {
     return undefined;
   }
-  const platform = options.permissions?.platform ?? process.platform;
+  const platform = options.inject?.platform ?? process.platform;
   const permissions = platform === "win32"
-    ? await inspectPathPermissions(realPath, options.permissions)
+    ? await inspectPathPermissions(realPath, options.inject)
     : inspectOpenedPermissions(stat, platform);
   if (!permissions.ok) {
     throw new FsSafeError("permission-unverified", `${label(options)} permissions could not be verified: ${realPath}`);

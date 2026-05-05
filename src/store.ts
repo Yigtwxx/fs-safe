@@ -13,6 +13,7 @@ export {
   type JsonStoreOptions,
 } from "./json-store.js";
 export {
-  privateFileStore,
-  type PrivateFileStore,
+  privateStateStore,
+  type PrivateStateStore,
+  type PrivateStateStoreOptions,
 } from "./private-file-store.js";
