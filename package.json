@@ -88,9 +88,11 @@
     }
   },
   "scripts": {
+    "benchmark": "node scripts/benchmark.mjs",
     "build": "tsc -p tsconfig.json",
     "prepack": "pnpm build",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "check": "pnpm build && pnpm test",
     "docs:site": "node scripts/build-docs-site.mjs"
   },
@@ -100,6 +102,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.19",
+    "@vitest/coverage-v8": "3.2.4",
     "typescript": "^5.8.3",
     "vitest": "^3.1.4"
   },

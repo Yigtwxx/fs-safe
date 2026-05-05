@@ -1,0 +1,70 @@
+name: coverage
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "43 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Node 22 coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Coverage
+        run: pnpm test:coverage
+
+      - name: Summarize coverage
+        if: always()
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const summaryPath = "coverage/coverage-summary.json";
+          if (!fs.existsSync(summaryPath)) process.exit(0);
+          const total = JSON.parse(fs.readFileSync(summaryPath, "utf8")).total;
+          const pct = (key) => total[key].pct.toFixed(2);
+          fs.appendFileSync(
+            process.env.GITHUB_STEP_SUMMARY,
+            [
+              "# fs-safe coverage",
+              "",
+              "| Metric | Percent |",
+              "|---|---:|",
+              `| Lines | ${pct("lines")}% |`,
+              `| Statements | ${pct("statements")}% |`,
+              `| Functions | ${pct("functions")}% |`,
+              `| Branches | ${pct("branches")}% |`,
+              "",
+            ].join("\n"),
+          );
+          NODE
+
+      - name: Upload coverage results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fs-safe-coverage-${{ github.run_id }}
+          path: coverage/

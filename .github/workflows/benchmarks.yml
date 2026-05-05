@@ -1,0 +1,48 @@
+name: benchmarks
+
+on:
+  pull_request:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Node 22 benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.33.2 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Benchmark
+        env:
+          FS_SAFE_BENCHMARK_SAMPLES: ${{ github.event_name == 'schedule' && '3' || '1' }}
+        run: |
+          mkdir -p dist/benchmarks
+          pnpm benchmark -- --json dist/benchmarks/results.json --markdown dist/benchmarks/summary.md
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: fs-safe-benchmark-${{ github.run_id }}
+          path: dist/benchmarks/
