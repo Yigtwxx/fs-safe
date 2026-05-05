@@ -26,7 +26,7 @@ import {
   PRIVATE_SECRET_FILE_MODE,
   loadSecretFileSync,
   readSecretFileSync,
-  writePrivateSecretFileAtomic,
+  writeSecretFileAtomic,
 } from "../src/secret-file.js";
 
 const tempDirs: string[] = [];
@@ -166,7 +166,7 @@ describe("secret file helpers", () => {
   it("writes private secret files without following symlink parents", async () => {
     const root = await tempRoot("fs-safe-secret-write-");
     const filePath = path.join(root, "nested", "auth.json");
-    await writePrivateSecretFileAtomic({
+    await writeSecretFileAtomic({
       rootDir: root,
       filePath,
       content: '{"ok":true}\n',
@@ -186,7 +186,7 @@ describe("secret file helpers", () => {
     const outside = await tempRoot("fs-safe-secret-outside-");
     await fs.symlink(outside, path.join(root, "linked"));
     await expect(
-      writePrivateSecretFileAtomic({
+      writeSecretFileAtomic({
         rootDir: root,
         filePath: path.join(root, "linked", "auth.json"),
         content: '{"ok":true}\n',

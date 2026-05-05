@@ -30,6 +30,7 @@ import {
   assertNoWindowsNetworkPath,
   basenameFromMediaSource,
   hasEncodedFileUrlSeparator,
+  isWindowsDriveLetterPath,
   safeFileURLToPath,
   trySafeFileURLToPath,
 } from "../src/local-file-access.js";
@@ -71,7 +72,7 @@ import {
   loadSecretFileSync,
   readSecretFileSync,
   tryReadSecretFileSync,
-  writePrivateSecretFileAtomic,
+  writeSecretFileAtomic,
 } from "../src/secret-file.js";
 import { resolveSecureTempRoot } from "../src/secure-temp-dir.js";
 import { assertNoSymlinkParents, assertNoSymlinkParentsSync } from "../src/symlink-parents.js";
@@ -422,6 +423,8 @@ describe("URL, install, and local-root helpers", () => {
     expect(basenameFromMediaSource(fileUrl)).toBe("hello world.txt");
     expect(basenameFromMediaSource("plain/name.txt")).toBe("name.txt");
     expect(() => safeFileURLToPath("file://remote/share/file.txt")).toThrow("remote hosts");
+    expect(isWindowsDriveLetterPath("C:\\Users\\demo", "win32")).toBe(true);
+    expect(isWindowsDriveLetterPath("C:\\Users\\demo", "linux")).toBe(false);
     if (process.platform === "win32") {
       expect(() => assertNoWindowsNetworkPath("\\\\server\\share", "Media")).toThrow();
     } else {
@@ -820,11 +823,11 @@ describe("secret files and temp roots", () => {
     expect(loadSecretFileSync(big, "Token", { maxBytes: 2 })).toMatchObject({ ok: false });
 
     const target = path.join(root, "private", "token.txt");
-    await writePrivateSecretFileAtomic({ rootDir: root, filePath: target, content: "secret\n" });
+    await writeSecretFileAtomic({ rootDir: root, filePath: target, content: "secret\n" });
     expect(readSecretFileSync(target, "Token")).toBe("secret");
     await fs.mkdir(path.join(root, "dir-target"));
     await expect(
-      writePrivateSecretFileAtomic({
+      writeSecretFileAtomic({
         rootDir: root,
         filePath: path.join(root, "dir-target"),
         content: "bad",

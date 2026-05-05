@@ -24,6 +24,13 @@ export function isWindowsNetworkPath(
   return normalized.startsWith("\\\\?\\UNC\\") || normalized.startsWith("\\\\");
 }
 
+export function isWindowsDriveLetterPath(
+  filePath: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === "win32" && /^[A-Za-z]:[\\/]/.test(filePath);
+}
+
 export function assertNoWindowsNetworkPath(filePath: string, label = "Path"): void {
   if (isWindowsNetworkPath(filePath)) {
     throw new Error(`${label} cannot use Windows network paths: ${filePath}`);

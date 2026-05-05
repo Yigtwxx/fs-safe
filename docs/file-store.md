@@ -5,7 +5,6 @@
 ```ts
 import {
   fileStore,
-  copyIntoRoot,
   type FileStore,
   type FileStoreOptions,
   type FileStoreWriteOptions,
@@ -131,10 +130,10 @@ Symlinks are skipped. The walk is best-effort — failures on individual entries
 
 ## Standalone: `copyIntoRoot`
 
-The same one-shot copy primitive used by `FileStore.copyIn`, exported separately for callers that don't want to instantiate a store:
+The same one-shot copy primitive used by `FileStore.copyIn`, available from the advanced surface for callers that don't want to instantiate a store:
 
 ```ts
-import { copyIntoRoot } from "@openclaw/fs-safe/store";
+import { copyIntoRoot } from "@openclaw/fs-safe/advanced";
 
 await copyIntoRoot({
   rootDir: "/var/cache/app",

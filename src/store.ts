@@ -1,5 +1,4 @@
 export {
-  copyIntoRoot,
   fileStore,
   type FileStore,
   type FileStoreOptions,

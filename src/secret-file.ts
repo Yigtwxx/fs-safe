@@ -291,5 +291,3 @@ export async function writeSecretFileAtomic(params: {
     }
   }
 }
-
-export const writePrivateSecretFileAtomic = writeSecretFileAtomic;

@@ -14,6 +14,7 @@ export {
 export { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 export { sanitizeUntrustedFileName } from "./filename.js";
 export { pathExists, pathExistsSync } from "./fs.js";
+export { copyIntoRoot } from "./file-store.js";
 export {
   resolveLocalPathFromRootsSync,
   readLocalFileFromRoots,
@@ -27,6 +28,7 @@ export {
   assertNoWindowsNetworkPath,
   basenameFromMediaSource,
   hasEncodedFileUrlSeparator,
+  isWindowsDriveLetterPath,
   isWindowsNetworkPath,
   safeFileURLToPath,
   trySafeFileURLToPath,

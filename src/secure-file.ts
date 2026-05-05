@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
-import { isWindowsNetworkPath } from "./local-file-access.js";
+import { isWindowsDriveLetterPath, isWindowsNetworkPath } from "./local-file-access.js";
 import { isPathInside, isSymlinkOpenError } from "./path.js";
 import {
   inspectPathPermissions,
@@ -57,7 +57,7 @@ export type SecureFileReadResult = {
 };
 
 function isAbsolutePathname(value: string): boolean {
-  return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || isWindowsNetworkPath(value, "win32");
+  return path.isAbsolute(value) || isWindowsDriveLetterPath(value, "win32") || isWindowsNetworkPath(value, "win32");
 }
 
 function label(options: SecureFileReadOptions): string {

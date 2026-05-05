@@ -134,12 +134,6 @@ await tryReadJson("./config.json"); // returns null on missing or invalid
 await readJson("./manifest.json");  // throws on missing or invalid
 ```
 
-```ts
-import { pathExists } from "@openclaw/fs-safe/advanced";
-
-await pathExists("/safe/workspace/link"); // follows fs.stat() — broken symlinks return false
-```
-
 ## Atomic writes
 
 `replaceFileAtomic()` writes a sibling temp file, optionally fsyncs it, and renames it over the destination. Mode preservation, rename retry / copy fallback on `EPERM`, parent-directory fsync, and a `beforeRename` hook for backup or observer flows are all opt-in.
@@ -178,6 +172,12 @@ Use `update()` when missing state is part of your model; use `updateOr()` for
 the common merge-into-defaults case. Standalone helpers use options bags
 because they do not carry a bound root and often need multiple authority, path,
 and policy knobs.
+
+Use `privateStateStore()` when the state is a directory of private text or JSON
+files rather than one known JSON file: credentials, auth profiles, tokens, and
+per-agent private state. It always writes files at `0o600` under directories at
+`0o700`, returns `null` for missing reads, and intentionally keeps the method
+set small.
 
 Use `fileStore()` for cache/blob/media-style directories where callers
 need safe relative paths, size limits, atomic replacement, stream writes, and

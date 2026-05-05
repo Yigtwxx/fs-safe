@@ -8,7 +8,7 @@ import {
   loadSecretFileSync,
   readSecretFileSync,
   tryReadSecretFileSync,
-  writePrivateSecretFileAtomic,
+  writeSecretFileAtomic,
 } from "../src/secret-file.js";
 
 const tempDirs: string[] = [];
@@ -56,7 +56,7 @@ describe("secret file helpers", () => {
     const root = await tempRoot("fs-safe-secret-");
     const filePath = path.join(root, "nested", "token.txt");
 
-    await writePrivateSecretFileAtomic({
+    await writeSecretFileAtomic({
       rootDir: root,
       filePath,
       content: "secret\n",
@@ -75,7 +75,7 @@ describe("secret file helpers", () => {
     const root = await tempRoot("fs-safe-secret-");
     const filePath = path.join(root, "nested", "token.txt");
 
-    await writePrivateSecretFileAtomic({
+    await writeSecretFileAtomic({
       rootDir: root,
       filePath,
       content: "secret\n",
@@ -97,7 +97,7 @@ describe("secret file helpers", () => {
     const outside = await tempRoot("fs-safe-secret-outside-");
 
     await expect(
-      writePrivateSecretFileAtomic({
+      writeSecretFileAtomic({
         rootDir: root,
         filePath: path.join(outside, "token.txt"),
         content: "secret\n",

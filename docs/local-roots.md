@@ -99,13 +99,14 @@ The read-side options are forwarded to `Root` for the actual read.
 
 ## `local-file-access` companions
 
-The `local-file-access` module (re-exported from the main entry) supplies a few small helpers for input normalization that the roots helpers use under the hood. They are also useful on their own:
+The `local-file-access` module (re-exported from `@openclaw/fs-safe/advanced`) supplies a few small helpers for input normalization that the roots helpers use under the hood. They are also useful on their own:
 
 ```ts
 import {
   assertNoWindowsNetworkPath,
   basenameFromMediaSource,
   hasEncodedFileUrlSeparator,
+  isWindowsDriveLetterPath,
   isWindowsNetworkPath,
   safeFileURLToPath,
   trySafeFileURLToPath,
@@ -114,6 +115,7 @@ import {
 
 - `safeFileURLToPath(fileUrl)` — `url.fileURLToPath` with explicit error throwing. Refuses URLs that decode to network paths.
 - `trySafeFileURLToPath(fileUrl)` — same, returns `undefined` instead of throwing.
+- `isWindowsDriveLetterPath(p, platform?)` — true for `C:\...` style absolute paths when the platform is Windows.
 - `isWindowsNetworkPath(p, platform?)` — true for `\\server\share` and `//server/share` style paths when the platform is Windows.
 - `assertNoWindowsNetworkPath(p, label?)` — throws if it is.
 - `basenameFromMediaSource(source?)` — best-effort filename extraction from URLs / data URIs / paths, for naming downloaded media.
