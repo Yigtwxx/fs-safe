@@ -1,7 +1,7 @@
 {
   "name": "@openclaw/fs-safe",
   "version": "0.0.0",
-  "description": "Race-resistant root-bounded filesystem primitives for Node.js.",
+  "description": "Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.",
   "license": "MIT",
   "repository": {
     "type": "git",

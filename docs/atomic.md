@@ -16,6 +16,8 @@ import {
 
 Write `content` to a sibling temp file in the destination directory, optionally `fsync` the temp file, optionally `fsync` the parent directory after rename, then atomically rename over the destination.
 
+Async replacements to the same destination are serialized inside the current process, so two overlapping `replaceFileAtomic()` calls do not interleave their temp-write/rename phases. Use a sidecar lock when multiple processes may write the same target.
+
 ```ts
 import { replaceFileAtomic } from "@openclaw/fs-safe/atomic";
 

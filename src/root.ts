@@ -23,6 +23,8 @@ import { helperReaddir, helperStat, runPinnedHelper } from "./pinned-helper.js";
 import { resolveRootPath } from "./root-path.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
+import { registerTempPathForExit } from "./temp-cleanup.js";
+import { serializePathWrite } from "./write-queue.js";
 
 export type OpenResult = {
   handle: FileHandle;
@@ -745,6 +747,10 @@ function buildAtomicWriteTempPath(targetPath: string): string {
   return path.join(dir, `.${base}.${process.pid}.${randomUUID()}.tmp`);
 }
 
+function rootWriteQueueKey(root: RootContext, relativePath: string): string {
+  return `${root.rootReal}\0${relativePath}`;
+}
+
 function createMaxBytesTransform(maxBytes: number): Transform {
   let bytes = 0;
   return new Transform({
@@ -1129,46 +1135,50 @@ async function writeFileInRoot(
   },
 ): Promise<void> {
   if (process.platform === "win32") {
-    await writeFileFallback(root, params);
+    await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
+      await writeFileFallback(root, params);
+    });
     return;
   }
 
   const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath, params.mode);
 
-  let identity;
-  try {
-    identity = await runPinnedWriteHelper({
-      rootPath: pinned.rootReal,
-      relativeParentPath: pinned.relativeParentPath,
-      basename: pinned.basename,
-      mkdir: params.mkdir !== false,
-      mode: params.mode ?? pinned.mode,
-      overwrite: params.overwrite,
-      input: {
-        kind: "buffer",
-        data: params.data,
-        encoding: params.encoding,
-      },
-    });
-  } catch (error) {
-    if (params.overwrite === false && isAlreadyExistsError(error)) {
-      throw new FsSafeError("already-exists", "file already exists", {
-        cause: error instanceof Error ? error : undefined,
+  await serializePathWrite(pinned.targetPath, async () => {
+    let identity;
+    try {
+      identity = await runPinnedWriteHelper({
+        rootPath: pinned.rootReal,
+        relativeParentPath: pinned.relativeParentPath,
+        basename: pinned.basename,
+        mkdir: params.mkdir !== false,
+        mode: params.mode ?? pinned.mode,
+        overwrite: params.overwrite,
+        input: {
+          kind: "buffer",
+          data: params.data,
+          encoding: params.encoding,
+        },
       });
+    } catch (error) {
+      if (params.overwrite === false && isAlreadyExistsError(error)) {
+        throw new FsSafeError("already-exists", "file already exists", {
+          cause: error instanceof Error ? error : undefined,
+        });
+      }
+      throw normalizePinnedWriteError(error);
     }
-    throw normalizePinnedWriteError(error);
-  }
 
-  try {
-    await verifyAtomicWriteResult({
-      root,
-      targetPath: pinned.targetPath,
-      expectedIdentity: identity,
-    });
-  } catch (err) {
-    emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);
-    throw err;
-  }
+    try {
+      await verifyAtomicWriteResult({
+        root,
+        targetPath: pinned.targetPath,
+        expectedIdentity: identity,
+      });
+    } catch (err) {
+      emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);
+      throw err;
+    }
+  });
 }
 
 async function copyFileInRoot(
@@ -1195,37 +1205,41 @@ async function copyFileInRoot(
 
   try {
     if (process.platform === "win32") {
-      await copyFileFallback(root, params, source);
+      await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
+        await copyFileFallback(root, params, source);
+      });
       return;
     }
 
     const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath, params.mode);
-    const sourceStream = createBoundedReadStream(source, params.maxBytes);
-    const identity = await runPinnedWriteHelper({
-      rootPath: pinned.rootReal,
-      relativeParentPath: pinned.relativeParentPath,
-      basename: pinned.basename,
-      mkdir: params.mkdir !== false,
-      mode: pinned.mode,
-      overwrite: true,
-      maxBytes: params.maxBytes,
-      input: {
-        kind: "stream",
-        stream: sourceStream,
-      },
-    }).catch((error) => {
-      throw normalizePinnedWriteError(error);
-    });
-    try {
-      await verifyAtomicWriteResult({
-        root,
-        targetPath: pinned.targetPath,
-        expectedIdentity: identity,
+    await serializePathWrite(pinned.targetPath, async () => {
+      const sourceStream = createBoundedReadStream(source, params.maxBytes);
+      const identity = await runPinnedWriteHelper({
+        rootPath: pinned.rootReal,
+        relativeParentPath: pinned.relativeParentPath,
+        basename: pinned.basename,
+        mkdir: params.mkdir !== false,
+        mode: pinned.mode,
+        overwrite: true,
+        maxBytes: params.maxBytes,
+        input: {
+          kind: "stream",
+          stream: sourceStream,
+        },
+      }).catch((error) => {
+        throw normalizePinnedWriteError(error);
       });
-    } catch (err) {
-      emitWriteBoundaryWarning(`post-copy verification failed: ${String(err)}`);
-      throw err;
-    }
+      try {
+        await verifyAtomicWriteResult({
+          root,
+          targetPath: pinned.targetPath,
+          expectedIdentity: identity,
+        });
+      } catch (err) {
+        emitWriteBoundaryWarning(`post-copy verification failed: ${String(err)}`);
+        throw err;
+      }
+    });
   } finally {
     await source.handle.close().catch(() => {});
   }
@@ -1440,8 +1454,10 @@ async function writeFileFallback(
   const mode = params.mode ?? (target.stat.mode & 0o777);
   await target.handle.close().catch(() => {});
   let tempPath: string | null = null;
+  let unregisterTempPath: (() => void) | null = null;
   try {
     tempPath = buildAtomicWriteTempPath(destinationPath);
+    unregisterTempPath = registerTempPathForExit(tempPath);
     const writtenStat = await writeTempFileForAtomicReplace({
       tempPath,
       data: params.data,
@@ -1450,6 +1466,8 @@ async function writeFileFallback(
     });
     await fs.rename(tempPath, destinationPath);
     tempPath = null;
+    unregisterTempPath();
+    unregisterTempPath = null;
     try {
       await verifyAtomicWriteResult({
         root,
@@ -1464,6 +1482,7 @@ async function writeFileFallback(
     if (tempPath) {
       await fs.rm(tempPath, { force: true }).catch(() => {});
     }
+    unregisterTempPath?.();
   }
 }
 
@@ -1542,6 +1561,7 @@ async function copyFileFallback(
   let targetClosedByUs = false;
   let tempHandle: FileHandle | null = null;
   let tempPath: string | null = null;
+  let unregisterTempPath: (() => void) | null = null;
   let tempClosedByStream = false;
   try {
     target = await openWritableFileInRoot(root, {
@@ -1556,6 +1576,7 @@ async function copyFileFallback(
     targetClosedByUs = true;
 
     tempPath = buildAtomicWriteTempPath(destinationPath);
+    unregisterTempPath = registerTempPathForExit(tempPath);
     tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, mode || 0o600);
     const sourceStream = createBoundedReadStream(source, params.maxBytes);
     const targetStream = tempHandle.createWriteStream();
@@ -1574,6 +1595,8 @@ async function copyFileFallback(
     tempHandle = null;
     await fs.rename(tempPath, destinationPath);
     tempPath = null;
+    unregisterTempPath();
+    unregisterTempPath = null;
     try {
       await verifyAtomicWriteResult({
         root,
@@ -1593,6 +1616,7 @@ async function copyFileFallback(
     if (tempPath) {
       await fs.rm(tempPath, { force: true }).catch(() => {});
     }
+    unregisterTempPath?.();
     if (!sourceClosedByStream) {
       await source.handle.close().catch(() => {});
     }

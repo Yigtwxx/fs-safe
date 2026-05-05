@@ -3,6 +3,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { copyIntoRoot } from "./file-store.js";
+import { registerTempPathForExit } from "./temp-cleanup.js";
 
 export type TempWorkspaceOptions = {
   rootDir: string;
@@ -95,6 +96,7 @@ async function createTempWorkspace(
   const root = await fs.realpath(requestedRoot).catch(() => requestedRoot);
   await ensurePrivateDirectory(root, dirMode);
   const dir = await fs.mkdtemp(path.join(root, sanitizeTempPrefix(options.prefix)));
+  const unregisterTempDir = registerTempPathForExit(dir, { recursive: true });
   await fs.chmod(dir, dirMode).catch(() => undefined);
   const stat = await fs.lstat(dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
@@ -137,10 +139,18 @@ async function createTempWorkspace(
     },
     read: async (fileName) => await fs.readFile(resolveWorkspaceLeaf(dir, fileName)),
     cleanup: async () => {
-      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      try {
+        await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      } finally {
+        unregisterTempDir();
+      }
     },
     [Symbol.asyncDispose]: async () => {
-      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      try {
+        await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      } finally {
+        unregisterTempDir();
+      }
     },
   };
 }
@@ -180,6 +190,7 @@ export function tempWorkspaceSync(
   }
   ensurePrivateDirectorySync(root, dirMode);
   const dir = fsSync.mkdtempSync(path.join(root, sanitizeTempPrefix(options.prefix)));
+  const unregisterTempDir = registerTempPathForExit(dir, { recursive: true });
   try {
     fsSync.chmodSync(dir, dirMode);
   } catch {
@@ -232,6 +243,8 @@ export function tempWorkspaceSync(
         fsSync.rmSync(dir, { recursive: true, force: true });
       } catch {
         // Best-effort cleanup.
+      } finally {
+        unregisterTempDir();
       }
     },
     [Symbol.dispose]: () => {
@@ -239,6 +252,8 @@ export function tempWorkspaceSync(
         fsSync.rmSync(dir, { recursive: true, force: true });
       } catch {
         // Best-effort cleanup.
+      } finally {
+        unregisterTempDir();
       }
     },
   };

@@ -3,6 +3,8 @@ import syncFs from "node:fs";
 import type { Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { registerTempPathForExit } from "./temp-cleanup.js";
+import { serializePathWrite } from "./write-queue.js";
 
 export type ReplaceFileAtomicFileSystem = {
   promises: Pick<
@@ -291,11 +293,21 @@ export async function replaceFileAtomic(
 ): Promise<ReplaceFileAtomicResult> {
   const filePath = options.filePath;
   validateReplaceFilePath(filePath);
+  return await serializePathWrite(path.resolve(filePath), async () => {
+    return await replaceFileAtomicUnserialized(options);
+  });
+}
+
+async function replaceFileAtomicUnserialized(
+  options: ReplaceFileAtomicOptions,
+): Promise<ReplaceFileAtomicResult> {
+  const filePath = options.filePath;
   const fsModule = options.fileSystem?.promises ?? fs;
   const dir = path.dirname(filePath);
   const dirMode = options.dirMode ?? 0o700;
   const mode = await resolveMode(options);
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
+  const unregisterTempPath = registerTempPathForExit(tempPath);
   let tempExists = false;
   let originalError: unknown;
 
@@ -319,6 +331,7 @@ export async function replaceFileAtomic(
       copyFallbackOnPermissionError: options.copyFallbackOnPermissionError === true,
     });
     tempExists = false;
+    unregisterTempPath();
     await fsModule.chmod(filePath, mode).catch(() => undefined);
     if (options.syncParentDir) {
       await syncDirectoryBestEffort(fsModule, dir);
@@ -336,6 +349,7 @@ export async function replaceFileAtomic(
         throwOnCleanupError: options.throwOnCleanupError === true,
       });
     }
+    unregisterTempPath();
   }
 }
 
@@ -349,6 +363,7 @@ export function replaceFileAtomicSync(
   const dirMode = options.dirMode ?? 0o700;
   const mode = resolveModeSync(options);
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
+  const unregisterTempPath = registerTempPathForExit(tempPath);
   let tempExists = false;
   let originalError: unknown;
 
@@ -376,6 +391,7 @@ export function replaceFileAtomicSync(
       copyFallbackOnPermissionError: options.copyFallbackOnPermissionError === true,
     });
     tempExists = false;
+    unregisterTempPath();
     try {
       fsModule.chmodSync(filePath, mode);
     } catch {
@@ -402,5 +418,6 @@ export function replaceFileAtomicSync(
         // The temp file is best-effort cleanup after write failure.
       }
     }
+    unregisterTempPath();
   }
 }

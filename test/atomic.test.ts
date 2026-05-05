@@ -8,6 +8,10 @@ import {
   replaceFileAtomic,
   replaceFileAtomicSync,
 } from "../src/atomic.js";
+import {
+  __cleanupRegisteredTempPathForTest,
+  registerTempPathForExit,
+} from "../src/temp-cleanup.js";
 
 const tempDirs: string[] = [];
 
@@ -41,6 +45,57 @@ describe("atomic helpers", () => {
     expect(result).toEqual({ method: "rename" });
     await expect(fs.readFile(filePath, "utf8")).resolves.toBe("new");
     await expect(fs.stat(observedTempPath ?? "")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("serializes concurrent replacements for the same target", async () => {
+    const root = await tempRoot("fs-safe-atomic-queue-");
+    const filePath = path.join(root, "state.txt");
+    const events: string[] = [];
+    let releaseFirst: (() => void) | undefined;
+
+    const first = replaceFileAtomic({
+      filePath,
+      content: "first",
+      beforeRename: async () => {
+        events.push("first-before");
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        events.push("first-release");
+      },
+    });
+    while (!releaseFirst) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    const second = replaceFileAtomic({
+      filePath,
+      content: "second",
+      beforeRename: async () => {
+        events.push("second-before");
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events).toEqual(["first-before"]);
+
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(events).toEqual(["first-before", "first-release", "second-before"]);
+    await expect(fs.readFile(filePath, "utf8")).resolves.toBe("second");
+  });
+
+  it("registers temp paths for best-effort exit cleanup", async () => {
+    const root = await tempRoot("fs-safe-temp-cleanup-");
+    const tempPath = path.join(root, "leftover.tmp");
+    await fs.writeFile(tempPath, "temp", "utf8");
+    const unregister = registerTempPathForExit(tempPath);
+
+    __cleanupRegisteredTempPathForTest(tempPath);
+
+    await expect(fs.access(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
+    unregister();
   });
 
   it("uses the permission-error copy fallback when requested", async () => {
