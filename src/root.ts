@@ -335,7 +335,11 @@ export interface Root {
   stat(relativePath: string): Promise<PathStat>;
   list(relativePath: string, options?: { withFileTypes?: false }): Promise<string[]>;
   list(relativePath: string, options: { withFileTypes: true }): Promise<DirEntry[]>;
-  move(from: string, to: string, options?: { overwrite?: boolean }): Promise<void>;
+  move(
+    fromRelative: string,
+    toRelative: string,
+    options?: { overwrite?: boolean },
+  ): Promise<void>;
 }
 
 class RootHandle implements Root {
@@ -545,11 +549,15 @@ class RootHandle implements Root {
       : await helperReaddir(this.rootReal, relativePath, false);
   }
 
-  async move(from: string, to: string, options: { overwrite?: boolean } = {}): Promise<void> {
+  async move(
+    fromRelative: string,
+    toRelative: string,
+    options: { overwrite?: boolean } = {},
+  ): Promise<void> {
     await runPinnedHelper<void>("rename", this.rootReal, {
-      from,
+      from: fromRelative,
       overwrite: options.overwrite ?? false,
-      to,
+      to: toRelative,
     });
   }
 }

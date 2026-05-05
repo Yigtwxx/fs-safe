@@ -110,6 +110,17 @@ describe("@openclaw/fs-safe", () => {
     });
   });
 
+  it("rejects reader callbacks for absolute paths outside the root", async () => {
+    const root = await openRoot(await tempRoot("fs-safe-reader-root-"));
+    const outside = await tempRoot("fs-safe-reader-outside-");
+    const outsidePath = path.join(outside, "secret.txt");
+    await writeFile(outsidePath, "secret");
+
+    await expect(root.reader()(outsidePath)).rejects.toMatchObject({
+      code: "outside-workspace",
+    });
+  });
+
   it("rejects symlink parents", async () => {
     const rootPath = await tempRoot("fs-safe-symlink-parent-");
     const root = await openRoot(rootPath);

@@ -54,6 +54,8 @@ await fs.create("notes/README.md", "seed\n"); // throws if it already exists
 
 `move()` also defaults to no clobber. Pass `{ overwrite: true }` when replacing the target is intended.
 
+Use `ensureRoot()` when a computed relative directory target resolves to the root itself (`""` or `"."`) and you want the operation to be accepted. `root()` still requires the trusted root directory to already exist.
+
 ## Reading
 
 Pick the narrowest read shape that gives you what you need:
@@ -78,7 +80,20 @@ try {
 }
 ```
 
-`reader()` returns a callback that reads absolute or relative paths through the same root boundary. It is useful for APIs that accept a `(path) => Promise<Buffer>` loader. `readPath()` has the same absolute-path behavior directly: an absolute path outside the root is rejected with `outside-workspace`.
+`reader()` returns a callback that reads absolute or relative paths through the same root boundary. It is useful for APIs that accept a `(path) => Promise<Buffer>` loader. Absolute paths outside the root are rejected with `outside-workspace`. `readPath()` has the same absolute-path behavior directly.
+
+When you need a writable `FileHandle`, use `openWritable()` and close the handle yourself:
+
+```ts
+const opened = await fs.openWritable("logs/current.log", { append: true });
+try {
+  await opened.handle.appendFile("line\n");
+} finally {
+  await opened.handle.close();
+}
+```
+
+`nonBlockingRead` is the only I/O scheduling knob in `RootDefaults`; it applies to read/open operations. Filesystem safety policy remains explicit through `hardlinks` and `symlinks`.
 
 `stat()`, `exists()`, and `list()` are boundary-checked, but they cannot pin a later operation to the same filesystem object. Use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()` for operations that must be race-resistant at the point of use.
 
