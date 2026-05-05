@@ -9,6 +9,7 @@ import { resolveSafeRelativePath } from "./path.js";
 
 export type FileStoreOptions = {
   rootDir: string;
+  private?: boolean;
   dirMode?: number;
   mode?: number;
   maxBytes?: number;
@@ -50,8 +51,26 @@ export type FileStore = {
   open(relativePath: string, options?: RootReadOptions): Promise<OpenResult>;
   read(relativePath: string, options?: RootReadOptions): Promise<ReadResult>;
   readBytes(relativePath: string, options?: RootReadOptions): Promise<Buffer>;
+  readText(
+    relativePath: string,
+    options?: RootReadOptions & { encoding?: BufferEncoding },
+  ): Promise<string>;
+  readJson<T = unknown>(
+    relativePath: string,
+    options?: RootReadOptions & { encoding?: BufferEncoding },
+  ): Promise<T>;
   remove(relativePath: string): Promise<void>;
   exists(relativePath: string): Promise<boolean>;
+  writeText(
+    relativePath: string,
+    data: string,
+    options?: FileStoreWriteOptions,
+  ): Promise<string>;
+  writeJson(
+    relativePath: string,
+    data: unknown,
+    options?: FileStoreWriteOptions & { trailingNewline?: boolean },
+  ): Promise<string>;
   pruneExpired(options: FileStorePruneOptions): Promise<void>;
 };
 
@@ -120,29 +139,35 @@ export function fileStore(options: FileStoreOptions): FileStore {
     return await root(rootDir, { hardlinks: "reject", maxBytes });
   }
 
+  async function write(
+    relativePath: string,
+    data: string | Buffer,
+    writeOptions?: FileStoreWriteOptions,
+  ): Promise<string> {
+    const destination = resolveStorePath(rootDir, relativePath);
+    const content = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    assertMaxBytes(content.byteLength, writeOptions?.maxBytes ?? maxBytes);
+    await ensureParent(destination, writeOptions?.dirMode ?? dirMode);
+    const result = await writeSiblingTempFile({
+      dir: path.dirname(destination),
+      dirMode: writeOptions?.dirMode ?? dirMode,
+      mode: writeOptions?.mode ?? mode,
+      tempPrefix: writeOptions?.tempPrefix ?? `.${path.basename(destination)}`,
+      writeTemp: async (tempPath) => {
+        await fs.writeFile(tempPath, content);
+      },
+      resolveFinalPath: () => destination,
+      syncTempFile: true,
+      syncParentDir: true,
+    });
+    return result.filePath;
+  }
+
   return {
     rootDir,
     path: (relativePath) => resolveStorePath(rootDir, relativePath),
     root: openRoot,
-    write: async (relativePath, data, writeOptions) => {
-      const destination = resolveStorePath(rootDir, relativePath);
-      const content = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      assertMaxBytes(content.byteLength, writeOptions?.maxBytes ?? maxBytes);
-      await ensureParent(destination, writeOptions?.dirMode ?? dirMode);
-      const result = await writeSiblingTempFile({
-        dir: path.dirname(destination),
-        dirMode: writeOptions?.dirMode ?? dirMode,
-        mode: writeOptions?.mode ?? mode,
-        tempPrefix: writeOptions?.tempPrefix ?? `.${path.basename(destination)}`,
-        writeTemp: async (tempPath) => {
-          await fs.writeFile(tempPath, content);
-        },
-        resolveFinalPath: () => destination,
-        syncTempFile: true,
-        syncParentDir: true,
-      });
-      return result.filePath;
-    },
+    write,
     writeStream: async (relativePath, stream, writeOptions) => {
       const destination = resolveStorePath(rootDir, relativePath);
       const limit = writeOptions?.maxBytes ?? maxBytes;
@@ -192,10 +217,34 @@ export function fileStore(options: FileStoreOptions): FileStore {
       await (await openRoot()).read(assertRelativePath(relativePath), readOptions),
     readBytes: async (relativePath, readOptions) =>
       await (await openRoot()).readBytes(assertRelativePath(relativePath), readOptions),
+    readText: async (relativePath, readOptions) => {
+      const { encoding = "utf8", ...options } = readOptions ?? {};
+      return (await (await openRoot()).read(assertRelativePath(relativePath), options)).buffer
+        .toString(encoding);
+    },
+    readJson: async <T = unknown>(
+      relativePath: string,
+      readOptions?: RootReadOptions & { encoding?: BufferEncoding },
+    ) => {
+      const { encoding = "utf8", ...options } = readOptions ?? {};
+      return JSON.parse(
+        (await (await openRoot()).read(assertRelativePath(relativePath), options)).buffer
+          .toString(encoding),
+      ) as T;
+    },
     remove: async (relativePath) => {
       await (await openRoot()).remove(assertRelativePath(relativePath));
     },
     exists: async (relativePath) => await (await openRoot()).exists(assertRelativePath(relativePath)),
+    writeText: async (relativePath, data, writeOptions) => await write(relativePath, data, writeOptions),
+    writeJson: async (relativePath, data, writeOptions) => {
+      const json = JSON.stringify(data, null, 2);
+      return await write(
+        relativePath,
+        writeOptions?.trailingNewline === false ? json : `${json}\n`,
+        writeOptions,
+      );
+    },
     pruneExpired: async (pruneOptions) => {
       const now = Date.now();
       const recursive = pruneOptions.recursive ?? false;

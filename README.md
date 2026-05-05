@@ -219,8 +219,8 @@ and policy knobs.
 Use `privateStateStore()` when the state is a directory of private text or JSON
 files rather than one known JSON file: credentials, auth profiles, tokens, and
 per-agent private state. It always writes files at `0o600` under directories at
-`0o700`, returns `null` for missing reads, and intentionally keeps the method
-set small.
+`0o700`, returns `null` for missing text/JSON reads, and otherwise shares the
+same managed-store shape as `fileStore`.
 
 Use `fileStore()` for cache/blob/media-style directories where callers
 need safe relative paths, size limits, atomic replacement, stream writes, and
@@ -236,6 +236,7 @@ const media = fileStore({
 });
 
 await media.write("inbound/photo.jpg", bytes);
+await media.writeJson("state/photo.json", { id: "photo" });
 const opened = await media.open("inbound/photo.jpg");
 await media.pruneExpired({ ttlMs: 10 * 60 * 1000, recursive: true });
 ```

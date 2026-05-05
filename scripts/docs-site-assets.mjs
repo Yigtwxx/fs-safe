@@ -89,6 +89,8 @@ main{min-width:0;padding:32px clamp(20px,4.5vw,56px) 80px;max-width:1180px;margi
 .home-cta .btn{display:inline-flex;align-items:center;gap:7px;border-radius:8px;padding:10px 16px;font-weight:600;font-size:.92rem;text-decoration:none;transition:background .15s,border-color .15s,color .15s,transform .12s}
 .home-cta .btn-primary{background:var(--accent);color:#fff;border:1px solid var(--accent)}
 .home-cta .btn-primary:hover{background:var(--accent-strong);border-color:var(--accent-strong);text-decoration:none}
+:root[data-theme="dark"] .home-cta .btn-primary{color:#0a0e16}
+:root[data-theme="dark"] .home-cta .btn-primary:hover{color:#04080f}
 .home-cta .btn-ghost{padding:10px 16px}
 .home-install{display:flex;align-items:center;gap:12px;background:var(--code-bg);color:var(--code-fg);border-radius:8px;padding:10px 10px 10px 16px;font:500 .9rem/1.2 "JetBrains Mono","SF Mono",ui-monospace,monospace;max-width:32em;border:1px solid #1f2937}
 .home-install .prompt{color:#64748b;user-select:none;flex:0 0 auto}
@@ -123,6 +125,16 @@ body:not(.home) .doc>h1:first-child{display:none}
 .doc pre::-webkit-scrollbar{height:8px;width:8px}
 .doc pre::-webkit-scrollbar-thumb{background:#334155;border-radius:8px}
 .doc pre code{display:block;background:transparent;border:0;color:inherit;padding:0;font-size:1em;white-space:pre}
+.doc pre code .token.comment{color:#7c8597;font-style:italic}
+.doc pre code .token.string{color:#a8e0a3}
+.doc pre code .token.number,.doc pre code .token.boolean{color:#f6c177}
+.doc pre code .token.keyword{color:#e387cb}
+.doc pre code .token.type{color:#7dd3fc}
+.doc pre code .token.function{color:#82caff}
+.doc pre code .token.property{color:#7dd3fc}
+.doc pre code .token.variable{color:#fcd28a}
+.doc pre code .token.operator{color:#e387cb}
+.doc pre code .token.punctuation{color:#a0a8b6}
 .doc pre .copy{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.06);color:var(--code-fg);border:1px solid rgba(255,255,255,.16);border-radius:6px;padding:3px 9px;font:500 .7rem/1 "Inter",sans-serif;cursor:pointer;opacity:0;transition:opacity .15s,background .15s,border-color .15s}
 .doc pre:hover .copy,.doc pre .copy:focus{opacity:1}
 .doc pre .copy:hover{background:rgba(255,255,255,.12)}

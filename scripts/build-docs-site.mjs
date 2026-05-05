@@ -222,7 +222,7 @@ function markdownToHtml(markdown, currentRel) {
       closeList();
       flushBlockquote();
       if (fence) {
-        html.push(`<pre><code class="language-${escapeAttr(fence.lang)}">${escapeHtml(fence.lines.join("\n"))}</code></pre>`);
+        html.push(`<pre><code class="language-${escapeAttr(fence.lang)}">${highlightCode(fence.lines.join("\n"), fence.lang)}</code></pre>`);
         fence = null;
       } else {
         fence = { lang: fenceMatch[1] || "text", lines: [] };
@@ -539,6 +539,88 @@ function slug(text) {
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+}
+
+function highlightLangAliases() {
+  return {
+    ts: "ts",
+    typescript: "ts",
+    js: "ts",
+    javascript: "ts",
+    tsx: "ts",
+    jsx: "ts",
+    bash: "bash",
+    sh: "bash",
+    shell: "bash",
+    zsh: "bash",
+    jsonc: "jsonc",
+    json: "jsonc",
+  };
+}
+
+function highlightRules() {
+  return {
+    ts: [
+      { type: "comment", pattern: /\/\/[^\n]*|\/\*[\s\S]*?\*\// },
+      { type: "string", pattern: /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\$]|\\[\s\S]|\$(?!\{)|\$\{[^}]*\})*`/ },
+      { type: "keyword", pattern: /\b(?:abstract|any|as|async|await|boolean|break|case|catch|class|const|continue|declare|default|delete|do|else|enum|export|extends|finally|for|from|function|get|if|implements|import|in|infer|instanceof|interface|is|keyof|let|namespace|never|new|number|of|out|override|package|private|protected|public|readonly|return|satisfies|set|static|string|super|switch|symbol|this|throw|try|type|typeof|undefined|unique|unknown|var|void|while|yield)\b/ },
+      { type: "boolean", pattern: /\b(?:true|false|null|undefined)\b/ },
+      { type: "number", pattern: /\b(?:0[xX][\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)n?\b/ },
+      { type: "type", pattern: /\b[A-Z][A-Za-z0-9_]*\b/ },
+      { type: "function", pattern: /\b[a-zA-Z_$][\w$]*(?=\s*\()/ },
+      { type: null, pattern: /\b[a-zA-Z_$][\w$]*\b/ },
+      { type: "operator", pattern: /=>|\.\.\.|[!=<>]==?|&&|\|\||\?\?|\+\+|--|\*\*|[+\-*/%&|^!~?]=?|=/ },
+      { type: "punctuation", pattern: /[{}\[\](),.;:@]/ },
+    ],
+    bash: [
+      { type: "comment", pattern: /#[^\n]*/ },
+      { type: "string", pattern: /"(?:[^"\\]|\\[\s\S])*"|'[^']*'/ },
+      { type: "variable", pattern: /\$\{[^}]+\}|\$[A-Za-z_]\w*|\$[0-9*@#?!$-]/ },
+      { type: "keyword", pattern: /\b(?:if|then|else|elif|fi|for|while|until|do|done|case|esac|in|function|return|exit|break|continue|export|local|readonly|set|unset|declare)\b/ },
+      { type: "function", pattern: /(?<=^|[\s|;&(])(?:pnpm|npm|yarn|bun|node|git|cd|ls|mkdir|rm|cp|mv|cat|echo|grep|sed|awk|find|curl|wget|tar|zip|unzip)\b/ },
+      { type: "number", pattern: /\b\d+\b/ },
+      { type: null, pattern: /\b[a-zA-Z_][\w-]*\b/ },
+      { type: "operator", pattern: /\|\||&&|>>|<<|[|&;<>!=]/ },
+      { type: "punctuation", pattern: /[{}\[\](),.:]/ },
+    ],
+    jsonc: [
+      { type: "comment", pattern: /\/\/[^\n]*|\/\*[\s\S]*?\*\// },
+      { type: "property", pattern: /"(?:[^"\\\n]|\\[\s\S])*"(?=\s*:)/ },
+      { type: "string", pattern: /"(?:[^"\\\n]|\\[\s\S])*"/ },
+      { type: "boolean", pattern: /\b(?:true|false|null)\b/ },
+      { type: "number", pattern: /-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/ },
+      { type: "punctuation", pattern: /[{}\[\]:,]/ },
+    ],
+  };
+}
+
+function highlightCode(code, langInput) {
+  const aliases = highlightLangAliases();
+  const lang = aliases[langInput] || null;
+  const rules = lang ? highlightRules()[lang] : null;
+  if (!rules) return escapeHtml(code);
+  let out = "";
+  let pos = 0;
+  while (pos < code.length) {
+    let matched = false;
+    for (const { type, pattern } of rules) {
+      const re = new RegExp(pattern.source, "y");
+      re.lastIndex = pos;
+      const m = re.exec(code);
+      if (m && m.index === pos && m[0].length > 0) {
+        const text = escapeHtml(m[0]);
+        out += type ? `<span class="token ${type}">${text}</span>` : text;
+        pos += m[0].length;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      out += escapeHtml(code[pos]);
+      pos += 1;
+    }
+  }
+  return out;
 }
 
 function escapeAttr(value) {

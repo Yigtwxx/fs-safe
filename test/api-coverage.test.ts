@@ -741,12 +741,17 @@ describe("file stores and private stores", () => {
     const sourceRoot = await tempRoot("fs-safe-store-source-");
     const source = path.join(sourceRoot, "source.txt");
     await fs.writeFile(source, "copy", "utf8");
-    const store = fileStore({ rootDir: root, maxBytes: 16 });
+    const store = fileStore({ rootDir: root, maxBytes: 64 });
 
     expect(store.path("a/b.txt")).toBe(path.join(root, "a", "b.txt"));
     await expect(store.write("a/b.txt", "data")).resolves.toBe(path.join(root, "a", "b.txt"));
     await expect(store.readBytes("a/b.txt")).resolves.toEqual(Buffer.from("data"));
-    await expect(store.write("too-large.txt", Buffer.alloc(17))).rejects.toMatchObject({
+    await expect(store.readText("a/b.txt")).resolves.toBe("data");
+    await expect(store.writeJson("state.json", { ok: true })).resolves.toBe(
+      path.join(root, "state.json"),
+    );
+    await expect(store.readJson("state.json")).resolves.toEqual({ ok: true });
+    await expect(store.write("too-large.txt", Buffer.alloc(65))).rejects.toMatchObject({
       code: "too-large",
     });
     await store.writeStream("stream.txt", Readable.from(["hello"]));
@@ -779,9 +784,13 @@ describe("file stores and private stores", () => {
     await expect(store.readText("nested/value.txt")).resolves.toBe("secret");
     await store.writeJson("nested/value.json", { ok: true }, { trailingNewline: true });
     await expect(store.readJson("nested/value.json")).resolves.toEqual({ ok: true });
+    await expect(store.exists("nested/value.json")).resolves.toBe(true);
+    await expect(store.readBytes("nested/value.txt")).resolves.toEqual(Buffer.from("secret"));
     expect(store.path("nested/value.txt")).toBe(path.join(root, "nested", "value.txt"));
     expect(() => store.path("../escape.txt")).toThrow("stay under");
     await expect(store.readText("missing.txt")).resolves.toBeNull();
+    await store.remove("nested/value.json");
+    await expect(store.exists("nested/value.json")).resolves.toBe(false);
 
     const syncText = path.join(root, "sync", "value.txt");
     writePrivateTextAtomicSync({ rootDir: root, filePath: syncText, content: "sync" });

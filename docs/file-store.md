@@ -27,6 +27,7 @@ const cache = fileStore({
   mode: 0o600,        // file mode for writes (default 0o600)
   dirMode: 0o700,     // mode for parent directories created on demand (default 0o700)
   maxBytes: 64 * 1024 * 1024, // optional: refuse writes/reads larger than this
+  private: true,      // optional: document intent for private 0600/0700 stores
 });
 ```
 
@@ -43,6 +44,10 @@ type FileStore = {
   open(rel, options?): Promise<OpenResult>;
   read(rel, options?): Promise<ReadResult>;
   readBytes(rel, options?): Promise<Buffer>;
+  readText(rel, options?): Promise<string>;
+  readJson<T = unknown>(rel, options?): Promise<T>;
+  writeText(rel, data: string, options?): Promise<string>;
+  writeJson(rel, data: unknown, options?): Promise<string>;
   remove(rel): Promise<void>;
   exists(rel): Promise<boolean>;
   pruneExpired(options: FileStorePruneOptions): Promise<void>;
@@ -64,6 +69,10 @@ const path = await cache.write("entries/2026/05/05.json", JSON.stringify(entry))
 ```
 
 Buffer or string. Returns the final absolute path. Throws `too-large` if `data.byteLength` exceeds `maxBytes`.
+
+### `writeText(rel, data, options?)` / `writeJson(rel, data, options?)`
+
+Convenience wrappers over `write`. `writeJson` pretty-prints with a trailing newline by default and accepts `{ trailingNewline: false }` when the exact bytes matter.
 
 ### `writeStream(rel, stream, options?)`
 
@@ -97,7 +106,7 @@ type FileStoreWriteOptions = {
 
 ## Reads
 
-`open`, `read`, `readBytes` delegate to a fresh `Root` with `hardlinks: "reject"` and the store's `maxBytes`. Same return shapes as `Root`.
+`open`, `read`, `readBytes`, `readText`, and `readJson` delegate to a fresh `Root` with `hardlinks: "reject"` and the store's `maxBytes`. Same return shapes as `Root`.
 
 ## `remove(rel)` / `exists(rel)`
 

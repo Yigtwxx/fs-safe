@@ -1,6 +1,6 @@
 # Private state store
 
-`privateStateStore({ rootDir })` returns a small handle for reading and writing **JSON or text state** inside a trusted root directory. Every write atomically creates the parent directory tree at mode `0o700` and the file at mode `0o600`.
+`privateStateStore({ rootDir })` returns a private-mode `fileStore` handle for **JSON or text state** inside a trusted root directory. Every write atomically creates the parent directory tree at mode `0o700` and the file at mode `0o600`.
 
 ```ts
 import { privateStateStore } from "@openclaw/fs-safe/store";
@@ -15,9 +15,9 @@ const loaded = await store.readJson<State>("state.json");
 
 - You have a single trusted directory holding small JSON or text state.
 - You want every write to land at mode `0o600` in dirs at `0o700` without thinking about it.
-- You don't need `move`, `remove`, `list`, `copyIn`, or streaming — only read/write.
+- You want lenient missing-file reads for text/JSON state, while keeping `remove`, `exists`, `open`, `copyIn`, stream writes, and pruning available from the same handle.
 
-For richer file-store needs (remove, exists, open, copy-in, pruning, streams), use [`fileStore`](file-store.md). For general root operations, use [`root()`](root.md). For one-off credential reads, use the [secret-file helpers](secret-file.md).
+For non-private modes or cache/media-style stores, use [`fileStore`](file-store.md). For general root operations, use [`root()`](root.md). For one-off credential reads, use the [secret-file helpers](secret-file.md).
 
 ## API
 
@@ -26,15 +26,12 @@ type PrivateStateStoreOptions = {
   rootDir: string;
 };
 
-type PrivateStateStore = {
-  rootDir: string;
-  path(relativePath: string): string;
-
+type PrivateStateStore = Omit<FileStore, "readText" | "readJson" | "writeText" | "writeJson"> & {
   readText(relativePath: string, options?: { maxBytes?: number }): Promise<string | null>;
   readJson<T = unknown>(relativePath: string, options?: { maxBytes?: number }): Promise<T | null>;
 
-  writeText(relativePath: string, content: string | Uint8Array): Promise<void>;
-  writeJson(relativePath: string, value: unknown, options?: { trailingNewline?: boolean }): Promise<void>;
+  writeText(relativePath: string, content: string | Uint8Array): Promise<string>;
+  writeJson(relativePath: string, value: unknown, options?: { trailingNewline?: boolean }): Promise<string>;
 };
 
 function privateStateStore(options: PrivateStateStoreOptions): PrivateStateStore;
@@ -42,7 +39,7 @@ function privateStateStore(options: PrivateStateStoreOptions): PrivateStateStore
 
 `store.path(rel)` returns the absolute path the store would use, useful for logging or for handing to other libraries that take absolute paths.
 
-`readText` and `readJson` return `null` when the file is missing — lenient by design. Callers that want strict failure on missing should check the result and throw.
+`readText` and `readJson` return `null` when the file is missing — lenient by design. Other inherited store methods keep the stricter `fileStore` behavior. Callers that want strict failure on missing should check the result and throw.
 
 ## Advanced standalone helpers
 
@@ -122,7 +119,7 @@ if (!config) throw new Error("config missing");
 | Writes always set 0600 on the file and 0700 on the parents. | Writes use the umask unless you override. |
 | No streaming. | `open()` returns a `FileHandle`. |
 
-If you find yourself asking "does the store have an X?" — reach for `fileStore()` or `root()`.
+If you find yourself asking for a root-level operation the store does not expose, call `store.root()` or use `root()` directly.
 
 ## See also
 

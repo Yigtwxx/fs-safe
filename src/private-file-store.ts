@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import { FsSafeError } from "./errors.js";
+import { fileStore, type FileStore } from "./file-store.js";
 import { isPathInside } from "./path.js";
 import { readRegularFileSync } from "./regular-file.js";
 import { root } from "./root.js";
@@ -11,13 +12,11 @@ export type PrivateStateStoreOptions = {
   rootDir: string;
 };
 
-export type PrivateStateStore = {
-  rootDir: string;
-  path(relativePath: string): string;
+export type PrivateStateStore = Omit<FileStore, "readText" | "readJson" | "writeText" | "writeJson"> & {
   readText(relativePath: string, options?: { maxBytes?: number }): Promise<string | null>;
   readJson<T = unknown>(relativePath: string, options?: { maxBytes?: number }): Promise<T | null>;
-  writeText(relativePath: string, content: string | Uint8Array): Promise<void>;
-  writeJson(relativePath: string, value: unknown, options?: { trailingNewline?: boolean }): Promise<void>;
+  writeText(relativePath: string, content: string | Uint8Array): Promise<string>;
+  writeJson(relativePath: string, value: unknown, options?: { trailingNewline?: boolean }): Promise<string>;
 };
 
 function resolvePrivateStorePath(rootDir: string, relativePath: string): string {
@@ -237,36 +236,46 @@ export function writePrivateJsonAtomicSync(params: {
 }
 
 export function privateStateStore(options: PrivateStateStoreOptions): PrivateStateStore {
-  const root = path.resolve(options.rootDir);
+  const rootDir = path.resolve(options.rootDir);
+  const store = fileStore({ rootDir, private: true });
   return {
-    rootDir: root,
-    path: (relativePath) => resolvePrivateStorePath(root, relativePath),
-    readText: async (relativePath, options) =>
-      await readPrivateText({
-        rootDir: root,
-        filePath: resolvePrivateStorePath(root, relativePath),
+    ...store,
+    rootDir,
+    path: (relativePath) => resolvePrivateStorePath(rootDir, relativePath),
+    readText: async (relativePath, options) => {
+      const safePath = resolvePrivateStorePath(rootDir, relativePath);
+      return await readPrivateText({
+        rootDir,
+        filePath: safePath,
         maxBytes: options?.maxBytes,
-      }),
-    readJson: async (relativePath, options) =>
-      await readPrivateJson({
-        rootDir: root,
-        filePath: resolvePrivateStorePath(root, relativePath),
-        maxBytes: options?.maxBytes,
-      }),
-    writeText: async (relativePath, content) => {
-      await writePrivateTextAtomic({
-        rootDir: root,
-        filePath: resolvePrivateStorePath(root, relativePath),
-        content,
       });
     },
+    readJson: async <T = unknown>(relativePath: string, options?: { maxBytes?: number }) => {
+      const safePath = resolvePrivateStorePath(rootDir, relativePath);
+      return await readPrivateJson<T>({
+        rootDir,
+        filePath: safePath,
+        maxBytes: options?.maxBytes,
+      });
+    },
+    writeText: async (relativePath, content) => {
+      const safePath = resolvePrivateStorePath(rootDir, relativePath);
+      await writePrivateTextAtomic({
+        rootDir,
+        filePath: safePath,
+        content,
+      });
+      return safePath;
+    },
     writeJson: async (relativePath, value, options) => {
+      const safePath = resolvePrivateStorePath(rootDir, relativePath);
       await writePrivateJsonAtomic({
-        rootDir: root,
-        filePath: resolvePrivateStorePath(root, relativePath),
+        rootDir,
+        filePath: safePath,
         value,
         trailingNewline: options?.trailingNewline,
       });
+      return safePath;
     },
   };
 }

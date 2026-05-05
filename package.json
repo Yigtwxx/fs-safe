@@ -90,7 +90,7 @@
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",
     "build": "tsc -p tsconfig.json",
-    "prepack": "pnpm build",
+    "prepack": "node scripts/prepack-build.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "check": "pnpm build && pnpm test",

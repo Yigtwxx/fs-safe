@@ -127,6 +127,9 @@ describe("file store", () => {
     const store = fileStore({ rootDir: root, maxBytes: 1024 });
     await store.write("media/a.txt", "hello");
     await expect(store.readBytes("media/a.txt")).resolves.toEqual(Buffer.from("hello"));
+    await expect(store.readText("media/a.txt")).resolves.toBe("hello");
+    await store.writeJson("media/state.json", { ok: true });
+    await expect(store.readJson("media/state.json")).resolves.toEqual({ ok: true });
 
     const source = path.join(root, "source.bin");
     await fs.writeFile(source, "source", "utf8");

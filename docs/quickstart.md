@@ -2,6 +2,8 @@
 
 Five minutes. By the end you will have a working `root()` and know how to read, write, atomically replace, and unpack an archive — without your code being able to escape the workspace.
 
+If you have used Go's `os.Root` / `OpenInRoot` or Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std), this is the same shape: a capability-style handle that carries the boundary across every operation. The first thing to internalize is that you stop reasoning about *paths* and start reasoning about *the handle*.
+
 ## 1. Build a root
 
 ```ts
