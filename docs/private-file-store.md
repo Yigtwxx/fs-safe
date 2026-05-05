@@ -13,9 +13,9 @@ const loaded = await store.readJson<State>("state.json");
 
 ## When to reach for it
 
-- You have a single trusted directory holding small JSON or text state.
-- You want every write to land at mode `0o600` in dirs at `0o700` without thinking about it.
-- You want lenient missing-file reads for text/JSON state, while keeping `remove`, `exists`, `open`, `copyIn`, stream writes, and pruning available from the same handle.
+- You want a `fileStore` whose JSON and text writes go through the secret-file atomic path (parent dirs created at `0o700`, file mode re-asserted to `0o600` after rename, symlink/hardlink refusal on the parent chain).
+- You want `readText` / `readJson` to return `null` for missing files instead of throwing `not-found` — convenient for state that may not exist yet.
+- You still need the rest of the `fileStore` shape (`writeStream`, `copyIn`, `remove`, `exists`, `open`, `read`, `pruneExpired`).
 
 For non-private modes or cache/media-style stores, use [`fileStore`](file-store.md). For general root operations, use [`root()`](root.md). For one-off credential reads, use the [secret-file helpers](secret-file.md).
 
@@ -110,14 +110,16 @@ if (!config) throw new Error("config missing");
 - **Symlinks.** Refused everywhere along the resolved path.
 - **Sync writes.** The standalone `*Sync` writers are appropriate for boot paths or test fixtures. They use the same atomic-rename mechanism as the async variant.
 
-## Difference from `Root`
+## Difference from `fileStore` and `Root`
 
-| `privateStateStore` | `Root` |
-|---|---|
-| Reads return `null` on miss. | Reads throw with code `not-found`. |
-| Four verbs (text in/out, JSON in/out). | Full surface (move, remove, list, …). |
-| Writes always set 0600 on the file and 0700 on the parents. | Writes use the umask unless you override. |
-| No streaming. | `open()` returns a `FileHandle`. |
+`privateStateStore` extends [`fileStore`](file-store.md): you keep `read`, `readBytes`, `open`, `writeStream`, `copyIn`, `remove`, `exists`, `pruneExpired`, and `path()`. The four JSON/text methods (`readText`, `readJson`, `writeText`, `writeJson`) are overridden to be lenient on missing reads and to route writes through the secret-file atomic helpers so modes are re-asserted after rename.
+
+| `privateStateStore` | `fileStore` | `Root` |
+|---|---|---|
+| `readText` / `readJson` return `null` on miss. | Throw `not-found` like `Root.read*`. | Throws with code `not-found`. |
+| `writeText` / `writeJson` go through the secret-file atomic path (mode re-asserted post-rename). | Sibling-temp + rename with `mode` (default `0o600`). | Pinned-write helper plus identity verification. |
+| File mode `0o600`, dir mode `0o700` are baked in; per-call overrides not exposed for the JSON/text path. | `mode` / `dirMode` configurable per store and per call. | `mode` / `dirMode` configurable per call or via defaults. |
+| All other `FileStore` methods (`writeStream`, `copyIn`, `pruneExpired`, …) work unchanged. | Same. | Method-style boundary; the store delegates to a `Root` for these. |
 
 If you find yourself asking for a root-level operation the store does not expose, call `store.root()` or use `root()` directly.
 

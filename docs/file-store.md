@@ -27,9 +27,11 @@ const cache = fileStore({
   mode: 0o600,        // file mode for writes (default 0o600)
   dirMode: 0o700,     // mode for parent directories created on demand (default 0o700)
   maxBytes: 64 * 1024 * 1024, // optional: refuse writes/reads larger than this
-  private: true,      // optional: document intent for private 0600/0700 stores
+  private: true,      // optional intent marker for private 0600/0700 stores; defaults already match
 });
 ```
+
+The `private` flag is currently a self-documenting marker — `mode` and `dirMode` already default to `0o600` / `0o700`, so a plain `fileStore({ rootDir })` is private by default. Pass `private: true` when callers want the intent visible at the call site.
 
 Returns a `FileStore`:
 
@@ -163,11 +165,12 @@ Returns the final absolute path. Throws `not-file` if the source is a symlink or
 |---|---|
 | Object-style with mode+dirMode baked in. | Method-style boundary; mode is per-call or per-default. |
 | `writeStream` with built-in byte budget. | Manual via `openWritable()`. |
-| `copyIn` returns the final path. | `copyIn` returns void. |
+| `writeText` / `writeJson` return the final absolute path. | `Root.write` / `writeJson` return void. |
+| `copyIn` returns the final absolute path. | `Root.copyIn` returns void. |
 | `pruneExpired` walks by `mtime`. | No prune helper. |
 | Reads delegate via `Root` internally. | The boundary itself. |
 
-If you need richer ops (move, list, append, JSON), call `store.root()` to get a `Root` and use that.
+If you need richer ops (move, list, append, mkdir), call `store.root()` to get a `Root` and use that.
 
 ## Common patterns
 
