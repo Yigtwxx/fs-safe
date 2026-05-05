@@ -1,5 +1,3 @@
-import fs from "node:fs/promises";
-
 export async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -20,14 +18,5 @@ export async function withTimeout<T>(
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
-  }
-}
-
-export async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.stat(filePath);
-    return true;
-  } catch {
-    return false;
   }
 }

@@ -31,6 +31,14 @@
       "types": "./dist/json.d.ts",
       "default": "./dist/json.js"
     },
+    "./fs": {
+      "types": "./dist/fs.d.ts",
+      "default": "./dist/fs.js"
+    },
+    "./timing": {
+      "types": "./dist/timing.d.ts",
+      "default": "./dist/timing.js"
+    },
     "./temp": {
       "types": "./dist/temp.d.ts",
       "default": "./dist/temp.js"

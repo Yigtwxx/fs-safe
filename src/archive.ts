@@ -34,12 +34,12 @@ import {
   readTarEntryInfo,
   type TarEntryInfo,
 } from "./archive-tar.js";
-import { withTimeout } from "./archive-utils.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { FsSafeError } from "./errors.js";
 import { root } from "./root.js";
 import { isNotFoundPathError } from "./path.js";
+import { withTimeout } from "./timing.js";
 
 export type ArchiveLogger = {
   info?: (message: string) => void;
@@ -66,7 +66,6 @@ export {
   withStagedArchiveDestination,
 } from "./archive-staging.js";
 export { createTarEntryPreflightChecker, type TarEntryInfo } from "./archive-tar.js";
-export { fileExists, withTimeout } from "./archive-utils.js";
 export {
   loadZipArchiveWithPreflight,
   readZipCentralDirectoryEntryCount,

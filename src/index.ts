@@ -126,6 +126,8 @@ export {
   type SidecarLockHeldEntry,
   type SidecarLockRetryOptions,
 } from "./sidecar-lock.js";
+export { pathExists } from "./fs.js";
+export { withTimeout } from "./timing.js";
 export { movePathToTrash, type MovePathToTrashOptions } from "./trash.js";
 export {
   ARCHIVE_LIMIT_ERROR_CODE,
@@ -138,7 +140,6 @@ export {
   createArchiveSymlinkTraversalError,
   createTarEntryPreflightChecker,
   extractArchive,
-  fileExists,
   loadZipArchiveWithPreflight,
   mergeExtractedTreeIntoDestination,
   prepareArchiveDestinationDir,
@@ -147,7 +148,6 @@ export {
   resolveArchiveKind,
   resolvePackedRootDir,
   withStagedArchiveDestination,
-  withTimeout,
   type ArchiveExtractLimits,
   type ArchiveKind,
   type ArchiveLimitErrorCode,

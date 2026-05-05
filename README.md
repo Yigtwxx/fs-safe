@@ -69,6 +69,7 @@ Lower-level primitives are available from named subpaths:
 import { root } from "@openclaw/fs-safe/root";
 import { isPathInside } from "@openclaw/fs-safe/path";
 import { FsSafeError } from "@openclaw/fs-safe/errors";
+import { pathExists } from "@openclaw/fs-safe/fs";
 import { readJsonFile, readJsonFileStrict, writeJsonAtomic } from "@openclaw/fs-safe/json";
 import { replaceFileAtomic, movePathWithCopyFallback } from "@openclaw/fs-safe/atomic";
 import { createPrivateTempWorkspace, createTempFileTarget } from "@openclaw/fs-safe/temp";
@@ -133,12 +134,15 @@ The public surface is intentionally organized by job, not by implementation deta
 - `/path` exposes canonical path checks and scoped path helpers
 - `/json`, `/atomic`, `/temp`, and `/archive` expose focused building blocks for code that already has
   a trusted absolute path
+- `/fs` exposes small generic filesystem predicates such as `pathExists()`
 - `/errors` provides the canonical `FsSafeError` type for downstream `instanceof` checks
-- `/internal/*` is reserved for helper processes and tests, not general application imports
+- `/internal/*` is exported only for OpenClaw helper-process shims and tests; treat it as a reserved,
+  unsupported surface
 
 When two helpers have different failure semantics, the name says so. For example, `readJsonFile()`
 returns `null` on missing or invalid JSON for legacy state files, while `readJsonFileStrict()` throws
 for install manifests and other inputs where parse failure should stop the operation.
+`pathExists()` follows `fs.stat()` semantics, so broken symlinks return false.
 
 ## Limitations
 
