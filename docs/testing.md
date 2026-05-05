@@ -14,7 +14,7 @@ The double-underscore prefix is a deliberate "hands off" signal: production code
 ## When to reach for hooks
 
 - Reproduce a TOCTOU race deterministically: simulate a symlink swap between resolve and open, or between write and rename.
-- Make a "helper unavailable" branch reachable in CI without uninstalling Python from your runners.
+- Force Node-only behavior without uninstalling Python from your runners.
 - Inject latency to test cancellation/timeout paths.
 
 If you don't need to inject a race, you don't need hooks — most tests should drive the library through normal calls and assert on observable behavior.
@@ -23,10 +23,9 @@ If you don't need to inject a race, you don't need hooks — most tests should d
 
 ```ts
 type FsSafeTestHooks = {
-  beforeOpen?: (info: { absPath: string }) => void | Promise<void>;
-  beforeRename?: (info: { tempPath: string; destPath: string }) => void | Promise<void>;
-  afterFstat?: (info: { absPath: string; stat: import("node:fs").Stats }) => void | Promise<void>;
-  helperUnavailableReason?: () => string | undefined;
+  afterPreOpenLstat?: (filePath: string) => Promise<void> | void;
+  beforeOpen?: (filePath: string, flags: number) => Promise<void> | void;
+  afterOpen?: (filePath: string, handle: import("node:fs/promises").FileHandle) => Promise<void> | void;
 };
 
 function __setFsSafeTestHooksForTest(hooks?: FsSafeTestHooks): void;
@@ -35,10 +34,9 @@ function getFsSafeTestHooks(): FsSafeTestHooks | undefined;
 
 Hooks are called at well-defined points in the library's hot paths:
 
-- **`beforeOpen`** — runs before `fs.open` or the pinned-open helper opens the file. A common use is to swap the path's target via `fs.symlink`/`fs.unlink` to drive a TOCTOU race.
-- **`beforeRename`** — runs after the temp file is fully written and before the rename. Use to mutate the destination dir, simulate a parallel writer, or unlink the temp file.
-- **`afterFstat`** — runs after the post-open `fstat`. Useful to validate the library called `fstat` (and not bypassed it).
-- **`helperUnavailableReason`** — when defined, the library treats the POSIX helper as unavailable and surfaces the returned string as the failure reason. Use this to drive the Node-only fallback path on systems where the helper *would* spawn.
+- **`afterPreOpenLstat`** — runs after the pre-open `lstat`. A common use is to swap the path's target via `fs.symlink`/`fs.unlink` to drive a TOCTOU race.
+- **`beforeOpen`** — runs before `fs.open` with the exact flags the root read path will use.
+- **`afterOpen`** — runs after the file handle is opened. Useful to wrap handle methods or inject a size race before a stream is consumed.
 
 `__setFsSafeTestHooksForTest(undefined)` clears all hooks. Always clean up between tests.
 
@@ -67,7 +65,7 @@ it("rejects a swap between resolve and open", async () => {
   const fs = await root(dir, { symlinks: "reject" });
 
   __setFsSafeTestHooksForTest({
-    beforeOpen: async ({ absPath }) => {
+    afterPreOpenLstat: async (absPath) => {
       // swap real.txt for a symlink to decoy.txt right before the open
       await unlink(absPath);
       await symlink(path.join(dir, "decoy.txt"), absPath);
@@ -83,20 +81,23 @@ it("rejects a swap between resolve and open", async () => {
 
 The `code` may be `symlink` (caught at open by `O_NOFOLLOW`) or `path-mismatch` (caught by the post-open identity check) depending on platform — both are correct refusals.
 
-## Example: force the helper-unavailable branch
+## Example: force Node-only fallback behavior
 
 ```ts
-import { __setFsSafeTestHooksForTest } from "@openclaw/fs-safe/test-hooks";
+import { configureFsSafePython } from "@openclaw/fs-safe/config";
 
 beforeEach(() => {
-  __setFsSafeTestHooksForTest({
-    helperUnavailableReason: () => "test: pretend Python is missing",
-  });
+  configureFsSafePython({ mode: "off" });
 });
 
-it("falls back to the Node-only path", async () => {
-  // exercise an operation that would normally use the helper
-  // and assert the Node fallback succeeded with the same observable result
+afterEach(() => {
+  configureFsSafePython({ mode: "auto", pythonPath: undefined });
+});
+
+it("runs without the Python helper", async () => {
+  const fs = await root(dir);
+  await fs.write("file.txt", "ok");
+  await expect(fs.readText("file.txt")).resolves.toBe("ok");
 });
 ```
 

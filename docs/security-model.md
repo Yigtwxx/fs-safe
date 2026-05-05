@@ -66,7 +66,7 @@ The library does not modify or constrain the global Node.js `fs` namespace, and 
 
 ## Platform notes
 
-- **POSIX (Linux, macOS):** Best-defended path. Uses `O_NOFOLLOW`, `openat`-style helpers via a small Python helper for fd-relative `unlinkat` / `mkdirat` / `renameat`, with a Node fallback when the helper cannot spawn. fd identity checks are reliable.
+- **POSIX (Linux, macOS):** Best-defended path. Uses `O_NOFOLLOW`, fd identity checks, and one persistent Python helper process for fd-relative `unlinkat` / `mkdirat` / `renameat` / parent-fd write operations. Configure `FS_SAFE_PYTHON_MODE=require` when helper startup must fail closed, or `off` when you need a no-Python runtime. See [Python helper policy](python-helper.md).
 - **Windows:** Falls back to the safest Node-level behavior available. `O_NOFOLLOW` is not honored. Some fd-relative POSIX hardening is unavailable. The library does the path canonicalization, identity, and atomic-rename checks it can.
 
 The library does not advertise different security guarantees per platform — it advertises the same surface and relies on the strongest mechanism the platform offers.
@@ -82,7 +82,7 @@ The library does not advertise different security guarantees per platform — it
 | Hardlink rejection is best-effort | Link-count checks depend on platform metadata. Treat `hardlinks: "reject"` as a tripwire, not an authorization primitive. |
 | Mode bits are not a full policy engine | `replaceFileAtomic` and secret-file helpers set requested modes, but you should still set umask and inspect modes when policy requires it. |
 | Archive extraction is path safety, not content safety | Unsafe entry paths and links are rejected; malicious payload contents remain your application layer's problem. |
-| Helper failures degrade fd-relative hardening | `helper-failed` / `helper-unavailable` mean the Node fallback is being used. Atomicity remains, but some POSIX fd-relative race resistance is unavailable. |
+| Helper failures degrade fd-relative hardening | `helper-unavailable` falls back in `auto` mode and fails closed in `require` mode. Atomicity and identity checks remain, but parent-directory swaps between validation and mutation are less tightly pinned without the helper. |
 
 ## Recommended deployment shape
 

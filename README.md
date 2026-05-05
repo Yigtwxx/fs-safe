@@ -38,6 +38,28 @@ pnpm add @openclaw/fs-safe
 
 Node 20.11 or newer. Core root/path/json/temp helpers avoid framework dependencies. Archive helpers use optional `jszip` and `tar` dependencies for ZIP/TAR support; installs that omit optional dependencies can still use every non-archive subpath.
 
+On POSIX, `root()` uses one process-global persistent Python helper for the
+fd-relative operations Node does not expose ergonomically (`renameat`,
+`unlinkat`, recursive `mkdirat`-style walks, and parent-fd writes). Configure it
+before first use when you need a strict environment policy:
+
+```ts
+import { configureFsSafePython } from "@openclaw/fs-safe";
+
+configureFsSafePython({ mode: "auto" });    // default: use helper, fall back if unavailable
+configureFsSafePython({ mode: "off" });     // never spawn Python; use Node fallbacks
+configureFsSafePython({ mode: "require" }); // fail closed if helper cannot start
+```
+
+Equivalent env vars: `FS_SAFE_PYTHON_MODE=auto|off|require` and
+`FS_SAFE_PYTHON=/path/to/python3`. Without Python, `fs-safe` keeps lexical and
+canonical root checks, no-follow opens, atomic temp+rename writes, and
+post-write identity verification. What you lose is the strongest POSIX
+fd-relative protection against a same-process-user racer swapping parent
+directories between validation and mutation. Windows already uses the Node
+fallback path. See the [Python helper policy](docs/python-helper.md) for
+deployment guidance.
+
 ## Quick start
 
 ```ts
@@ -128,6 +150,7 @@ that OpenClaw needs to compose higher-level APIs are grouped under
 | Subpath | Contents |
 |---|---|
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types |
+| `@openclaw/fs-safe/config` | process-global Python helper configuration |
 | `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants |
 | `@openclaw/fs-safe/store` | `fileStore`, `jsonStore`, and `privateStateStore` |
@@ -352,7 +375,7 @@ Current `FsSafeErrorCode` values are `already-exists`, `hardlink`, `helper-faile
 - root-bounded APIs resolve paths against a configured root and reject canonical escapes
 - reads open with `O_NOFOLLOW` where available, then verify fd identity matches the path identity before returning the buffer or handle
 - writes use pinned parent-directory helpers and atomic replacement on POSIX, with verified post-write identity
-- `remove` and `mkdir` use fd-relative syscalls on POSIX through a small Python helper, with a Node fallback when the helper cannot spawn
+- `remove`, `mkdir`, `move`, `stat`, `list`, and parent-fd writes use one persistent fd-relative Python helper on POSIX, with Node fallbacks when the helper is disabled or unavailable
 - archive extraction stages into a private directory and merges through the same boundary checks used by direct writes
 
 ## Limitations

@@ -26,6 +26,10 @@
       "types": "./dist/root.d.ts",
       "default": "./dist/root.js"
     },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "default": "./dist/config.js"
+    },
     "./path": {
       "types": "./dist/path.d.ts",
       "default": "./dist/path.js"

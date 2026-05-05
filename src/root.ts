@@ -10,7 +10,8 @@ import { pipeline } from "node:stream/promises";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { isPinnedPathHelperSpawnError, runPinnedPathHelper } from "./pinned-path.js";
-import { runPinnedWriteHelper } from "./pinned-write.js";
+import { runPinnedCopyHelper, runPinnedWriteHelper } from "./pinned-write.js";
+import { canFallbackFromPythonError, getFsSafePythonConfig } from "./pinned-python-config.js";
 import { expandHomePrefix } from "./home-dir.js";
 import { assertNoPathAliasEscape, PATH_ALIAS_POLICIES } from "./path-policy.js";
 import {
@@ -19,7 +20,11 @@ import {
   isPathInside,
   isSymlinkOpenError,
 } from "./path.js";
-import { helperReaddir, helperStat, runPinnedHelper } from "./pinned-helper.js";
+import {
+  helperReaddir,
+  helperStat,
+  runPinnedHelper,
+} from "./pinned-helper.js";
 import { resolveRootPath } from "./root-path.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
@@ -567,7 +572,14 @@ class RootHandle implements Root {
   }
 
   async stat(relativePath: string): Promise<PathStat> {
-    return await helperStat(this.rootReal, relativePath);
+    try {
+      return await helperStat(this.rootReal, relativePath);
+    } catch (error) {
+      if (canFallbackFromPythonError(error)) {
+        return await statPathFallback(this.context, relativePath);
+      }
+      throw error;
+    }
   }
 
   async list(relativePath: string, options?: { withFileTypes?: false }): Promise<string[]>;
@@ -576,9 +588,16 @@ class RootHandle implements Root {
     relativePath: string,
     options: { withFileTypes?: boolean } = {},
   ): Promise<string[] | DirEntry[]> {
-    return options.withFileTypes === true
-      ? await helperReaddir(this.rootReal, relativePath, true)
-      : await helperReaddir(this.rootReal, relativePath, false);
+    try {
+      return options.withFileTypes === true
+        ? await helperReaddir(this.rootReal, relativePath, true)
+        : await helperReaddir(this.rootReal, relativePath, false);
+    } catch (error) {
+      if (canFallbackFromPythonError(error)) {
+        return await listPathFallback(this.context, relativePath, options.withFileTypes === true);
+      }
+      throw error;
+    }
   }
 
   async move(
@@ -586,11 +605,23 @@ class RootHandle implements Root {
     toRelative: string,
     options: { overwrite?: boolean } = {},
   ): Promise<void> {
-    await runPinnedHelper<void>("rename", this.rootReal, {
-      from: fromRelative,
-      overwrite: options.overwrite ?? false,
-      to: toRelative,
-    });
+    try {
+      await runPinnedHelper<void>("rename", this.rootReal, {
+        from: fromRelative,
+        overwrite: options.overwrite ?? false,
+        to: toRelative,
+      });
+    } catch (error) {
+      if (canFallbackFromPythonError(error)) {
+        await movePathFallback(this.context, {
+          fromRelative,
+          overwrite: options.overwrite ?? false,
+          toRelative,
+        });
+        return;
+      }
+      throw error;
+    }
   }
 }
 
@@ -1213,22 +1244,30 @@ async function copyFileInRoot(
 
     const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath, params.mode);
     await serializePathWrite(pinned.targetPath, async () => {
-      const sourceStream = createBoundedReadStream(source, params.maxBytes);
-      const identity = await runPinnedWriteHelper({
-        rootPath: pinned.rootReal,
-        relativeParentPath: pinned.relativeParentPath,
-        basename: pinned.basename,
-        mkdir: params.mkdir !== false,
-        mode: pinned.mode,
-        overwrite: true,
-        maxBytes: params.maxBytes,
-        input: {
-          kind: "stream",
-          stream: sourceStream,
-        },
-      }).catch((error) => {
+      let identity;
+      try {
+        if (getFsSafePythonConfig().mode === "off") {
+          await copyFileFallback(root, params, source);
+          return;
+        }
+        identity = await runPinnedCopyHelper({
+          rootPath: pinned.rootReal,
+          relativeParentPath: pinned.relativeParentPath,
+          basename: pinned.basename,
+          mkdir: params.mkdir !== false,
+          mode: pinned.mode,
+          overwrite: true,
+          maxBytes: params.maxBytes,
+          sourcePath: source.realPath,
+          sourceIdentity: { dev: source.stat.dev, ino: source.stat.ino },
+        });
+      } catch (error) {
+        if (canFallbackFromPythonError(error)) {
+          await copyFileFallback(root, params, source);
+          return;
+        }
         throw normalizePinnedWriteError(error);
-      });
+      }
       try {
         await verifyAtomicWriteResult({
           root,
@@ -1426,6 +1465,145 @@ async function removePathFallback(resolved: { resolved: string }): Promise<void>
 
 async function mkdirPathFallback(resolved: { resolved: string }): Promise<void> {
   await fs.mkdir(resolved.resolved, { recursive: true });
+}
+
+function pathStatFromStats(stat: Stats): PathStat {
+  return {
+    dev: Number(stat.dev),
+    gid: Number(stat.gid),
+    ino: Number(stat.ino),
+    isDirectory: stat.isDirectory(),
+    isFile: stat.isFile(),
+    isSymbolicLink: stat.isSymbolicLink(),
+    mode: stat.mode,
+    mtimeMs: stat.mtimeMs,
+    nlink: stat.nlink,
+    size: stat.size,
+    uid: stat.uid,
+  };
+}
+
+async function statPathFallback(root: RootContext, relativePath: string): Promise<PathStat> {
+  const resolved = await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
+  try {
+    return pathStatFromStats(await fs.lstat(resolved.resolved));
+  } catch (error) {
+    if (isNotFoundPathError(error)) {
+      throw new FsSafeError("not-found", "file not found", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    throw error;
+  }
+}
+
+async function listPathFallback(
+  root: RootContext,
+  relativePath: string,
+  withFileTypes: boolean,
+): Promise<string[] | DirEntry[]> {
+  const resolved = await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
+  try {
+    const names = await fs.readdir(resolved.resolved);
+    const sortedNames = names.toSorted();
+    if (!withFileTypes) {
+      return sortedNames;
+    }
+    const entries: DirEntry[] = [];
+    for (const name of sortedNames) {
+      entries.push({
+        name,
+        ...pathStatFromStats(await fs.lstat(path.join(resolved.resolved, name))),
+      });
+    }
+    return entries;
+  } catch (error) {
+    if (isNotFoundPathError(error)) {
+      throw new FsSafeError("not-found", "directory not found", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    throw error;
+  }
+}
+
+async function movePathFallback(
+  root: RootContext,
+  params: {
+    fromRelative: string;
+    toRelative: string;
+    overwrite: boolean;
+  },
+): Promise<void> {
+  const source = await resolvePathInRoot(root, params.fromRelative);
+  await resolvePinnedRootPathInRoot(root, {
+    relativePath: params.fromRelative,
+    policy: PATH_ALIAS_POLICIES.strict,
+  });
+  const target = await resolvePathInRoot(root, params.toRelative);
+  await resolvePinnedRootPathInRoot(root, {
+    relativePath: params.toRelative,
+    policy: PATH_ALIAS_POLICIES.unlinkTarget,
+  });
+  try {
+    await assertNoPathAliasEscape({
+      absolutePath: target.resolved,
+      rootPath: target.rootReal,
+      boundaryLabel: "root",
+    });
+  } catch (error) {
+    throw new FsSafeError("path-alias", "path alias escape blocked", {
+      cause: error instanceof Error ? error : undefined,
+    });
+  }
+
+  let sourceStat: Stats;
+  try {
+    sourceStat = await fs.lstat(source.resolved);
+  } catch (error) {
+    if (isNotFoundPathError(error)) {
+      throw new FsSafeError("not-found", "file not found", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    throw error;
+  }
+  if (sourceStat.isSymbolicLink()) {
+    throw new FsSafeError("symlink", "symlink not allowed");
+  }
+  if (sourceStat.isFile() && sourceStat.nlink > 1) {
+    throw new FsSafeError("hardlink", "hardlinked path not allowed");
+  }
+
+  if (!params.overwrite) {
+    try {
+      await fs.lstat(target.resolved);
+      throw new FsSafeError("already-exists", "destination exists");
+    } catch (error) {
+      if (error instanceof FsSafeError) {
+        throw error;
+      }
+      if (!isNotFoundPathError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  try {
+    await fs.rename(source.resolved, target.resolved);
+  } catch (error) {
+    if (isNotFoundPathError(error)) {
+      throw new FsSafeError("not-found", "file not found", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    if (hasNodeErrorCode(error, "EEXIST")) {
+      throw new FsSafeError("already-exists", "destination exists", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    throw error;
+  }
 }
 
 async function writeFileFallback(
