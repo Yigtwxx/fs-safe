@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { FsSafeError } from "../src/errors.js";
 import {
   PRIVATE_SECRET_DIR_MODE,
   PRIVATE_SECRET_FILE_MODE,
@@ -22,6 +23,16 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { force: true, recursive: true })));
 });
 
+function expectSecretReadCode(run: () => string, code: FsSafeError["code"]): void {
+  try {
+    run();
+    throw new Error("Expected readSecretFileSync to throw.");
+  } catch (err) {
+    expect(err).toBeInstanceOf(FsSafeError);
+    expect((err as FsSafeError).code).toBe(code);
+  }
+}
+
 describe("secret file helpers", () => {
   it("reads trimmed secrets and exposes nullable try-read semantics", async () => {
     const root = await tempRoot("fs-safe-secret-");
@@ -31,6 +42,26 @@ describe("secret file helpers", () => {
     expect(readSecretFileSync(filePath, "API token")).toBe("secret");
     expect(tryReadSecretFileSync(filePath, "API token")).toBe("secret");
     expect(tryReadSecretFileSync(undefined, "API token")).toBeUndefined();
+  });
+
+  it("throws structured errors for strict secret reads", async () => {
+    const root = await tempRoot("fs-safe-secret-errors-");
+    const empty = path.join(root, "empty.txt");
+    const big = path.join(root, "big.txt");
+    await fs.writeFile(empty, "\n", "utf8");
+    await fs.writeFile(big, "abcdef", "utf8");
+
+    expectSecretReadCode(() => readSecretFileSync("", "API token"), "invalid-path");
+    expectSecretReadCode(
+      () => readSecretFileSync(path.join(root, "missing.txt"), "API token"),
+      "not-found",
+    );
+    expectSecretReadCode(() => readSecretFileSync(root, "API token"), "not-file");
+    expectSecretReadCode(
+      () => readSecretFileSync(big, "API token", { maxBytes: 2 }),
+      "too-large",
+    );
+    expectSecretReadCode(() => readSecretFileSync(empty, "API token"), "invalid-path");
   });
 
   it("can reject symlinked secret paths", async () => {

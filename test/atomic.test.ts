@@ -9,6 +9,7 @@ import {
   replaceFileAtomicSync,
 } from "../src/atomic.js";
 import {
+  __cleanupRegisteredTempPathsForTest,
   __cleanupRegisteredTempPathForTest,
   registerTempPathForExit,
 } from "../src/temp-cleanup.js";
@@ -96,6 +97,19 @@ describe("atomic helpers", () => {
 
     await expect(fs.access(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
     unregister();
+  });
+
+  it("cleans registered temp directories and ignores missing entries", async () => {
+    const root = await tempRoot("fs-safe-temp-cleanup-dir-");
+    const tempDir = path.join(root, "leftover");
+    await fs.mkdir(tempDir);
+    await fs.writeFile(path.join(tempDir, "file.txt"), "temp", "utf8");
+    registerTempPathForExit(tempDir, { recursive: true });
+    registerTempPathForExit(path.join(root, "missing.tmp"));
+
+    __cleanupRegisteredTempPathsForTest();
+
+    await expect(fs.access(tempDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("uses the permission-error copy fallback when requested", async () => {

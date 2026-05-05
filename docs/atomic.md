@@ -95,6 +95,9 @@ Use it when callers must see a whole staged tree at the target path. For single-
 
 Atomic UTF-8 text write with the same secure defaults as `writeJson`: sibling
 temp file, temp fsync, rename, parent fsync, and final chmod best-effort.
+It delegates to `replaceFileAtomic()` with a smaller call shape. Use it when
+you do not need replacement hooks such as `beforeRename`, `preserveExistingMode`,
+or custom copy-fallback policy.
 
 ```ts
 import { writeTextAtomic } from "@openclaw/fs-safe/atomic";

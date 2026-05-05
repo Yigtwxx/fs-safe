@@ -95,6 +95,9 @@ type TempWorkspaceOptions = {
 When you don't need the stable workspace abstraction, the lower-level temp-file
 and sibling-temp helpers live behind `@openclaw/fs-safe/advanced`. They are
 composition primitives for stores and atomic writers, not the primary API.
+`tempWorkspace()` carries the stable lifetime contract for application code;
+`tempFile()` is a one-shot building block whose options may move as store and
+archive internals evolve.
 
 ### `tempFile`
 

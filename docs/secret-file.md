@@ -51,7 +51,7 @@ if (token) {
 
 ### `readSecretFileSync(filePath, label, options?)`
 
-Strict reader. Throws when the file is missing, too large, empty, unreadable, or rejected by the validation checks. Use when failing loudly is the right call:
+Strict reader. Throws `FsSafeError` when the file is missing, too large, empty, unreadable, or rejected by the validation checks. Use when failing loudly is the right call:
 
 ```ts
 const token = readSecretFileSync("/var/lib/app/auth.token");

@@ -8,6 +8,11 @@ inspect archive kinds, and use pure path/limit helpers, but extraction or ZIP
 loading fails with a clear message until the matching optional dependency is
 installed.
 
+Some package managers and CI installs skip optional dependencies
+(`--no-optional`, `--omit=optional`, or equivalent). If an archive helper throws
+that an optional archive dependency is not installed, install `jszip` and/or
+`tar` explicitly in the consuming package.
+
 ```ts
 import { extractArchive, resolveArchiveKind } from "@openclaw/fs-safe/archive";
 ```
