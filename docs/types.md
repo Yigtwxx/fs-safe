@@ -110,7 +110,7 @@ type RootCopyOptions = Pick<RootDefaults, "maxBytes" | "mkdir" | "mode"> & {
   sourceHardlinks?: "reject" | "allow";
 };
 type RootOpenWritableOptions = Pick<RootDefaults, "mkdir" | "mode"> & {
-  writeMode?: "truncate" | "append" | "preserve";
+  writeMode?: "replace" | "append" | "update";
 };
 type RootWriteJsonOptions = RootWriteOptions & {
   replacer?: Parameters<typeof JSON.stringify>[1];

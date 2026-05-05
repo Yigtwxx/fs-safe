@@ -17,7 +17,7 @@ const loaded = await store.readJson<State>("state.json");
 - You want every write to land at mode `0o600` in dirs at `0o700` without thinking about it.
 - You don't need `move`, `remove`, `list`, `copyIn`, or streaming — only read/write.
 
-For richer needs (move, list, atomic directory swap, archives), use [`root()`](root.md). For one-off credential reads, use the standalone [secret-file helpers](secret-file.md).
+For richer needs (move, list, atomic directory swap, archives), use [`root()`](root.md). For one-off credential reads, use the [secret-file helpers](secret-file.md).
 
 ## API
 
@@ -40,9 +40,9 @@ function privateFileStore(rootDir: string): PrivateFileStore;
 
 `readText` and `readJson` return `null` when the file is missing — lenient by design. Callers that want strict failure on missing should check the result and throw.
 
-## Standalone helpers
+## Advanced standalone helpers
 
-Every operation is also exposed as a standalone function. Useful when you don't want to pin a single root:
+The standalone function form lives in `@openclaw/fs-safe/advanced`. Use it when you don't want to pin a single root:
 
 ```ts
 import {
@@ -54,7 +54,7 @@ import {
   readPrivateTextSync,           // sync
   readPrivateJson,               // async
   readPrivateJsonSync,           // sync
-} from "@openclaw/fs-safe/store";
+} from "@openclaw/fs-safe/advanced";
 ```
 
 Each standalone takes `{ rootDir, filePath, ... }` directly:
@@ -85,7 +85,7 @@ await store.writeJson("state.json", state, { trailingNewline: true });
 ### Sync at boot
 
 ```ts
-import { readPrivateJsonSync } from "@openclaw/fs-safe/store";
+import { readPrivateJsonSync } from "@openclaw/fs-safe/advanced";
 
 const config =
   readPrivateJsonSync({ rootDir: "/etc/app", filePath: "/etc/app/config.json" }) ??

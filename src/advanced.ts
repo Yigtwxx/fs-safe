@@ -1,3 +1,6 @@
+// Advanced composition surface. These exports are less stable than the focused
+// public subpaths; prefer root/json/store/temp/archive unless you are building a
+// higher-level primitive.
 export {
   assertAbsolutePathInput,
   canonicalPathFromExistingAncestor,
@@ -88,3 +91,43 @@ export { createSidecarLockManager, withSidecarLock } from "./sidecar-lock.js";
 export { movePathToTrash, type MovePathToTrashOptions } from "./trash.js";
 export { withTimeout } from "./timing.js";
 export { resolveHomeRelativePath } from "./home-dir.js";
+export {
+  appendRegularFile,
+  appendRegularFileSync,
+  readRegularFile,
+  readRegularFileSync,
+  resolveRegularFileAppendFlags,
+  statRegularFile,
+  statRegularFileSync,
+  type AppendRegularFileOptions,
+  type RegularFileStatResult,
+} from "./regular-file.js";
+export {
+  createIcaclsResetCommand,
+  formatIcaclsResetCommand,
+  formatWindowsAclSummary,
+  inspectWindowsAcl,
+  parseIcaclsOutput,
+  resolveWindowsUserPrincipal,
+  summarizeWindowsAcl,
+  type IcaclsResetCommandOptions,
+  type PermissionExec,
+  type WindowsAclEntry,
+  type WindowsAclSummary,
+} from "./permissions.js";
+export {
+  privateFileStore,
+  readPrivateJson,
+  readPrivateJsonSync,
+  readPrivateText,
+  readPrivateTextSync,
+  writePrivateJsonAtomic,
+  writePrivateJsonAtomicSync,
+  writePrivateTextAtomic,
+  writePrivateTextAtomicSync,
+  type PrivateFileStore,
+} from "./private-file-store.js";
+export {
+  loadSecretFileSync,
+  type SecretFileReadResult,
+} from "./secret-file.js";

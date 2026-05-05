@@ -1,23 +1,22 @@
 # JSON store
 
-`jsonStore` is exported from `@openclaw/fs-safe/store`. It is a small read-modify-write wrapper around a single JSON file. It bakes in atomic writes, optional fallback reads, and optional cross-process locking via [`createSidecarLockManager`](sidecar-lock.md).
+`jsonStore` is exported from `@openclaw/fs-safe/store`. It is a small read-modify-write wrapper around a single JSON file. It bakes in atomic writes, explicit fallback reads, and optional cross-process locking via [`createSidecarLockManager`](sidecar-lock.md).
 
 ```ts
 import { jsonStore } from "@openclaw/fs-safe/store";
 
 const settings = jsonStore<{ theme: "light" | "dark"; volume: number }>({
   filePath: "/var/lib/app/settings.json",
-  fallback: { theme: "dark", volume: 0.7 },
 });
 
 const current = await settings.readOr({ theme: "dark", volume: 0.7 });
 await settings.write({ ...current, volume: 1 });
-await settings.update((prev) => ({ ...(prev ?? { theme: "dark", volume: 0.7 }), theme: "light" }));
+await settings.updateOr({ theme: "dark", volume: 0.7 }, (prev) => ({ ...prev, theme: "light" }));
 ```
 
 ## When to reach for it
 
-- You have a single JSON state file and want `read / readOr / require / write / update` semantics.
+- You have a single JSON state file and want `read / readOr / readRequired / write / update` semantics.
 - You want every write atomic at file mode `0o600` and parents at `0o700` by default.
 - You want optional cross-process locking with one boolean.
 
@@ -28,7 +27,6 @@ For ad-hoc read/write of multiple JSON files, use the standalone helpers in [`js
 ```ts
 type JsonStoreOptions<T> = {
   filePath: string;
-  fallback?: T;                                    // returned by read() when file is missing
   dirMode?: number;                                // default 0o700
   mode?: number;                                   // default 0o600
   trailingNewline?: boolean;                       // default true
@@ -46,19 +44,18 @@ type JsonStore<T> = {
   readonly filePath: string;
   read(): Promise<T | undefined>;
   readOr(fallback: T): Promise<T>;
-  require(): Promise<T>;
+  readRequired(): Promise<T>;
   write(value: T): Promise<void>;
   update(run: (current: T | undefined) => T | Promise<T>): Promise<T>;
+  updateOr(fallback: T, run: (current: T) => T | Promise<T>): Promise<T>;
 };
 ```
-
-`fallback` is **deep-cloned** on every read so the caller can safely mutate the returned object without poisoning the next call. If no store fallback is configured, `read()` returns `undefined` when the file is missing.
 
 The store does **not** validate the parsed value against `T` at runtime — the cast is unchecked. Wrap with a schema (zod/valibot) if the file might be hand-edited or written by another process you don't control.
 
 ## `read()`
 
-Returns the parsed contents, the store fallback (cloned) when configured, or `undefined` if the file does not exist. Invalid JSON throws (via [`readJsonIfExists`](json.md)).
+Returns the parsed contents, or `undefined` if the file does not exist. Invalid JSON throws (via [`readJsonIfExists`](json.md)).
 
 ```ts
 const state = await store.read();
@@ -66,18 +63,18 @@ const state = await store.read();
 
 ## `readOr(fallback)`
 
-Returns the parsed contents, the store fallback, or the per-call fallback:
+Returns the parsed contents or the per-call fallback. Object fallbacks are cloned so callers can safely mutate the returned value:
 
 ```ts
 const state = await store.readOr(defaultState);
 ```
 
-## `require()`
+## `readRequired()`
 
-Strict disk read. Throws when the file is missing or invalid, even when the store has a fallback:
+Strict disk read. Throws when the file is missing or invalid:
 
 ```ts
-const state = await store.require();
+const state = await store.readRequired();
 ```
 
 ## `write(value)`
@@ -98,6 +95,12 @@ const next = await store.update((prev) => ({ count: (prev?.count ?? 0) + 1 }));
 
 `run` is async-friendly. The whole `read → run → write` sequence runs inside one `withLock` call, so concurrent updaters from different processes serialize cleanly.
 
+Use `updateOr(fallback, run)` when the missing-file case should start from a concrete value:
+
+```ts
+const next = await store.updateOr({ count: 0 }, (prev) => ({ count: prev.count + 1 }));
+```
+
 ## Locking
 
 Set `lock: true` for default behavior, or pass an options object to tune:
@@ -105,7 +108,6 @@ Set `lock: true` for default behavior, or pass an options object to tune:
 ```ts
 const counter = jsonStore<{ count: number }>({
   filePath: "/var/lib/app/counter.json",
-  fallback: { count: 0 },
   lock: {
     staleMs: 60_000,
     timeoutMs: 10_000,
@@ -127,7 +129,6 @@ type Settings = { theme: "light" | "dark"; muted: boolean };
 
 const settings = jsonStore<Settings>({
   filePath: path.join(homedir(), ".myapp/settings.json"),
-  fallback: { theme: "dark", muted: false },
 });
 
 // Read on boot
@@ -145,18 +146,17 @@ await settings.update((prev) => {
 ```ts
 const counter = jsonStore<{ count: number }>({
   filePath: "/var/lib/app/counter.json",
-  fallback: { count: 0 },
   lock: true,
 });
 
-const { count } = await counter.update((prev) => ({ count: (prev?.count ?? 0) + 1 }));
+const { count } = await counter.updateOr({ count: 0 }, (prev) => ({ count: prev.count + 1 }));
 console.log("now at", count);
 ```
 
 ### Migration on boot
 
 ```ts
-const config = jsonStore<Config>({ filePath, fallback: defaultConfig });
+const config = jsonStore<Config>({ filePath });
 const current = await config.readOr(defaultConfig);
 if (current.version !== CURRENT_VERSION) {
   await config.write(migrate(current));
@@ -169,7 +169,7 @@ if (current.version !== CURRENT_VERSION) {
 |---|---|
 | Read-modify-write in one call (`update`). | Compose `readJsonIfExists` + `writeJson` yourself. |
 | Optional cross-process lock with one flag. | Manage `withSidecarLock` yourself. |
-| Fallback baked in, deep-cloned per read. | Caller handles `null` and clones. |
+| Explicit `readOr` / `updateOr` fallbacks. | Caller handles `null` and clones. |
 | Mode/dirMode locked per store. | Per-call. |
 
 `jsonStore` is the right shape when one file owns one piece of state and many call sites read or update it. For one-off writes, the raw helpers are leaner.

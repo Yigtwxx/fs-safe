@@ -1,6 +1,6 @@
 # Permissions
 
-`@openclaw/fs-safe/permissions` contains the mode and ACL inspection helpers used by secure file reads and by applications that want to report actionable permission problems.
+`@openclaw/fs-safe/permissions` contains the curated mode and permission inspection helpers used by secure file reads and by applications that want to report actionable permission problems.
 
 ```ts
 import {
@@ -40,9 +40,21 @@ isGroupReadable(bits);
 
 `inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below.
 
-## Windows ACL helpers
+## Advanced Windows ACL helpers
+
+The low-level Windows ACL parser and `icacls` command builders live in `@openclaw/fs-safe/advanced`:
 
 ```ts
+import {
+  createIcaclsResetCommand,
+  formatIcaclsResetCommand,
+  formatWindowsAclSummary,
+  inspectWindowsAcl,
+  parseIcaclsOutput,
+  resolveWindowsUserPrincipal,
+  summarizeWindowsAcl,
+} from "@openclaw/fs-safe/advanced";
+
 inspectWindowsAcl(path, { env, exec });
 parseIcaclsOutput(output, targetPath);
 summarizeWindowsAcl(entries, env);
@@ -52,7 +64,7 @@ createIcaclsResetCommand(targetPath, { isDir, env });
 resolveWindowsUserPrincipal(env);
 ```
 
-The default Windows inspector calls `icacls.exe /sid` and classifies principals as trusted, world, or group. Trusted defaults include the current user, SYSTEM, and Administrators. The parser is exported so tests and CLIs can process captured `icacls` output without spawning a process.
+The default Windows inspector calls `icacls.exe /sid` and classifies principals as trusted, world, or group. Trusted defaults include the current user, SYSTEM, and Administrators. The parser is on the advanced surface so tests and CLIs can process captured `icacls` output without spawning a process.
 
 Use `createIcaclsResetCommand()` when you need a structured command and argv pair. Use `formatIcaclsResetCommand()` when you only need a remediation string for a user-facing message.
 

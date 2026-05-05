@@ -149,7 +149,7 @@ try {
 }
 ```
 
-Options: `{ mkdir?, mode?, writeMode? }`, where `writeMode` is `"truncate"` (default), `"append"`, or `"preserve"`. Streaming writes go directly to the destination — there is no atomic-rename step. If you need both streaming and atomicity, write to a sibling temp yourself and rename when done; the [`atomic`](atomic.md) helpers can do this for you.
+Options: `{ mkdir?, mode?, writeMode? }`, where `writeMode` is `"replace"` (default), `"append"`, or `"update"`. `replace` truncates existing files; `update` keeps existing contents. Streaming writes go directly to the destination — there is no atomic-rename step. If you need both streaming and atomicity, write to a sibling temp yourself and rename when done; the [`atomic`](atomic.md) helpers can do this for you.
 
 ## Write defaults vs per-call options
 

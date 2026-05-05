@@ -152,16 +152,15 @@ describe("json store", () => {
     const filePath = path.join(root, "state", "store.json");
     const store = jsonStore({
       filePath,
-      fallback: { count: 0 },
       lock: true,
     });
 
-    await expect(store.read()).resolves.toEqual({ count: 0 });
-    await expect(store.readOr({ count: 10 })).resolves.toEqual({ count: 0 });
-    await expect(store.require()).rejects.toMatchObject({ name: "JsonFileReadError" });
-    await store.update((current) => ({ count: (current?.count ?? 0) + 1 }));
+    await expect(store.read()).resolves.toBeUndefined();
+    await expect(store.readOr({ count: 10 })).resolves.toEqual({ count: 10 });
+    await expect(store.readRequired()).rejects.toMatchObject({ name: "JsonFileReadError" });
+    await store.updateOr({ count: 0 }, (current) => ({ count: current.count + 1 }));
     await expect(store.read()).resolves.toEqual({ count: 1 });
-    await expect(store.require()).resolves.toEqual({ count: 1 });
+    await expect(store.readRequired()).resolves.toEqual({ count: 1 });
 
     const strictStore = jsonStore<{ count: number }>({ filePath: path.join(root, "missing.json") });
     await expect(strictStore.read()).resolves.toBeUndefined();
@@ -178,7 +177,7 @@ describe("secure file reads", () => {
     const result = await readSecureFile({
       filePath,
       label: "test secret",
-      maxBytes: 1024,
+      io: { maxBytes: 1024 },
     });
 
     expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
@@ -199,8 +198,13 @@ describe("secure file reads", () => {
 
     await expect(readSecureFile({ filePath: link })).rejects.toMatchObject({ code: "symlink" });
     await expect(
-      readSecureFile({ filePath: outsideFile, trustedDirs: [trusted] }),
+      readSecureFile({ filePath: outsideFile, trust: { trustedDirs: [trusted] } }),
     ).rejects.toMatchObject({ code: "outside-workspace" });
+  });
+
+  it("rejects network paths unless explicitly trusted", async () => {
+    await expect(readSecureFile({ filePath: String.raw`\\server\share\secret.txt` })).rejects
+      .toMatchObject({ code: "invalid-path" });
   });
 
   it("rejects overly broad POSIX permissions", async () => {

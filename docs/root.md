@@ -78,7 +78,7 @@ fs.ensureRoot()                          // accepts "" / "." as the root itself
 
 `copyIn` is a one-shot ingest from a trusted absolute source path: it streams the source through the boundary, atomically renames into the root, and respects `maxBytes`.
 
-`openWritable` opens a writable file with options `mode?: number` and `writeMode?: "truncate" | "append" | "preserve"`. Use it for streaming output. Prefer `await using` for cleanup.
+`openWritable` opens a writable file with options `mode?: number` and `writeMode?: "replace" | "append" | "update"`. `replace` truncates existing files and is the default; `update` keeps existing contents. Use it for streaming output. Prefer `await using` for cleanup.
 
 ### Inspection (advisory)
 

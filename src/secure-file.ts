@@ -21,13 +21,26 @@ import {
 const SUPPORTS_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in fsConstants;
 const OPEN_READ_FLAGS = fsConstants.O_RDONLY | (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
 
-export type SecureFileReadOptions = PermissionCheckOptions & {
+export type SecureFileReadOptions = {
   filePath: string;
   label?: string;
+  trust?: SecureFileTrustOptions;
+  permissions?: SecureFilePermissionOptions;
+  io?: SecureFileIoOptions;
+};
+
+export type SecureFileTrustOptions = {
   trustedDirs?: string[];
-  allowInsecurePath?: boolean;
+  allowSymlink?: boolean;
+  allowNetworkPath?: boolean;
+};
+
+export type SecureFilePermissionOptions = PermissionCheckOptions & {
+  allowInsecure?: boolean;
   allowReadableByOthers?: boolean;
-  allowSymlinkPath?: boolean;
+};
+
+export type SecureFileIoOptions = {
   maxBytes?: number;
   timeoutMs?: number;
 };
@@ -43,6 +56,10 @@ function isAbsolutePathname(value: string): boolean {
   return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || /^\\\\[^\\]+\\[^\\]+/.test(value);
 }
 
+function isWindowsNetworkPathname(value: string): boolean {
+  return /^\\\\[^\\]+\\[^\\]+/.test(value);
+}
+
 function label(options: SecureFileReadOptions): string {
   return options.label ?? "Secure file";
 }
@@ -52,6 +69,9 @@ async function openSecureHandle(options: SecureFileReadOptions): Promise<{
   pathStat: Stats;
   realPath: string;
 }> {
+  if (isWindowsNetworkPathname(options.filePath) && !options.trust?.allowNetworkPath) {
+    throw new FsSafeError("invalid-path", `${label(options)} must be a local absolute path.`);
+  }
   if (!isAbsolutePathname(options.filePath)) {
     throw new FsSafeError("invalid-path", `${label(options)} must be an absolute path.`);
   }
@@ -64,13 +84,13 @@ async function openSecureHandle(options: SecureFileReadOptions): Promise<{
   if (preStat.isDirectory()) {
     throw new FsSafeError("not-file", `${label(options)} must be a file: ${options.filePath}`);
   }
-  if (preStat.isSymbolicLink() && !options.allowSymlinkPath) {
+  if (preStat.isSymbolicLink() && !options.trust?.allowSymlink) {
     throw new FsSafeError("symlink", `${label(options)} must not be a symlink: ${options.filePath}`);
   }
 
   let handle: FileHandle;
   try {
-    handle = await fs.open(options.filePath, options.allowSymlinkPath ? fsConstants.O_RDONLY : OPEN_READ_FLAGS);
+    handle = await fs.open(options.filePath, options.trust?.allowSymlink ? fsConstants.O_RDONLY : OPEN_READ_FLAGS);
   } catch (err) {
     if (isSymlinkOpenError(err)) {
       throw new FsSafeError("symlink", `${label(options)} symlink open blocked`, { cause: err });
@@ -83,10 +103,10 @@ async function openSecureHandle(options: SecureFileReadOptions): Promise<{
     if (!openedStat.isFile()) {
       throw new FsSafeError("not-file", `${label(options)} must be a file: ${options.filePath}`);
     }
-    const pathStat = options.allowSymlinkPath
+    const pathStat = options.trust?.allowSymlink
       ? await fs.stat(options.filePath)
       : await fs.lstat(options.filePath);
-    if (!options.allowSymlinkPath && pathStat.isSymbolicLink()) {
+    if (!options.trust?.allowSymlink && pathStat.isSymbolicLink()) {
       throw new FsSafeError("symlink", `${label(options)} must not be a symlink: ${options.filePath}`);
     }
     if (!sameFileIdentity(pathStat, openedStat)) {
@@ -97,8 +117,8 @@ async function openSecureHandle(options: SecureFileReadOptions): Promise<{
     if (!sameFileIdentity(realStat, openedStat)) {
       throw new FsSafeError("path-mismatch", `${label(options)} real path changed during open.`);
     }
-    if (options.maxBytes !== undefined && openedStat.size > options.maxBytes) {
-      throw new FsSafeError("too-large", `${label(options)} exceeded maxBytes (${options.maxBytes}).`);
+    if (options.io?.maxBytes !== undefined && openedStat.size > options.io.maxBytes) {
+      throw new FsSafeError("too-large", `${label(options)} exceeded maxBytes (${options.io.maxBytes}).`);
     }
     return { handle, pathStat: openedStat, realPath };
   } catch (err) {
@@ -108,11 +128,11 @@ async function openSecureHandle(options: SecureFileReadOptions): Promise<{
 }
 
 async function assertTrustedDirs(options: SecureFileReadOptions, realPath: string): Promise<void> {
-  if (!options.trustedDirs || options.trustedDirs.length === 0) {
+  if (!options.trust?.trustedDirs || options.trust.trustedDirs.length === 0) {
     return;
   }
   const trusted = await Promise.all(
-    options.trustedDirs.map(async (dir) => {
+    options.trust.trustedDirs.map(async (dir) => {
       const resolved = path.resolve(dir);
       return await fs.realpath(resolved).catch(() => resolved);
     }),
@@ -143,12 +163,12 @@ async function assertSecurePermissions(
   stat: Stats,
   realPath: string,
 ): Promise<PermissionCheck | undefined> {
-  if (options.allowInsecurePath) {
+  if (options.permissions?.allowInsecure) {
     return undefined;
   }
-  const platform = options.platform ?? process.platform;
+  const platform = options.permissions?.platform ?? process.platform;
   const permissions = platform === "win32"
-    ? await inspectPathPermissions(realPath, options)
+    ? await inspectPathPermissions(realPath, options.permissions)
     : inspectOpenedPermissions(stat, platform);
   if (!permissions.ok) {
     throw new FsSafeError("permission-unverified", `${label(options)} permissions could not be verified: ${realPath}`);
@@ -161,7 +181,7 @@ async function assertSecurePermissions(
   }
   const writableByOthers = permissions.worldWritable || permissions.groupWritable;
   const readableByOthers = permissions.worldReadable || permissions.groupReadable;
-  if (writableByOthers || (!options.allowReadableByOthers && readableByOthers)) {
+  if (writableByOthers || (!options.permissions?.allowReadableByOthers && readableByOthers)) {
     throw new FsSafeError("insecure-permissions", `${label(options)} permissions are too open: ${realPath}`);
   }
   if (platform !== "win32" && typeof process.getuid === "function" && stat.uid != null) {
@@ -203,9 +223,9 @@ export async function readSecureFile(
   try {
     await assertTrustedDirs(options, opened.realPath);
     const permissions = await assertSecurePermissions(options, opened.pathStat, opened.realPath);
-    const buffer = await readHandleWithTimeout(opened.handle, options.timeoutMs);
-    if (options.maxBytes !== undefined && buffer.byteLength > options.maxBytes) {
-      throw new FsSafeError("too-large", `${label(options)} exceeded maxBytes (${options.maxBytes}).`);
+    const buffer = await readHandleWithTimeout(opened.handle, options.io?.timeoutMs);
+    if (options.io?.maxBytes !== undefined && buffer.byteLength > options.io.maxBytes) {
+      throw new FsSafeError("too-large", `${label(options)} exceeded maxBytes (${options.io.maxBytes}).`);
     }
     return { buffer, realPath: opened.realPath, stat: opened.pathStat, permissions };
   } finally {

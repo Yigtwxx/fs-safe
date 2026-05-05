@@ -4,10 +4,9 @@ Helpers for reading and writing credentials. Files are written at mode `0o600`, 
 
 ```ts
 import {
-  loadSecretFileSync,
   readSecretFileSync,
   tryReadSecretFileSync,
-  writePrivateSecretFileAtomic,
+  writeSecretFileAtomic,
   DEFAULT_SECRET_FILE_MAX_BYTES,
   PRIVATE_SECRET_DIR_MODE,
   PRIVATE_SECRET_FILE_MODE,
@@ -35,62 +34,50 @@ The 16 KiB cap is intentionally aggressive — credentials should be small. If y
 
 ## Reading
 
-### `tryReadSecretFileSync(filePath, options?)`
+### `tryReadSecretFileSync(filePath, label, options?)`
 
-The lenient reader. Returns a `SecretFileReadResult`:
-
-```ts
-type SecretFileReadResult =
-  | { ok: true; content: string }
-  | { ok: false; reason: "missing" | "too-large" | "invalid-mode" | "io-error"; cause?: unknown };
-```
+The lenient reader. Returns the trimmed secret string, or `undefined` when the path is missing, empty, unreadable, too large, or rejected by the validation checks.
 
 ```ts
 import { tryReadSecretFileSync } from "@openclaw/fs-safe/secret";
 
-const r = tryReadSecretFileSync("/var/lib/app/auth.token");
-if (r.ok) {
-  useToken(r.content);
-} else if (r.reason === "missing") {
+const token = tryReadSecretFileSync("/var/lib/app/auth.token", "auth token");
+if (token) {
+  useToken(token);
+} else {
   await reauthenticate();
-} else if (r.reason === "invalid-mode") {
-  console.warn("auth.token has unsafe permissions; refusing to read");
 }
 ```
 
-### `readSecretFileSync(filePath, options?)`
+### `readSecretFileSync(filePath, label, options?)`
 
-Strict reader. Throws `FsSafeError` on missing/too-large/invalid-mode/io-error. Use when failing loudly is the right call:
+Strict reader. Throws when the file is missing, too large, empty, unreadable, or rejected by the validation checks. Use when failing loudly is the right call:
 
 ```ts
 const token = readSecretFileSync("/var/lib/app/auth.token");
 ```
-
-### `loadSecretFileSync(filePath, options?)`
-
-Like `tryReadSecretFileSync` but returns the raw `SecretFileReadResult` for callers that want full access to the failure shape (e.g. wiring into a richer error type).
 
 ### Read options
 
 ```ts
 type SecretFileReadOptions = {
   maxBytes?: number;         // default DEFAULT_SECRET_FILE_MAX_BYTES (16 KiB)
-  encoding?: BufferEncoding; // default "utf8"
+  rejectSymlink?: boolean;
 };
 ```
 
-The reader checks the file's mode bits before reading. If `nlink > 1` (the file is a hardlink alias) or mode is wider than `0o600` for the owner-rw bits beyond what's expected, the reader returns `"invalid-mode"`. Treat that as a clear signal: the secret file's permissions are wrong, fix them at the source rather than swallowing the warning.
+The reader trims the file content and rejects empty results. `rejectSymlink` blocks a symlink path before the pinned read.
 
 ## Writing
 
-### `writePrivateSecretFileAtomic(params)`
+### `writeSecretFileAtomic(params)`
 
 Async. Creates the parent directory at `dirMode` (default `0o700`) if missing, writes content to a sibling temp file at `mode` (default `0o600`), atomically renames over the destination, and re-asserts the file mode after rename.
 
 ```ts
-import { writePrivateSecretFileAtomic } from "@openclaw/fs-safe/secret";
+import { writeSecretFileAtomic } from "@openclaw/fs-safe/secret";
 
-await writePrivateSecretFileAtomic({
+await writeSecretFileAtomic({
   rootDir: "/var/lib/app",
   filePath: "/var/lib/app/auth.token",
   content: token,
@@ -100,7 +87,7 @@ await writePrivateSecretFileAtomic({
 ### Parameters
 
 ```ts
-type WritePrivateSecretFileParams = {
+type WriteSecretFileParams = {
   rootDir: string;             // trusted root directory (created at dirMode if missing)
   filePath: string;             // absolute path; must be inside rootDir
   content: string | Uint8Array;
@@ -114,7 +101,7 @@ The directory mode is asserted on each component along the path: `rootDir`, then
 For more permissive credentials, override `mode`:
 
 ```ts
-await writePrivateSecretFileAtomic({
+await writeSecretFileAtomic({
   rootDir: "/var/lib/app",
   filePath: "/var/lib/app/readonly.token",
   content: token,
@@ -127,23 +114,15 @@ await writePrivateSecretFileAtomic({
 ### Load on boot, reauthenticate on miss
 
 ```ts
-const r = tryReadSecretFileSync("/var/lib/app/auth.token");
-if (!r.ok) {
-  if (r.reason === "missing") {
-    await runOauthFlow();
-  } else if (r.reason === "invalid-mode") {
-    throw new Error("token file has unsafe permissions; aborting");
-  } else {
-    throw new Error(`failed to load token: ${r.reason}`, { cause: r.cause });
-  }
-}
+const token = tryReadSecretFileSync("/var/lib/app/auth.token", "auth token");
+if (!token) await runOauthFlow();
 ```
 
 ### Refresh and persist a token
 
 ```ts
 const fresh = await refreshToken(currentRefresh);
-await writePrivateSecretFileAtomic({
+await writeSecretFileAtomic({
   rootDir: "/var/lib/app",
   filePath: "/var/lib/app/auth.token",
   content: JSON.stringify(fresh),
@@ -156,7 +135,7 @@ await writePrivateSecretFileAtomic({
 import { withTimeout } from "@openclaw/fs-safe/advanced";
 
 await withTimeout(
-  writePrivateSecretFileAtomic({ rootDir, filePath, content }),
+  writeSecretFileAtomic({ rootDir, filePath, content }),
   5_000,
   "persist auth token",
 );
@@ -165,7 +144,7 @@ await withTimeout(
 ## Threat model notes
 
 - These helpers protect the secret file from **other processes with the same UID** that respect filesystem permissions. They do not defend against root or against attackers who can read process memory.
-- The `invalid-mode` failure reason is a tripwire, not authorization. It tells you the file's permissions are wrong — investigate before clearing.
+- Validation failures are tripwires, not authorization. Investigate before clearing a rejected credential file.
 - If the destination directory is on a tmpfs that does not honor mode bits, the helpers will set the mode bits but the OS may ignore them. Audit your platform.
 
 ## See also

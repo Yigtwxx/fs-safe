@@ -8,9 +8,8 @@ import { readSecureFile } from "@openclaw/fs-safe/secure-file";
 const { buffer, realPath, permissions } = await readSecureFile({
   filePath: "/var/lib/app/auth.token",
   label: "auth token",
-  trustedDirs: ["/var/lib/app"],
-  maxBytes: 16 * 1024,
-  timeoutMs: 5_000,
+  trust: { trustedDirs: ["/var/lib/app"] },
+  io: { maxBytes: 16 * 1024, timeoutMs: 5_000 },
 });
 ```
 
@@ -18,16 +17,16 @@ const { buffer, realPath, permissions } = await readSecureFile({
 
 The helper:
 
-- requires an absolute path
+- requires a local absolute path and rejects UNC/network paths by default
 - rejects directories and, by default, symlink paths
 - opens the file before reading and verifies the opened fd still matches the path and realpath
-- optionally requires the real path to live under one of `trustedDirs`
-- rejects hard-to-verify or unsafe permissions unless `allowInsecurePath` is set
+- optionally requires the real path to live under one of `trust.trustedDirs`
+- rejects hard-to-verify or unsafe permissions unless `permissions.allowInsecure` is set
 - rejects files owned by another POSIX uid
 - enforces `maxBytes` before and after reading
 - closes the handle on success, error, and timeout
 
-On POSIX, unsafe permissions mean group/world writable, and group/world readable unless `allowReadableByOthers` is true. On Windows, the helper uses the ACL inspection helpers from [`permissions`](permissions.md) and refuses the read if ACLs cannot be verified.
+On POSIX, unsafe permissions mean group/world writable, and group/world readable unless `permissions.allowReadableByOthers` is true. On Windows, the helper uses the ACL inspection helpers from [`permissions`](permissions.md) and refuses the read if ACLs cannot be verified.
 
 ## Options
 
@@ -35,19 +34,26 @@ On POSIX, unsafe permissions mean group/world writable, and group/world readable
 type SecureFileReadOptions = {
   filePath: string;
   label?: string;
-  trustedDirs?: string[];
-  allowInsecurePath?: boolean;
-  allowReadableByOthers?: boolean;
-  allowSymlinkPath?: boolean;
-  maxBytes?: number;
-  timeoutMs?: number;
-  platform?: NodeJS.Platform;
-  env?: NodeJS.ProcessEnv;
-  exec?: PermissionExec;
+  trust?: {
+    trustedDirs?: string[];
+    allowSymlink?: boolean;
+    allowNetworkPath?: boolean;
+  };
+  permissions?: {
+    allowInsecure?: boolean;
+    allowReadableByOthers?: boolean;
+    platform?: NodeJS.Platform;
+    env?: NodeJS.ProcessEnv;
+    exec?: PermissionExec;
+  };
+  io?: {
+    maxBytes?: number;
+    timeoutMs?: number;
+  };
 };
 ```
 
-`allowInsecurePath` is a migration escape hatch. Prefer fixing permissions and using [`formatPermissionRemediation`](permissions.md) to show the user what to run.
+`permissions.allowInsecure` is a migration escape hatch. Prefer fixing permissions and using [`formatPermissionRemediation`](permissions.md) to show the user what to run. `trust.allowNetworkPath` is off by default because UNC paths are remote authority, not local filesystem input.
 
 ## Errors
 
@@ -55,12 +61,12 @@ type SecureFileReadOptions = {
 
 | Code | Meaning |
 |---|---|
-| `invalid-path` | `filePath` was not absolute. |
+| `invalid-path` | `filePath` was not a local absolute path. |
 | `not-found` | The path could not be stat'd before open. |
 | `not-file` | The opened target is not a regular file. |
-| `symlink` | The path is a symlink and `allowSymlinkPath` is false. |
+| `symlink` | The path is a symlink and `trust.allowSymlink` is false. |
 | `path-mismatch` | The path or realpath changed between open and verification. |
-| `outside-workspace` | `realPath` is outside `trustedDirs`. |
+| `outside-workspace` | `realPath` is outside `trust.trustedDirs`. |
 | `permission-unverified` | Required mode/ACL checks could not be completed. |
 | `insecure-permissions` | Mode bits or ACLs grant broader access than allowed. |
 | `not-owned` | POSIX owner uid is not the current process uid. |

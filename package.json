@@ -46,13 +46,9 @@
       "types": "./dist/secret.d.ts",
       "default": "./dist/secret.js"
     },
-    "./regular-file": {
-      "types": "./dist/regular-file.d.ts",
-      "default": "./dist/regular-file.js"
-    },
     "./permissions": {
-      "types": "./dist/permissions.d.ts",
-      "default": "./dist/permissions.js"
+      "types": "./dist/permissions-public.d.ts",
+      "default": "./dist/permissions-public.js"
     },
     "./secure-file": {
       "types": "./dist/secure-file.d.ts",

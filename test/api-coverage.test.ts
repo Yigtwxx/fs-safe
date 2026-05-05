@@ -138,14 +138,14 @@ describe("root handle coverage", () => {
       "alpha\nbeta\ngamma",
     );
 
-    const writable = await scoped.openWritable("nested/file.txt", { truncateExisting: false });
+    const writable = await scoped.openWritable("nested/file.txt", { writeMode: "update" });
     try {
       expect(writable.createdForWrite).toBe(false);
       await writable.handle.appendFile("!");
     } finally {
       await writable.handle.close();
     }
-    const appended = await scoped.openWritable("nested/file.txt", { append: true });
+    const appended = await scoped.openWritable("nested/file.txt", { writeMode: "append" });
     try {
       await appended.handle.appendFile("?");
     } finally {
@@ -574,7 +574,6 @@ describe("JSON and regular-file helpers", () => {
     const fallback = { count: 1 };
     const store = jsonStore({
       filePath: path.join(root, "state.json"),
-      fallback,
       lock: {
         managerKey: `coverage-json-store-${Date.now()}-${Math.random()}`,
         staleMs: 60_000,
@@ -582,18 +581,17 @@ describe("JSON and regular-file helpers", () => {
       },
     });
     const first = await store.read();
-    expect(first).toEqual({ count: 1 });
-    expect(first).not.toBe(fallback);
+    expect(first).toBeUndefined();
     await store.write({ count: 2 });
     await expect(store.read()).resolves.toEqual({ count: 2 });
-    await expect(store.update((current) => ({ count: current.count + 1 }))).resolves.toEqual({
+    await expect(store.updateOr(fallback, (current) => ({ count: current.count + 1 }))).resolves.toEqual({
       count: 3,
     });
 
-    const unlocked = jsonStore({ filePath: path.join(root, "unlocked.json"), fallback: 0 });
-    await expect(unlocked.read()).resolves.toBe(0);
+    const unlocked = jsonStore<number>({ filePath: path.join(root, "unlocked.json") });
+    await expect(unlocked.read()).resolves.toBeUndefined();
     await unlocked.write(4);
-    await expect(unlocked.update((value) => value + 1)).resolves.toBe(5);
+    await expect(unlocked.update((value) => (value ?? 0) + 1)).resolves.toBe(5);
   });
 
   it("covers regular file read, stat, append, and limit behavior", async () => {

@@ -47,14 +47,14 @@ await fs.remove("notes/archive/today.txt");
 | Surface | Use it for |
 |---|---|
 | [`root()`](root.md) | One boundary for read/write/move/remove inside a trusted directory. |
-| [`pathScope()`](path-scope.md) | Same boundary semantics over an absolute path you already trust. |
+| [`pathScope()`](path-scope.md) | Advanced boundary validation over an absolute path you already trust. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
 | [`writeJson` / `readJson*`](json.md) | JSON state files with strict and lenient read variants. |
 | [`jsonStore`](json-store.md) | Single JSON state file with fallback, atomic writes, and optional locking. |
 | [`fileStore`](file-store.md) | Managed multi-file/blob store with modes, stream writes, copy-in, and pruning. |
 | [`tempWorkspace`](temp.md) | 0700 scratch dir with auto-cleanup. |
 | [`readSecureFile`](secure-file.md) | Absolute file reads with fd pinning, permissions, owner, size, and timeout checks. |
-| [`walkDirectory`](walk.md) | Bounded recursive directory scan with symlink policy and filters. |
+| [`walkDirectory`](walk.md) | Budget-bounded recursive directory scan with symlink policy and filters. |
 | [`extractArchive`](archive.md) | ZIP/TAR extraction with size, count, link, and traversal limits. |
 | [Secret files](secret-file.md) | Mode-0600 credentials with size and TOCTOU defense. |
 | [Permissions](permissions.md) | POSIX mode and Windows ACL inspection/remediation helpers. |

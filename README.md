@@ -110,16 +110,15 @@ that OpenClaw needs to compose higher-level APIs are grouped under
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types |
 | `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, `writeText`, sync variants |
-| `@openclaw/fs-safe/store` | `fileStore`, `jsonStore`, and private mode-0600 JSON/text stores |
+| `@openclaw/fs-safe/store` | `fileStore`, `jsonStore`, and `privateFileStore` |
 | `@openclaw/fs-safe/secret` | strict and result-shaped secret file read/write helpers |
-| `@openclaw/fs-safe/regular-file` | `readRegularFile`, `appendRegularFile`, `appendRegularFileSync`, regular-file stat helpers |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `tempFile`, `writeSiblingTempFile`, `resolveSecureTempRoot` |
 | `@openclaw/fs-safe/secure-file` | fd-pinned absolute file reads with owner, mode, ACL, trusted-dir, size, and timeout checks |
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection plus remediation formatting helpers |
-| `@openclaw/fs-safe/walk` | bounded directory walking with symlink policy, filters, and truncation accounting |
+| `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
 | `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, `ArchiveLimitError`, preflight helpers |
-| `@openclaw/fs-safe/advanced` | composition helpers such as path scopes, pinned open, sidecar locks, install paths, filename sanitizing, local-root readers, `pathExists`, and `withTimeout` |
+| `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, pinned open, sidecar locks, install paths, filename sanitizing, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode` |
 | `@openclaw/fs-safe/types` | shared types: `DirEntry`, `PathStat`, … |
 | `@openclaw/fs-safe/test-hooks` | hooks the test suite uses to inject races; only active under `NODE_ENV=test` |
@@ -161,7 +160,7 @@ await replaceFileAtomic({
 
 ## Stores
 
-Use `jsonStore()` for small state files that need fallback reads, atomic writes,
+Use `jsonStore()` for small state files that need explicit fallback reads, atomic writes,
 and optional sidecar locking around read-modify-write updates:
 
 ```ts
@@ -169,11 +168,10 @@ import { jsonStore } from "@openclaw/fs-safe/store";
 
 const store = jsonStore({
   filePath: "/safe/workspace/state/settings.json",
-  fallback: { enabled: false },
   lock: true,
 });
 
-await store.update((current) => ({ ...current, enabled: true }));
+await store.updateOr({ enabled: false }, (current) => ({ ...current, enabled: true }));
 ```
 
 Use `fileStore()` for cache/blob/media-style directories where callers
@@ -223,13 +221,12 @@ import { readSecureFile } from "@openclaw/fs-safe/secure-file";
 const { buffer } = await readSecureFile({
   filePath: "/var/lib/app/token",
   label: "auth token",
-  trustedDirs: ["/var/lib/app"],
-  maxBytes: 16 * 1024,
-  timeoutMs: 5_000,
+  trust: { trustedDirs: ["/var/lib/app"] },
+  io: { maxBytes: 16 * 1024, timeoutMs: 5_000 },
 });
 ```
 
-Use `allowInsecurePath: true` only for migration or explicit local-development
+Use `permissions: { allowInsecure: true }` only for migration or explicit local-development
 flows where a warning is preferable to refusing the file.
 
 ## Directory walking
@@ -281,9 +278,10 @@ await extractArchive({
 
 Extraction stages into a private directory and merges through the same safe-open boundary used by direct writes, so a symlinked entry can't trick the merge into following an out-of-tree path.
 
-## Path scopes
+## Advanced path scopes
 
-For code that already has a trusted absolute path and wants the same boundary semantics without going through `root()`:
+For code that already has a trusted absolute path and wants lower-level boundary
+validation without going through `root()`:
 
 ```ts
 import { pathScope } from "@openclaw/fs-safe/advanced";
@@ -310,7 +308,19 @@ try {
 }
 ```
 
-Codes include `outside-workspace`, `path-mismatch`, `path-alias`, `hardlink`, `symlink`, `not-file`, `not-found`, `not-empty`, `not-removable`, `too-large`, `helper-failed`, `helper-unavailable`, `unsupported-platform`, `already-exists`, and `invalid-path`.
+Codes are grouped by category:
+
+```ts
+if (err instanceof FsSafeError) {
+  if (err.category === "policy") {
+    // Unsafe caller input or filesystem state.
+  } else {
+    // Operational problem such as helper startup, timeout, or unverifiable permissions.
+  }
+}
+```
+
+Current `FsSafeErrorCode` values are `already-exists`, `hardlink`, `helper-failed`, `helper-unavailable`, `invalid-path`, `insecure-permissions`, `not-empty`, `not-file`, `not-found`, `not-owned`, `not-removable`, `outside-workspace`, `path-alias`, `path-mismatch`, `permission-unverified`, `symlink`, `timeout`, `too-large`, and `unsupported-platform`.
 
 ## Safety model
 

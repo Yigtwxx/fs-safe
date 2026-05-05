@@ -14,13 +14,5 @@ export {
 } from "./json-store.js";
 export {
   privateFileStore,
-  readPrivateJson,
-  readPrivateJsonSync,
-  readPrivateText,
-  readPrivateTextSync,
-  writePrivateJsonAtomic,
-  writePrivateJsonAtomicSync,
-  writePrivateTextAtomic,
-  writePrivateTextAtomicSync,
   type PrivateFileStore,
 } from "./private-file-store.js";

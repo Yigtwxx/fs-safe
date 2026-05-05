@@ -11,7 +11,6 @@ export type JsonStoreLockOptions = {
 
 export type JsonStoreOptions<T> = {
   filePath: string;
-  fallback?: T;
   dirMode?: number;
   mode?: number;
   trailingNewline?: boolean;
@@ -22,9 +21,10 @@ export type JsonStore<T> = {
   readonly filePath: string;
   read(): Promise<T | undefined>;
   readOr(fallback: T): Promise<T>;
-  require(): Promise<T>;
+  readRequired(): Promise<T>;
   write(value: T): Promise<void>;
   update(run: (current: T | undefined) => T | Promise<T>): Promise<T>;
+  updateOr(fallback: T, run: (current: T) => T | Promise<T>): Promise<T>;
 };
 
 function cloneFallback<T>(value: T): T {
@@ -54,10 +54,7 @@ export function jsonStore<T>(options: JsonStoreOptions<T>): JsonStore<T> {
 
   async function read(): Promise<T | undefined> {
     const value = await readJsonIfExists<T>(filePath);
-    if (value !== null) {
-      return value;
-    }
-    return options.fallback === undefined ? undefined : cloneFallback(options.fallback);
+    return value === null ? undefined : value;
   }
 
   async function readOr(fallback: T): Promise<T> {
@@ -97,7 +94,7 @@ export function jsonStore<T>(options: JsonStoreOptions<T>): JsonStore<T> {
     filePath,
     read,
     readOr,
-    require: requireValue,
+    readRequired: requireValue,
     write: async (value) => {
       await withOptionalLock(async () => {
         await write(value);
@@ -106,6 +103,12 @@ export function jsonStore<T>(options: JsonStoreOptions<T>): JsonStore<T> {
     update: async (run) =>
       await withOptionalLock(async () => {
         const next = await run(await read());
+        await write(next);
+        return next;
+      }),
+    updateOr: async (fallback, run) =>
+      await withOptionalLock(async () => {
+        const next = await run((await read()) ?? cloneFallback(fallback));
         await write(next);
         return next;
       }),

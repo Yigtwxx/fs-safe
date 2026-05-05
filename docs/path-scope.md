@@ -1,6 +1,6 @@
 # pathScope()
 
-`pathScope()` gives you the same boundary semantics as `root()`, but operates on **absolute paths** the caller already trusts and returns plain `{ ok, path }` results instead of throwing. Use it when you want the boundary check up front before handing an absolute path to another library.
+`pathScope()` is an advanced helper with the same boundary semantics as `root()`, but it operates on **absolute paths** the caller already trusts and returns plain `{ ok, path }` results instead of throwing. Use it when you want the boundary check up front before handing an absolute path to another library.
 
 ```ts
 import { pathScope } from "@openclaw/fs-safe/advanced";

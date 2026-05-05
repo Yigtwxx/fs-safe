@@ -66,16 +66,15 @@ Use the main entry for the common surface, or the focused subpaths when you want
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types. |
 | `@openclaw/fs-safe/path` | `isPathInside`, `safeRealpathSync`, `isWithinDir`, error helpers. |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, `writeText`. |
-| `@openclaw/fs-safe/store` | `fileStore()`, `jsonStore<T>()`, `privateFileStore()`, and private JSON/text helpers. |
+| `@openclaw/fs-safe/store` | `fileStore()`, `jsonStore<T>()`, and `privateFileStore()`. |
 | `@openclaw/fs-safe/secret` | Secret file read/write helpers. |
-| `@openclaw/fs-safe/regular-file` | `readRegularFile`, `appendRegularFile`, regular-file stat helpers. |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceDirectoryAtomic`, `movePathWithCopyFallback`. |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `withTempWorkspace`, `tempFile`, `writeSiblingTempFile`. |
 | `@openclaw/fs-safe/secure-file` | `readSecureFile` for pinned absolute file reads with permissions checks. |
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection/remediation helpers. |
-| `@openclaw/fs-safe/walk` | `walkDirectory`, `walkDirectorySync`, related types. |
+| `@openclaw/fs-safe/walk` | `walkDirectory`, `walkDirectorySync`, related types. Budget-bounded, not root-bounded. |
 | `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, limits, preflight helpers. |
-| `@openclaw/fs-safe/advanced` | Lower-level composition helpers: path scopes, pinned open, root-file open, install paths, local-root readers, sidecar locks, `pathExists`, `withTimeout`, and related advanced types. |
+| `@openclaw/fs-safe/advanced` | Lower-level composition helpers: path scopes, pinned open, root-file open, install paths, local-root readers, sidecar locks, regular-file helpers, `pathExists`, `withTimeout`, and related advanced types. This surface is less stable than the focused public subpaths. |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode`. |
 | `@openclaw/fs-safe/types` | Shared types: `DirEntry`, `PathStat`, `BasePathOptions`, … |
 | `@openclaw/fs-safe/test-hooks` | Test-only hooks for injecting races. Active under `NODE_ENV=test`. |

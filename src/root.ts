@@ -50,7 +50,7 @@ export type RootOptions = {
 
 export type SymlinkPolicy = "reject" | "follow-within-root";
 export type HardlinkPolicy = "reject" | "allow";
-export type WritableOpenMode = "truncate" | "append" | "preserve";
+export type WritableOpenMode = "replace" | "append" | "update";
 
 export type RootDefaults = {
   hardlinks?: HardlinkPolicy;
@@ -87,8 +87,8 @@ export type RootWriteJsonOptions = RootWriteOptions & {
   trailingNewline?: boolean;
 };
 
-export type RootCreateOptions = RootWriteOptions;
-export type RootCreateJsonOptions = RootWriteJsonOptions;
+export type RootCreateOptions = Omit<RootWriteOptions, "overwrite">;
+export type RootCreateJsonOptions = Omit<RootWriteJsonOptions, "overwrite">;
 
 export type RootAppendOptions = RootWriteOptions & {
   prependNewlineIfNeeded?: boolean;
@@ -451,14 +451,14 @@ class RootHandle implements Root {
     relativePath: string,
     options: RootOpenWritableOptions = {},
   ): Promise<WritableOpenResult> {
-    const writeMode = options.writeMode ?? "truncate";
+    const writeMode = options.writeMode ?? "replace";
     return await openWritableFileInRoot(this.context, {
       relativePath,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...options,
       append: writeMode === "append",
-      truncateExisting: writeMode === "truncate",
+      truncateExisting: writeMode === "replace",
     });
   }
 

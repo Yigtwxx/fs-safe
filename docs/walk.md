@@ -1,6 +1,6 @@
 # Directory walking
 
-`walkDirectory()` and `walkDirectorySync()` provide bounded directory scans for callers that would otherwise hand-roll recursive `readdir()` loops.
+`walkDirectory()` and `walkDirectorySync()` provide budget-bounded directory scans for callers that would otherwise hand-roll recursive `readdir()` loops. The bounds are `maxDepth` and `maxEntries`; this helper does not create a security boundary. Use [`root()`](root.md) when the path itself is caller-influenced.
 
 ```ts
 import { walkDirectory } from "@openclaw/fs-safe/walk";

@@ -5,7 +5,7 @@ import { FsSafeError } from "./errors.js";
 import { isPathInside } from "./path.js";
 import { readRegularFileSync } from "./regular-file.js";
 import { root } from "./root.js";
-import { writePrivateSecretFileAtomic } from "./secret-file.js";
+import { writeSecretFileAtomic } from "./secret-file.js";
 
 export type PrivateFileStore = {
   rootDir: string;
@@ -35,7 +35,7 @@ export async function writePrivateTextAtomic(params: {
   filePath: string;
   content: string | Uint8Array;
 }): Promise<void> {
-  await writePrivateSecretFileAtomic(params);
+  await writeSecretFileAtomic(params);
 }
 
 export async function readPrivateText(params: {
@@ -211,7 +211,7 @@ export async function writePrivateJsonAtomic(params: {
   trailingNewline?: boolean;
 }): Promise<void> {
   const json = JSON.stringify(params.value, null, 2);
-  await writePrivateSecretFileAtomic({
+  await writeSecretFileAtomic({
     rootDir: params.rootDir,
     filePath: params.filePath,
     content: params.trailingNewline && !json.endsWith("\n") ? `${json}\n` : json,

@@ -230,7 +230,7 @@ async function ensurePrivateDirectory(
   }
 }
 
-export async function writePrivateSecretFileAtomic(params: {
+export async function writeSecretFileAtomic(params: {
   rootDir: string;
   filePath: string;
   content: string | Uint8Array;
@@ -291,3 +291,5 @@ export async function writePrivateSecretFileAtomic(params: {
     }
   }
 }
+
+export const writePrivateSecretFileAtomic = writeSecretFileAtomic;
