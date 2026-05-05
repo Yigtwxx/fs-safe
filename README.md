@@ -109,7 +109,7 @@ that OpenClaw needs to compose higher-level APIs are grouped under
 |---|---|
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types |
 | `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
-| `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, `writeText`, sync variants |
+| `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants |
 | `@openclaw/fs-safe/store` | `fileStore`, `jsonStore`, and `privateStateStore` |
 | `@openclaw/fs-safe/secret` | strict and result-shaped secret file read/write helpers |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |

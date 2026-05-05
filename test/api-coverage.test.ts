@@ -7,6 +7,8 @@ import * as tar from "tar";
 import { afterEach, describe, expect, it } from "vitest";
 import { extractArchive } from "../src/archive.js";
 import { loadZipArchiveWithPreflight, readZipCentralDirectoryEntryCount } from "../src/archive-zip-preflight.js";
+import { createAsyncLock } from "../src/async-lock.js";
+import { writeTextAtomic } from "../src/atomic.js";
 import { copyIntoRoot, fileStore } from "../src/file-store.js";
 import {
   assertCanonicalPathWithinBase,
@@ -15,7 +17,6 @@ import {
   safePathSegmentHashed,
 } from "../src/install-path.js";
 import {
-  createAsyncLock,
   readJson,
   readJsonIfExists,
   readJsonSync,
@@ -23,7 +24,6 @@ import {
   tryReadJsonSync,
   writeJson,
   writeJsonSync,
-  writeText,
 } from "../src/json.js";
 import { jsonStore } from "../src/json-store.js";
 import {
@@ -556,7 +556,7 @@ describe("JSON and regular-file helpers", () => {
     writeJsonSync(syncFile, { sync: true });
     expect(readJsonSync(syncFile)).toEqual({ sync: true });
     expect(tryReadJsonSync(syncFile)).toEqual({ sync: true });
-    await writeText(path.join(root, "text.txt"), "text", { trailingNewline: false });
+    await writeTextAtomic(path.join(root, "text.txt"), "text", { trailingNewline: false });
 
     const calls: string[] = [];
     const lock = createAsyncLock();

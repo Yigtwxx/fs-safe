@@ -237,5 +237,5 @@ await locks.withLock(
 ## See also
 
 - [Atomic writes](atomic.md) — single-writer atomicity that often replaces the need for a lock entirely.
-- [Async lock](json.md#concurrency-createasynclock) — in-process serialization for a single Node process.
+- `createAsyncLock` from `@openclaw/fs-safe/advanced` — in-process serialization for a single Node process.
 - [`createSidecarLockManager` source](https://github.com/openclaw/fs-safe/blob/main/src/sidecar-lock.ts).

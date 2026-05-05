@@ -7,5 +7,6 @@ export {
   type ReplaceFileAtomicSyncFileSystem,
   type ReplaceFileAtomicSyncOptions,
 } from "./replace-file.js";
+export { writeTextAtomic } from "./text-atomic.js";
 export { replaceDirectoryAtomic, type ReplaceDirectoryAtomicOptions } from "./replace-directory.js";
 export { movePathWithCopyFallback, type MovePathWithCopyFallbackOptions } from "./move-path.js";

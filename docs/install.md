@@ -65,10 +65,10 @@ Use the main entry for the common surface, or the focused subpaths when you want
 | `@openclaw/fs-safe` | Small common surface: `root`, root types, and errors. |
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types. |
 | `@openclaw/fs-safe/path` | `isPathInside`, `safeRealpathSync`, `isWithinDir`, error helpers. |
-| `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, `writeText`. |
+| `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants. |
 | `@openclaw/fs-safe/store` | `fileStore()`, `jsonStore<T>()`, and `privateStateStore()`. |
 | `@openclaw/fs-safe/secret` | Secret file read/write helpers. |
-| `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceDirectoryAtomic`, `movePathWithCopyFallback`. |
+| `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `writeTextAtomic`, `replaceDirectoryAtomic`, `movePathWithCopyFallback`. |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `withTempWorkspace`, `tempFile`, `writeSiblingTempFile`. |
 | `@openclaw/fs-safe/secure-file` | `readSecureFile` for pinned absolute file reads with permissions checks. |
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection/remediation helpers. |

@@ -1,6 +1,6 @@
 # JSON files
 
-`@openclaw/fs-safe/json` is the standalone JSON surface — strict and lenient read variants, atomic writes, and a small async lock for serializing in-process writers.
+`@openclaw/fs-safe/json` is the standalone JSON surface: strict and lenient read variants plus atomic JSON writes.
 
 ```ts
 import {
@@ -10,9 +10,7 @@ import {
   readJsonSync,
   tryReadJsonSync,
   writeJson,
-  writeText,
   writeJsonSync,
-  createAsyncLock,
   JsonFileReadError,
 } from "@openclaw/fs-safe/json";
 ```
@@ -91,14 +89,6 @@ type WriteJsonOptions = {
 };
 ```
 
-### `writeText(filePath, content, options?)`
-
-Async atomic text write. Same options as `writeJson` (minus the JSON-specific behavior).
-
-```ts
-await writeText("./README.md", rendered, { trailingNewline: true });
-```
-
 ### `writeJsonSync(pathname, data)`
 
 Synchronous variant. Convenience wrapper that uses the sync atomic-write path with sensible defaults.
@@ -107,26 +97,7 @@ Synchronous variant. Convenience wrapper that uses the sync atomic-write path wi
 writeJsonSync("./prefs.json", { theme: "dark" });
 ```
 
-## Concurrency: `createAsyncLock()`
-
-For in-process serialization of writers to the same file. Returns a function that runs an async task under the lock:
-
-```ts
-import { createAsyncLock } from "@openclaw/fs-safe/json";
-
-const lock = createAsyncLock();
-
-async function bumpCounter() {
-  return lock(async () => {
-    const state = (await readJsonIfExists<{ count: number }>("./counter.json")) ?? { count: 0 };
-    state.count += 1;
-    await writeJson("./counter.json", state);
-    return state.count;
-  });
-}
-```
-
-The lock is *in-process only* — it does nothing for cross-process coordination. For multi-process locking, see [`createSidecarLockManager`](sidecar-lock.md) or [`jsonStore`](json-store.md).
+For atomic text writes, use [`writeTextAtomic`](atomic.md) from `@openclaw/fs-safe/atomic`. For in-process serialization, use `createAsyncLock` from the advanced surface, or prefer [`jsonStore`](json-store.md) when you want a JSON-specific read-modify-write helper.
 
 ## Common patterns
 

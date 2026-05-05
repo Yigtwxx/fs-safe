@@ -6,6 +6,7 @@
 import {
   replaceFileAtomic,
   replaceFileAtomicSync,
+  writeTextAtomic,
   replaceDirectoryAtomic,
   movePathWithCopyFallback,
 } from "@openclaw/fs-safe/atomic";
@@ -87,6 +88,21 @@ await replaceDirectoryAtomic({
 The helper renames `targetDir` to a generated backup path, renames `stagedDir → targetDir`, then removes the backup. If the second rename fails, it tries to restore the original target before rethrowing.
 
 Use it when callers must see a whole staged tree at the target path. For single-file replacement, `replaceFileAtomic` is the right tool.
+
+## `writeTextAtomic`
+
+Atomic UTF-8 text write with the same secure defaults as `writeJson`: sibling
+temp file, temp fsync, rename, parent fsync, and final chmod best-effort.
+
+```ts
+import { writeTextAtomic } from "@openclaw/fs-safe/atomic";
+
+await writeTextAtomic("/srv/workspace/rendered.md", rendered, {
+  mode: 0o600,
+  dirMode: 0o700,
+  trailingNewline: true,
+});
+```
 
 ## `movePathWithCopyFallback`
 

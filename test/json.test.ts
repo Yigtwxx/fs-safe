@@ -2,15 +2,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createAsyncLock } from "../src/async-lock.js";
+import { writeTextAtomic } from "../src/atomic.js";
 import {
   JsonFileReadError,
-  createAsyncLock,
   readJson,
   readJsonIfExists,
   readJsonSync,
   tryReadJson,
   writeJson,
-  writeText,
   writeJsonSync,
 } from "../src/json.js";
 
@@ -42,7 +42,7 @@ describe("json file helpers", () => {
     const root = await tempRoot("fs-safe-json-");
     const filePath = path.join(root, "nested", "note.txt");
 
-    await writeText(filePath, "hello", {
+    await writeTextAtomic(filePath, "hello", {
       dirMode: 0o700,
       mode: 0o600,
       trailingNewline: true,
