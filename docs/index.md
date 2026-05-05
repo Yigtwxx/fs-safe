@@ -49,8 +49,8 @@ await fs.remove("notes/archive/today.txt");
 | [`root()`](root.md) | One boundary for read/write/move/remove inside a trusted directory. |
 | [`pathScope()`](path-scope.md) | Same boundary semantics over an absolute path you already trust. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
-| [`writeJsonAtomic` / `readJsonFile*`](json.md) | JSON state files with strict and lenient read variants. |
-| [`createPrivateTempWorkspace`](temp.md) | 0700 scratch dir with auto-cleanup. |
+| [`writeJson` / `readJson*`](json.md) | JSON state files with strict and lenient read variants. |
+| [`tempWorkspace`](temp.md) | 0700 scratch dir with auto-cleanup. |
 | [`extractArchive`](archive.md) | ZIP/TAR extraction with size, count, link, and traversal limits. |
 | [Secret files](secret-file.md) | Mode-0600 credentials with size and TOCTOU defense. |
 | [`createSidecarLockManager`](sidecar-lock.md) | Cross-process file lock with retry and stale-lock recovery. |

@@ -54,7 +54,7 @@ await fs.move("notes/today.txt", "notes/archive/today.txt", { overwrite: true })
 await fs.remove("notes/archive/today.txt");
 ```
 
-`move()` defaults to no clobber. Pass `{ overwrite: true }` when replacing the target is intentional. `remove()` works on files and empty directories. For non-empty directories, list and remove children first or use [`replaceDirectoryStaged`](atomic.md#replacedirectorystaged).
+`move()` defaults to no clobber. Pass `{ overwrite: true }` when replacing the target is intentional. `remove()` works on files and empty directories. For non-empty directories, list and remove children first or use [`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic).
 
 ## 5. Inspect
 
@@ -93,7 +93,7 @@ import { replaceFileAtomic } from "@openclaw/fs-safe/atomic";
 await replaceFileAtomic({
   filePath: "/srv/jobs/incoming/state/config.json",
   content: JSON.stringify(state, null, 2),
-  fileMode: 0o600,
+  mode: 0o600,
   syncTempFile: true,
   syncParentDir: true,
 });
@@ -128,9 +128,9 @@ Extraction stages into a private dir and merges through the same boundary used b
 ## 9. Get a private scratch directory
 
 ```ts
-import { withPrivateTempWorkspace } from "@openclaw/fs-safe/temp";
+import { withTempWorkspace } from "@openclaw/fs-safe/temp";
 
-await withPrivateTempWorkspace({ prefix: "build-" }, async (workspace) => {
+await withTempWorkspace({ rootDir: "/srv/jobs/tmp", prefix: "build-" }, async (workspace) => {
   await fs.copyIn("input.bin", "/tmp/source.bin");
   // ...do work in workspace.dir; auto-cleaned on exit
 });

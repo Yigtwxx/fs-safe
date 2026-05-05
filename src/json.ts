@@ -6,16 +6,31 @@ import { readRegularFile, readRegularFileSync } from "./regular-file.js";
 
 const JSON_FILE_MODE = 0o600;
 const JSON_DIR_MODE = 0o700;
+const SUPPORTS_SYNC_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in fsSync.constants;
 
 function getErrorCode(err: unknown): string | undefined {
   return err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
 }
 
 function trySetSecureMode(pathname: string) {
+  let fd: number | undefined;
   try {
-    fsSync.chmodSync(pathname, JSON_FILE_MODE);
+    fd = fsSync.openSync(
+      pathname,
+      fsSync.constants.O_RDONLY |
+        (SUPPORTS_SYNC_NOFOLLOW ? fsSync.constants.O_NOFOLLOW : 0),
+    );
+    fsSync.fchmodSync(fd, JSON_FILE_MODE);
   } catch {
     // best-effort on platforms without chmod support
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fsSync.closeSync(fd);
+      } catch {
+        // best-effort cleanup
+      }
+    }
   }
 }
 
@@ -37,45 +52,6 @@ function trySyncDirectory(pathname: string) {
   }
 }
 
-function readSymlinkTargetPath(linkPath: string): string {
-  const target = fsSync.readlinkSync(linkPath);
-  return path.resolve(path.dirname(linkPath), target);
-}
-
-function resolveJsonWriteTarget(pathname: string): { targetPath: string; followsSymlink: boolean } {
-  let currentPath = pathname;
-  const visited = new Set<string>();
-  let followsSymlink = false;
-
-  for (;;) {
-    let stat: fsSync.Stats;
-    try {
-      stat = fsSync.lstatSync(currentPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
-      }
-      return { targetPath: currentPath, followsSymlink };
-    }
-
-    if (!stat.isSymbolicLink()) {
-      return { targetPath: currentPath, followsSymlink };
-    }
-
-    if (visited.has(currentPath)) {
-      const err = new Error(
-        `Too many symlink levels while resolving ${pathname}`,
-      ) as NodeJS.ErrnoException;
-      err.code = "ELOOP";
-      throw err;
-    }
-
-    visited.add(currentPath);
-    followsSymlink = true;
-    currentPath = readSymlinkTargetPath(currentPath);
-  }
-}
-
 function renameJsonFileWithFallback(tmpPath: string, pathname: string) {
   try {
     fsSync.renameSync(tmpPath, pathname);
@@ -83,6 +59,21 @@ function renameJsonFileWithFallback(tmpPath: string, pathname: string) {
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EPERM" || code === "EEXIST") {
+      const existing = (() => {
+        try {
+          return fsSync.lstatSync(pathname);
+        } catch (lstatError) {
+          if ((lstatError as NodeJS.ErrnoException).code === "ENOENT") {
+            return null;
+          }
+          throw lstatError;
+        }
+      })();
+      if (existing?.isSymbolicLink()) {
+        fsSync.rmSync(pathname, { force: true });
+        fsSync.renameSync(tmpPath, pathname);
+        return;
+      }
       fsSync.copyFileSync(tmpPath, pathname);
       fsSync.rmSync(tmpPath, { force: true });
       return;
@@ -92,7 +83,7 @@ function renameJsonFileWithFallback(tmpPath: string, pathname: string) {
 }
 
 function writeTempJsonFile(pathname: string, payload: string) {
-  const fd = fsSync.openSync(pathname, "w", JSON_FILE_MODE);
+  const fd = fsSync.openSync(pathname, "wx", JSON_FILE_MODE);
   try {
     fsSync.writeFileSync(fd, payload, "utf8");
     fsSync.fsyncSync(fd);
@@ -111,13 +102,11 @@ export function tryReadJsonSync<T = unknown>(pathname: string): T | null {
 }
 
 export function writeJsonSync(pathname: string, data: unknown) {
-  const { targetPath, followsSymlink } = resolveJsonWriteTarget(pathname);
+  const targetPath = pathname;
   const tmpPath = `${targetPath}.${randomUUID()}.tmp`;
   const payload = `${JSON.stringify(data, null, 2)}\n`;
 
-  if (!followsSymlink) {
-    fsSync.mkdirSync(path.dirname(targetPath), { recursive: true, mode: JSON_DIR_MODE });
-  }
+  fsSync.mkdirSync(path.dirname(targetPath), { recursive: true, mode: JSON_DIR_MODE });
   try {
     writeTempJsonFile(tmpPath, payload);
     trySetSecureMode(tmpPath);

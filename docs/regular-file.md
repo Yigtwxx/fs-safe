@@ -144,7 +144,7 @@ If your call site already trusts the path (it came from your own config, not a c
 ```ts
 const r = await readRegularFile({ filePath: "/etc/app/config.json", maxBytes: 64 * 1024 });
 if (r.missing) {
-  await writeJsonAtomic("/etc/app/config.json", defaultConfig);
+  await writeJson("/etc/app/config.json", defaultConfig);
 } else if (r.regular) {
   applyConfig(JSON.parse(r.buffer.toString("utf8")));
 } else {

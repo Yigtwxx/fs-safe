@@ -112,6 +112,16 @@ type ZipEntry = {
 
 type ZipExtractBudget = ReturnType<typeof createByteBudgetTracker>;
 
+const ZIP_UNIX_FILE_TYPE_MASK = 0o170000;
+const ZIP_UNIX_SYMLINK_TYPE = 0o120000;
+
+function isZipSymlinkEntry(entry: ZipEntry): boolean {
+  return (
+    typeof entry.unixPermissions === "number" &&
+    (entry.unixPermissions & ZIP_UNIX_FILE_TYPE_MASK) === ZIP_UNIX_SYMLINK_TYPE
+  );
+}
+
 async function readZipEntryStream(entry: ZipEntry): Promise<NodeJS.ReadableStream> {
   if (typeof entry.nodeStream === "function") {
     return entry.nodeStream();
@@ -254,6 +264,9 @@ async function extractZip(params: {
         });
         if (entry.dir) {
           continue;
+        }
+        if (isZipSymlinkEntry(entry)) {
+          throw new Error(`zip entry is a link: ${entry.name}`);
         }
 
         await writeZipFileEntry({

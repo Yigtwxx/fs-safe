@@ -6,7 +6,7 @@
 import {
   replaceFileAtomic,
   replaceFileAtomicSync,
-  replaceDirectoryStaged,
+  replaceDirectoryAtomic,
   movePathWithCopyFallback,
 } from "@openclaw/fs-safe/atomic";
 ```
@@ -21,7 +21,7 @@ import { replaceFileAtomic } from "@openclaw/fs-safe/atomic";
 await replaceFileAtomic({
   filePath: "/srv/workspace/state.json",
   content: JSON.stringify(state, null, 2),
-  fileMode: 0o600,
+  mode: 0o600,
   syncTempFile: true,
   syncParentDir: true,
 });
@@ -32,13 +32,17 @@ await replaceFileAtomic({
 ```ts
 type ReplaceFileAtomicOptions = {
   filePath: string;                 // destination
-  content: string | Buffer;
-  encoding?: BufferEncoding;        // applied when content is a string; default utf8
-  fileMode?: number;                // explicit mode for the new file (e.g. 0o600)
-  preserveMode?: boolean;           // copy mode from existing destination, when present
+  content: string | Uint8Array;
+  dirMode?: number;                 // mode for parent dirs created by the helper
+  mode?: number;                    // explicit mode for the new file (e.g. 0o600)
+  preserveExistingMode?: boolean;   // copy mode from existing destination, when present
+  tempPrefix?: string;
+  renameMaxRetries?: number;
+  renameRetryBaseDelayMs?: number;
+  copyFallbackOnPermissionError?: boolean;
   syncTempFile?: boolean;           // fsync(temp) before rename
   syncParentDir?: boolean;          // fsync(parent) after rename (POSIX only)
-  beforeRename?: (tempPath: string) => Promise<void> | void;
+  beforeRename?: (params: { filePath: string; tempPath: string }) => Promise<void>;
   fileSystem?: ReplaceFileAtomicFileSystem; // injectable fs for tests
 };
 ```
@@ -51,7 +55,7 @@ Runs after the temp file is fully written and before the rename. Use it to take 
 await replaceFileAtomic({
   filePath: "/srv/workspace/config.toml",
   content: rendered,
-  beforeRename: async (tempPath) => {
+  beforeRename: async ({ filePath }) => {
     await fs.copyFile(filePath, `${filePath}.bak`); // snapshot existing
   },
 });
@@ -61,33 +65,28 @@ If `beforeRename` throws, the rename is skipped and the temp file is removed —
 
 ### `EPERM` and copy fallback
 
-On systems where `rename` across mount boundaries (or under restrictive permissions) fails with `EPERM`, the helper falls back to a copy + unlink + close sequence that preserves atomicity at the destination. You don't have to do anything to opt in.
+On systems where `rename` fails with `EPERM`/`EEXIST`, pass `copyFallbackOnPermissionError: true` to fall back to copy + unlink. The fallback refuses symlink destinations before copying so it does not write through a replaced destination link.
 
 ### Sync variant
 
 `replaceFileAtomicSync` accepts the same options shape, with the obvious removal of the async-only hooks. Use it inside synchronous boot paths or test setup code.
 
-## `replaceDirectoryStaged`
+## `replaceDirectoryAtomic`
 
-Atomically swap one directory's *contents* with another, with the previous contents preserved at a backup path on success.
+Atomically swap one directory's contents with another, using a temporary backup during the swap.
 
 ```ts
-import { replaceDirectoryStaged } from "@openclaw/fs-safe/atomic";
+import { replaceDirectoryAtomic } from "@openclaw/fs-safe/atomic";
 
-await replaceDirectoryStaged({
-  sourceDir: "/srv/workspace/staging/snapshot-2026-05-05",
+await replaceDirectoryAtomic({
+  stagedDir: "/srv/workspace/staging/snapshot-2026-05-05",
   targetDir: "/srv/workspace/snapshot",
-  backupDir: "/srv/workspace/snapshot.prev",
 });
 ```
 
-The helper renames `targetDir → backupDir`, then `sourceDir → targetDir`. On failure mid-swap it tries to restore the backup. The end state is one of:
+The helper renames `targetDir` to a generated backup path, renames `stagedDir → targetDir`, then removes the backup. If the second rename fails, it tries to restore the original target before rethrowing.
 
-- `targetDir` holds the new tree, `backupDir` holds the old tree (success).
-- `targetDir` holds the old tree, `backupDir` is gone (rename failed before the second step).
-- Either both exist (after a failed restore) or `targetDir` is missing (rare, hard-failure case) — both are surfaced as `FsSafeError`.
-
-Use it when callers must see *the whole new tree or none of it*. For single-file replacement, `replaceFileAtomic` is the right tool.
+Use it when callers must see a whole staged tree at the target path. For single-file replacement, `replaceFileAtomic` is the right tool.
 
 ## `movePathWithCopyFallback`
 
@@ -126,9 +125,11 @@ await replaceFileAtomic({
   filePath: "/tmp/x",
   content: "hi",
   fileSystem: {
-    ...realFs,
-    writeFile: async (...args) => { ops.push("write"); return realFs.writeFile(...args); },
-    rename: async (...args) => { ops.push("rename"); return realFs.rename(...args); },
+    promises: {
+      ...realFs,
+      writeFile: async (...args) => { ops.push("write"); return realFs.writeFile(...args); },
+      rename: async (...args) => { ops.push("rename"); return realFs.rename(...args); },
+    },
   },
 });
 ```
@@ -136,6 +137,6 @@ await replaceFileAtomic({
 ## See also
 
 - [`root()`](root.md) — when you want method-style writes with the boundary baked in.
-- [JSON files](json.md) — `writeJsonAtomic` is `replaceFileAtomic` with `JSON.stringify`.
+- [JSON files](json.md) — JSON/text helpers built on sibling-temp replacement.
 - [Temp workspaces](temp.md) — for staging-then-swap directory builds.
 - [Errors](errors.md) — code union for failures.

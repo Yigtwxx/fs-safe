@@ -37,7 +37,7 @@ Types ship with the package — no `@types/openclaw__fs-safe` needed. The `expor
 
 ```ts
 import { root, FsSafeError } from "@openclaw/fs-safe";
-import { writeJsonAtomic } from "@openclaw/fs-safe/json";
+import { writeJson } from "@openclaw/fs-safe/json";
 import { extractArchive } from "@openclaw/fs-safe/archive";
 ```
 
@@ -65,10 +65,10 @@ Use the main entry for the common surface, or the focused subpaths when you want
 | `@openclaw/fs-safe` | The full surface. Re-exports everything below. |
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types. |
 | `@openclaw/fs-safe/path` | `isPathInside`, `safeRealpathSync`, `isWithinDir`, error helpers. |
-| `@openclaw/fs-safe/json` | `readJsonFile`, `readJsonFileStrict`, `writeJsonAtomic`, `writeTextAtomic`. |
+| `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, `writeText`. |
 | `@openclaw/fs-safe/regular-file` | `readRegularFile`, `appendRegularFile`, regular-file stat helpers. |
-| `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceDirectoryStaged`, `movePathWithCopyFallback`. |
-| `@openclaw/fs-safe/temp` | `createPrivateTempWorkspace`, `createTempFileTarget`, `writeSiblingTempFile`. |
+| `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceDirectoryAtomic`, `movePathWithCopyFallback`. |
+| `@openclaw/fs-safe/temp` | `tempWorkspace`, `withTempWorkspace`, `tempFile`, `writeSiblingTempFile`. |
 | `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, limits, preflight helpers. |
 | `@openclaw/fs-safe/fs` | `pathExists`, `pathExistsSync`. |
 | `@openclaw/fs-safe/timing` | `withTimeout`. |

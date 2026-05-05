@@ -74,7 +74,7 @@ fs.mkdir(rel)                            // mkdir -p (creates missing parents)
 fs.ensureRoot()                          // accepts "" / "." as the root itself
 ```
 
-`write`, `create`, `append`, `writeJson`, and `createJson` accept `fileMode?: number`; use `0o600` for credentials and other private state. `writeJson` also accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
+`write`, `create`, `append`, `writeJson`, and `createJson` accept `mode?: number`; use `0o600` for credentials and other private state. `writeJson` also accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
 
 `copyIn` is a one-shot ingest from a trusted absolute source path: it streams the source through the boundary, atomically renames into the root, and respects `maxBytes`.
 

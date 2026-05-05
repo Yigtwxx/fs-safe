@@ -14,9 +14,9 @@ import {
 } from "@openclaw/fs-safe";
 ```
 
-## When to use these vs `writeJsonAtomic`
+## When to use these vs `writeJson`
 
-| Use these when | Use `writeJsonAtomic` when |
+| Use these when | Use `writeJson` when |
 |---|---|
 | The file is a credential (token, key, password). | The file is application state. |
 | You want the parent directory created at `0o700` if missing. | You don't care about the parent directory mode. |
@@ -160,6 +160,6 @@ await withTimeout(
 
 ## See also
 
-- [JSON files](json.md) — `writeJsonAtomic` accepts `fileMode: 0o600` for non-secret JSON state.
+- [JSON files](json.md) — `writeJson` accepts `mode: 0o600` for non-secret JSON state.
 - [Atomic writes](atomic.md) — the lower-level `replaceFileAtomic` used by these helpers.
 - [Private file store](private-file-store.md) — root-bounded JSON+text helpers without secret-file mode policy.

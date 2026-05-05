@@ -69,6 +69,28 @@ describe("archive extraction", () => {
       "old-content",
     );
   });
+
+  it.runIf(process.platform !== "win32")("rejects zip symlink entries", async () => {
+    const root = await tempRoot("fs-safe-archive-link-");
+    const archivePath = path.join(root, "pkg.zip");
+    const destDir = path.join(root, "dest");
+    const outsidePath = path.join(root, "outside.txt");
+    await fs.mkdir(destDir, { recursive: true });
+    await fs.writeFile(outsidePath, "outside", "utf8");
+
+    const zip = new JSZip();
+    zip.file("link.txt", outsidePath, { unixPermissions: 0o120777 });
+    await fs.writeFile(
+      archivePath,
+      await zip.generateAsync({ type: "nodebuffer", platform: "UNIX" }),
+    );
+
+    await expect(
+      extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 }),
+    ).rejects.toThrow("zip entry is a link: link.txt");
+    await expect(fs.readdir(destDir)).resolves.toEqual([]);
+    await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside");
+  });
 });
 
 describe("temp file targets", () => {

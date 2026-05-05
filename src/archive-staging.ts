@@ -2,8 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { root } from "./root.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
+import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 
 const ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK = "archive entry traverses symlink in destination";
+const ARCHIVE_STAGING_MODE = 0o700;
 
 export type ArchiveSecurityErrorCode =
   | "destination-not-directory"
@@ -139,10 +141,19 @@ export async function withStagedArchiveDestination<T>(params: {
   stagingDirPrefix?: string;
   run: (stagingDir: string) => Promise<T>;
 }): Promise<T> {
+  const stagingRoot = resolveSecureTempRoot({
+    fallbackPrefix: "fs-safe-archive",
+    unsafeFallbackLabel: "archive staging temp dir",
+    warn: () => undefined,
+  });
+  if (isPathInside(params.destinationRealDir, stagingRoot)) {
+    throw new Error(`archive staging root must be outside destination: ${stagingRoot}`);
+  }
   const stagingDir = await fs.mkdtemp(
-    path.join(params.destinationRealDir, params.stagingDirPrefix ?? ".fs-safe-archive-"),
+    path.join(stagingRoot, params.stagingDirPrefix ?? "fs-safe-archive-"),
   );
   try {
+    await fs.chmod(stagingDir, ARCHIVE_STAGING_MODE).catch(() => undefined);
     return await params.run(stagingDir);
   } finally {
     await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);

@@ -50,7 +50,7 @@ type FsSafeErrorCode =
 | `helper-failed` | Internal POSIX helper (Python-based fd-relative ops, sidecar lock acquire) failed. | Inspect `cause` for the underlying error. |
 | `helper-unavailable` | Helper could not be spawned at all. | Python missing in PATH; restricted sandbox. Library falls back to Node-only path where possible. |
 | `invalid-path` | Input was empty, contained NUL, was an unparseable URL, or otherwise unusable. | Caller didn't validate input; input was a network path on Windows. |
-| `not-empty` | `remove()` on a non-empty directory. | Use `replaceDirectoryStaged` or remove children first. |
+| `not-empty` | `remove()` on a non-empty directory. | Use `replaceDirectoryAtomic` or remove children first. |
 | `not-file` | Read or copy targeted a non-regular file. | Target was a directory, FIFO, socket, device. |
 | `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). | Typical missing-file case. |
 | `not-removable` | `remove()` couldn't `unlink`/`rmdir` for a reason other than non-empty. | Permissions, device busy, immutable bit. |
@@ -120,7 +120,7 @@ A common pattern is to wrap your domain code in a single try/catch that maps bot
 
 A handful of helpers throw their own typed errors instead of `FsSafeError`:
 
-- `JsonFileReadError` — thrown by [`readJsonFileStrict`](json.md). Carries `cause` so you can distinguish missing (`ENOENT`) from invalid (`SyntaxError`).
+- `JsonFileReadError` — thrown by [`readJson`](json.md). Carries `cause` so you can distinguish missing (`ENOENT`) from invalid (`SyntaxError`).
 - `ArchiveLimitError` — thrown by [`extractArchive`](archive.md) when an archive size, entry count, or extracted-byte budget is exceeded. The `code` field uses `ARCHIVE_LIMIT_ERROR_CODE` constants (e.g. `"ARCHIVE_SIZE_EXCEEDS_LIMIT"`).
 - `ArchiveSecurityError` — thrown by extraction when an entry path violates safety rules (traversal, drive prefix, blocked link type). The `code` field uses `ArchiveSecurityErrorCode` values.
 

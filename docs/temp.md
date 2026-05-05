@@ -5,12 +5,11 @@
 ```ts
 import {
   tempWorkspace,
-  createPrivateTempWorkspace,
-  withPrivateTempWorkspace,
-  createPrivateTempWorkspaceSync,
-  withPrivateTempWorkspaceSync,
-  createTempFileTarget,
-  withTempFileTarget,
+  withTempWorkspace,
+  tempWorkspaceSync,
+  withTempWorkspaceSync,
+  tempFile,
+  withTempFile,
   writeSiblingTempFile,
   writeViaSiblingTempPath,
   resolveSecureTempRoot,
@@ -33,14 +32,14 @@ const inputPath = await workspace.writePrivate("input.txt", "data");
 await runBuild(workspace.dir, inputPath);
 ```
 
-### `withPrivateTempWorkspace`
+### `withTempWorkspace`
 
 The recommended shape. Auto-cleanup on every exit path:
 
 ```ts
-import { withPrivateTempWorkspace } from "@openclaw/fs-safe/temp";
+import { withTempWorkspace } from "@openclaw/fs-safe/temp";
 
-const result = await withPrivateTempWorkspace({ rootDir: "/tmp/my-app", prefix: "build-" }, async (workspace) => {
+const result = await withTempWorkspace({ rootDir: "/tmp/my-app", prefix: "build-" }, async (workspace) => {
   await workspace.writePrivate("input.txt", "data");
   return await runBuild(workspace.dir);
 });
@@ -48,12 +47,12 @@ const result = await withPrivateTempWorkspace({ rootDir: "/tmp/my-app", prefix: 
 
 The callback receives the same workspace shape as `tempWorkspace()`. Cleanup is wired to run after the callback resolves or rejects.
 
-### `createPrivateTempWorkspace`
+### Manual lifetime
 
 Lower-level. You manage the lifetime:
 
 ```ts
-const workspace = await createPrivateTempWorkspace({ rootDir: "/tmp/my-app", prefix: "scan-" });
+const workspace = await tempWorkspace({ rootDir: "/tmp/my-app", prefix: "scan-" });
 try {
   // …work in workspace.dir…
 } finally {
@@ -63,7 +62,7 @@ try {
 
 ### Sync variants
 
-`createPrivateTempWorkspaceSync` and `withPrivateTempWorkspaceSync` are the synchronous siblings. Useful for setup code in tests or boot paths that have not entered async land yet.
+`tempWorkspaceSync` and `withTempWorkspaceSync` are the synchronous siblings. Useful for setup code in tests or boot paths that have not entered async land yet.
 
 ### Options
 
@@ -72,25 +71,25 @@ type PrivateTempWorkspaceOptions = {
   rootDir: string;          // parent directory for workspaces
   prefix: string;           // dir prefix (sanitized)
   dirMode?: number;         // dir mode; default 0o700
-  fileMode?: number;        // writePrivate file mode; default 0o600
+  mode?: number;            // writePrivate file mode; default 0o600
 };
 ```
 
 ## Temp file targets
 
-When you don't need a whole directory — just one temp file path under your control — use the file-target helpers. They produce a path inside a private workspace and clean up either the file (`createTempFileTarget`) or the entire enclosing directory (`withTempFileTarget`).
+When you don't need a whole directory — just one temp file path under your control — use the file-target helpers. They produce a path inside a private workspace and clean up the enclosing directory.
 
-### `createTempFileTarget`
+### `tempFile`
 
 ```ts
-import { createTempFileTarget } from "@openclaw/fs-safe/temp";
+import { tempFile } from "@openclaw/fs-safe/temp";
 
-const target = await createTempFileTarget({ fileName: "report.pdf", prefix: "render-" });
+const target = await tempFile({ fileName: "report.pdf", prefix: "render-" });
 try {
-  await render(target.filePath);
-  await fs.copyFile(target.filePath, "/srv/workspace/reports/today.pdf");
+  await render(target.path);
+  await fs.copyFile(target.path, "/srv/workspace/reports/today.pdf");
 } finally {
-  await target.dispose();
+  await target.cleanup();
 }
 ```
 
@@ -98,22 +97,23 @@ Returns:
 
 ```ts
 type TempFileTarget = {
-  filePath: string;     // absolute path; safe to write to
-  dirPath: string;      // the enclosing private workspace dir
-  dispose(): Promise<void>; // removes filePath if present, then dirPath
+  path: string;             // absolute path; safe to write to
+  dir: string;              // the enclosing private workspace dir
+  file(name: string): string;
+  cleanup(): Promise<void>; // removes the private workspace dir
 };
 ```
 
-### `withTempFileTarget`
+### `withTempFile`
 
 Same shape with auto-cleanup:
 
 ```ts
-import { withTempFileTarget } from "@openclaw/fs-safe/temp";
+import { withTempFile } from "@openclaw/fs-safe/temp";
 
-await withTempFileTarget({ fileName: "out.zip", prefix: "pack-" }, async (t) => {
-  await pack(t.filePath);
-  await uploadAndForget(t.filePath);
+await withTempFile({ fileName: "out.zip", prefix: "pack-" }, async (filePath) => {
+  await pack(filePath);
+  await uploadAndForget(filePath);
 });
 ```
 
@@ -127,17 +127,18 @@ When you want to write to a temp file in **the same directory** as a future dest
 import { writeSiblingTempFile } from "@openclaw/fs-safe/temp";
 
 const result = await writeSiblingTempFile<string>({
-  destinationFilePath: "/srv/workspace/state.json",
-  fileMode: 0o600,
-  write: async (tempPath) => {
+  dir: "/srv/workspace",
+  mode: 0o600,
+  writeTemp: async (tempPath) => {
     await fs.writeFile(tempPath, JSON.stringify(state));
-    return tempPath;
+    return "state.json";
   },
+  resolveFinalPath: (fileName) => path.join("/srv/workspace", fileName),
 });
-// result.tempPath, result.value (returned by write()), result.dispose
+// result.filePath, result.result (returned by writeTemp)
 ```
 
-`writeSiblingTempFile` chooses a random sibling name in the destination's parent directory, calls your `write()` callback, and lets you decide what to do with it next. The result includes a `dispose()` to remove the temp file if you didn't rename it into place.
+`writeSiblingTempFile` chooses a random sibling name in `dir`, calls your `writeTemp()` callback, validates that `resolveFinalPath(result)` is still inside that same directory, and renames the temp file there.
 
 ### `writeViaSiblingTempPath`
 
@@ -147,9 +148,11 @@ A higher-level convenience — write content + rename in one call:
 import { writeViaSiblingTempPath } from "@openclaw/fs-safe/temp";
 
 await writeViaSiblingTempPath({
-  destinationFilePath: "/srv/workspace/state.json",
-  content: JSON.stringify(state),
-  fileMode: 0o600,
+  rootDir: "/srv/workspace",
+  targetPath: "/srv/workspace/state.json",
+  writeTemp: async (tempPath) => {
+    await fs.writeFile(tempPath, JSON.stringify(state));
+  },
 });
 ```
 
@@ -162,17 +165,17 @@ The `resolveSecureTempRoot()` helper picks a per-user directory under the system
 ```ts
 import { resolveSecureTempRoot } from "@openclaw/fs-safe/temp";
 
-const tempRoot = resolveSecureTempRoot({ namespace: "my-app" });
-// e.g. /tmp/fs-safe-501-my-app-9af7
+const tempRoot = resolveSecureTempRoot({ fallbackPrefix: "my-app" });
+// e.g. /tmp/my-app-501
 ```
 
 ### Options
 
 ```ts
 type ResolveSecureTempRootOptions = {
-  namespace?: string;       // appended to the default name
-  parentDir?: string;       // override os.tmpdir()
-  mode?: number;            // default 0o700
+  fallbackPrefix: string;   // base name for the per-user fallback dir
+  preferredDir?: string;    // optional preferred secure temp root
+  tmpdir?: () => string;    // override os.tmpdir()
 };
 ```
 
@@ -183,12 +186,13 @@ The directory name embeds the user's UID (POSIX) or username so multi-user syste
 ### Build something, atomically place it
 
 ```ts
-await withPrivateTempWorkspace({ prefix: "build-" }, async (ws) => {
+import { replaceDirectoryAtomic } from "@openclaw/fs-safe/atomic";
+
+await withTempWorkspace({ rootDir: "/srv/site/tmp", prefix: "build-" }, async (ws) => {
   await runCompiler({ outDir: ws.dir });
-  await replaceDirectoryStaged({
-    sourceDir: ws.dir,
+  await replaceDirectoryAtomic({
+    stagedDir: ws.dir,
     targetDir: "/srv/site/public",
-    backupDir: "/srv/site/public.prev",
   });
 });
 ```
@@ -200,28 +204,29 @@ import { writeSiblingTempFile } from "@openclaw/fs-safe/temp";
 import fs from "node:fs/promises";
 
 const r = await writeSiblingTempFile({
-  destinationFilePath: "/srv/cache/blob.bin",
-  write: async (tempPath) => {
+  dir: "/srv/cache",
+  writeTemp: async (tempPath) => {
     const handle = await fs.open(tempPath, "w");
     try {
       await pipeline(downloadStream, handle.createWriteStream());
     } finally {
       await handle.close();
     }
-    return tempPath;
+    return "blob.bin";
   },
+  resolveFinalPath: (fileName) => path.join("/srv/cache", fileName),
 });
 
-await fs.rename(r.tempPath, "/srv/cache/blob.bin");
+console.log(`downloaded ${r.filePath}`);
 ```
 
 ### Per-call private scratch in a test
 
 ```ts
-import { withPrivateTempWorkspace } from "@openclaw/fs-safe/temp";
+import { withTempWorkspace } from "@openclaw/fs-safe/temp";
 
 it("processes a fixture", async () => {
-  await withPrivateTempWorkspace({ prefix: "test-" }, async (ws) => {
+  await withTempWorkspace({ rootDir: "/tmp/my-tests", prefix: "test-" }, async (ws) => {
     await fs.writeFile(path.join(ws.dir, "input.txt"), fixture);
     const out = await processFile(path.join(ws.dir, "input.txt"));
     expect(out).toEqual(expected);
@@ -231,6 +236,6 @@ it("processes a fixture", async () => {
 
 ## See also
 
-- [Atomic writes](atomic.md) — `replaceDirectoryStaged` for whole-directory swaps.
+- [Atomic writes](atomic.md) — `replaceDirectoryAtomic` for whole-directory swaps.
 - [`root()`](root.md) — `fs.copyIn(rel, sourceAbs)` for moving files from a temp into a `Root`.
 - [Sidecar lock](sidecar-lock.md) — when many processes share a temp tree.

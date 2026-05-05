@@ -10,6 +10,7 @@ import {
   prepareArchiveOutputPath,
   withStagedArchiveDestination,
 } from "../src/archive-staging.js";
+import { isPathInside } from "../src/path.js";
 
 const directorySymlinkType = process.platform === "win32" ? "junction" : undefined;
 const tempDirs = new Set<string>();
@@ -126,6 +127,7 @@ describe("archive-staging helpers", () => {
         destinationRealDir,
         run: async (stagingDir) => {
           successStage = stagingDir;
+          expect(isPathInside(destinationRealDir, stagingDir)).toBe(false);
           await fs.writeFile(path.join(stagingDir, "payload.txt"), "ok", "utf8");
         },
       });
@@ -137,6 +139,7 @@ describe("archive-staging helpers", () => {
           destinationRealDir,
           run: async (stagingDir) => {
             failureStage = stagingDir;
+            expect(isPathInside(destinationRealDir, stagingDir)).toBe(false);
             throw new Error("boom");
           },
         }),

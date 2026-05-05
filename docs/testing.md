@@ -142,10 +142,10 @@ it("writes and reads through the boundary", async () => {
 });
 ```
 
-For tests that need a private temp workspace, [`withPrivateTempWorkspace`](temp.md) makes the setup-and-teardown story trivial.
+For tests that need a private temp workspace, [`withTempWorkspace`](temp.md) makes the setup-and-teardown story trivial.
 
 ## See also
 
 - [Security model](security-model.md) — what the boundary is supposed to defend; design tests around the same threats.
 - [`root()`](root.md) — the surface most tests will exercise.
-- [Temp workspaces](temp.md) — `withPrivateTempWorkspace` for cleanup-on-exit test directories.
+- [Temp workspaces](temp.md) — `withTempWorkspace` for cleanup-on-exit test directories.

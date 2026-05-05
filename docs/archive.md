@@ -29,7 +29,7 @@ await extractArchive({
 ```ts
 type ExtractArchiveParams = {
   archivePath: string;          // absolute path to the archive
-  destDir: string;              // absolute path; created if missing
+  destDir: string;              // absolute destination directory; must already exist
   timeoutMs: number;            // wall-clock cap; throws on overrun
   kind?: ArchiveKind;           // "zip" | "tar"; inferred from filename when omitted
   stripComponents?: number;     // strip N leading dirs from entry paths
@@ -96,9 +96,9 @@ The archive subpath also exports the helpers `extractArchive` is built on. Most 
 
 | Function | Purpose |
 |---|---|
-| `withStagedArchiveDestination(opts)` | Creates a private staging dir, calls your `run(stagingDir)`, merges into the destination. |
+| `withStagedArchiveDestination(opts)` | Creates a private staging dir outside the destination, calls your `run(stagingDir)`, then cleans it up. |
 | `mergeExtractedTreeIntoDestination(opts)` | The merge step alone — staged tree → destination through boundary checks. |
-| `prepareArchiveDestinationDir(destDir)` | Canonicalizes and asserts the destination, creates if missing. |
+| `prepareArchiveDestinationDir(destDir)` | Canonicalizes and asserts the destination directory. |
 | `prepareArchiveOutputPath(opts)` | Resolves a single entry's output path against the staging dir. |
 | `loadZipArchiveWithPreflight(opts)` | Loads a JSZip with size/entry-count preflight before unzipping. |
 | `readZipCentralDirectoryEntryCount(path)` | Returns the entry count from a ZIP's central directory without reading any payloads. |
@@ -164,26 +164,25 @@ await extractArchive({ archivePath, destDir, kind, timeoutMs: 10_000 });
 ### Stage to private dir, then commit as a directory
 
 ```ts
-import { withPrivateTempWorkspace } from "@openclaw/fs-safe/temp";
-import { replaceDirectoryStaged } from "@openclaw/fs-safe/atomic";
+import { withTempWorkspace } from "@openclaw/fs-safe/temp";
+import { replaceDirectoryAtomic } from "@openclaw/fs-safe/atomic";
 
-await withPrivateTempWorkspace({ prefix: "extract-" }, async (ws) => {
+await withTempWorkspace({ rootDir: "/srv/site/tmp", prefix: "extract-" }, async (ws) => {
   await extractArchive({
     archivePath: upload.path,
     destDir: ws.dir,
     timeoutMs: 30_000,
   });
-  await replaceDirectoryStaged({
-    sourceDir: ws.dir,
+  await replaceDirectoryAtomic({
+    stagedDir: ws.dir,
     targetDir: "/srv/site/plugin",
-    backupDir: "/srv/site/plugin.prev",
   });
 });
 ```
 
 ## See also
 
-- [Atomic writes](atomic.md) — `replaceDirectoryStaged` for swapping directory trees.
+- [Atomic writes](atomic.md) — `replaceDirectoryAtomic` for staged directory replacement.
 - [Temp workspaces](temp.md) — extract into a private workspace and commit as one step.
 - [Errors](errors.md) — `FsSafeError` codes the underlying writes can raise.
 - [`extractArchive` source](https://github.com/openclaw/fs-safe/blob/main/src/archive.ts).

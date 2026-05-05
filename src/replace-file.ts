@@ -16,6 +16,7 @@ export type ReplaceFileAtomicFileSystem = {
     | "rm"
     | "open"
     | "stat"
+    | "lstat"
   >;
 };
 
@@ -32,6 +33,7 @@ export type ReplaceFileAtomicSyncFileSystem = Pick<
   | "fsyncSync"
   | "closeSync"
   | "statSync"
+  | "lstatSync"
 >;
 
 type ReplaceFileAtomicBaseOptions = {
@@ -94,6 +96,15 @@ async function renameWithRetry(params: {
         continue;
       }
       if (params.copyFallbackOnPermissionError && isPermissionRenameError(error)) {
+        const stat = await params.fsModule.lstat(params.dest).catch((lstatError) => {
+          if ((lstatError as NodeJS.ErrnoException).code === "ENOENT") {
+            return null;
+          }
+          throw lstatError;
+        });
+        if (stat?.isSymbolicLink()) {
+          throw new Error(`Refusing copy fallback through symlink destination: ${params.dest}`);
+        }
         await params.fsModule.copyFile(params.src, params.dest);
         await params.fsModule.unlink(params.src).catch(() => undefined);
         return { method: "copy-fallback" };
@@ -129,6 +140,17 @@ function renameWithRetrySync(params: {
         continue;
       }
       if (params.copyFallbackOnPermissionError && isPermissionRenameError(error)) {
+        let stat: Stats | null = null;
+        try {
+          stat = params.fsModule.lstatSync(params.dest);
+        } catch (lstatError) {
+          if ((lstatError as NodeJS.ErrnoException).code !== "ENOENT") {
+            throw lstatError;
+          }
+        }
+        if (stat?.isSymbolicLink()) {
+          throw new Error(`Refusing copy fallback through symlink destination: ${params.dest}`);
+        }
         params.fsModule.copyFileSync(params.src, params.dest);
         try {
           params.fsModule.unlinkSync(params.src);

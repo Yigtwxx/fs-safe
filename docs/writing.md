@@ -108,7 +108,7 @@ Both `from` and `to` are bounded; `..` in either is rejected.
 
 ### `fs.remove(rel)`
 
-Unlink a file or `rmdir` an empty directory. Non-empty directories throw `not-empty`. For atomic directory replacement, use [`replaceDirectoryStaged`](atomic.md#replacedirectorystaged).
+Unlink a file or `rmdir` an empty directory. Non-empty directories throw `not-empty`. For atomic directory replacement, use [`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic).
 
 ```ts
 await fs.remove("logs/yesterday.log");
@@ -200,7 +200,7 @@ for (const file of files) await fs.write(`${stagingDir}/${file.name}`, file.body
 await fs.move(stagingDir, "snapshots/2026-05-05", { overwrite: true });
 ```
 
-For a true commit-or-rollback over a *directory*, use [`replaceDirectoryStaged`](atomic.md#replacedirectorystaged).
+For a true commit-or-rollback over a *directory*, use [`replaceDirectoryAtomic`](atomic.md#replacedirectoryatomic).
 
 ### Rotate logs
 

@@ -4,13 +4,14 @@
 
 ```ts
 import {
-  readJsonFile,
-  readJsonFileStrict,
-  writeJsonAtomic,
-  writeTextAtomic,
-  loadJsonFile,
-  saveJsonFile,
-  readDurableJsonFile,
+  tryReadJson,
+  readJson,
+  readJsonIfExists,
+  readJsonSync,
+  tryReadJsonSync,
+  writeJson,
+  writeText,
+  writeJsonSync,
   createAsyncLock,
   JsonFileReadError,
 } from "@openclaw/fs-safe/json";
@@ -21,17 +22,17 @@ import {
 Two read helpers, same input, different failure shape:
 
 ```ts
-await readJsonFile<T>("./config.json");        // returns null on missing or invalid
-await readJsonFileStrict<T>("./manifest.json"); // throws JsonFileReadError on missing or invalid
+await tryReadJson<T>("./config.json"); // returns null on missing or invalid
+await readJson<T>("./manifest.json");  // throws JsonFileReadError on missing or invalid
 ```
 
-Use `readJsonFile` when "absent or unreadable" is a normal outcome (first run, optional caches). Use `readJsonFileStrict` when missing or malformed JSON is a programmer error you want to surface immediately.
+Use `tryReadJson` when "absent or unreadable" is a normal outcome (first run, optional caches). Use `readJson` when missing or malformed JSON is a programmer error you want to surface immediately.
 
 `JsonFileReadError` carries `cause` so you can inspect whether it was an `ENOENT`, a `SyntaxError`, or something else.
 
 ## Reading
 
-### `readJsonFile<T>(filePath)`
+### `tryReadJson<T>(filePath)`
 
 Async. Returns `Promise<T | null>`:
 
@@ -40,64 +41,59 @@ Async. Returns `Promise<T | null>`:
 - file present and valid → parsed value cast to `T`
 
 ```ts
-const cache = (await readJsonFile<Cache>("./cache.json")) ?? defaultCache();
+const cache = (await tryReadJson<Cache>("./cache.json")) ?? defaultCache();
 ```
 
-### `readJsonFileStrict<T>(filePath)`
+### `readJson<T>(filePath)`
 
 Async. Returns `Promise<T>`. Throws `JsonFileReadError` on missing-or-invalid. The cast is unchecked — validate the shape with your own schema (zod, valibot, …) if it came from an untrusted source.
 
-### `readJsonFileSync(filePath)`
+### `readJsonSync(filePath)`
 
-Synchronous variant. Returns `unknown` (parse with caution).
+Synchronous strict-ish variant. Returns `unknown` for valid JSON and `null` for missing or invalid input.
 
-### `readDurableJsonFile<T>(filePath)`
+### `tryReadJsonSync<T>(pathname)`
 
-Async. Returns `Promise<T | null>`. Behaves like `readJsonFile` but tolerates a brief window where the file is being atomically replaced — if the read returns `null` because the file is momentarily missing during a `rename`, it retries once before giving up.
+Synchronous lenient variant. Returns `T | null`; missing or invalid input returns `null`.
 
-Use this when many readers concurrently read a file that one writer atomically rewrites.
+### `readJsonIfExists<T>(filePath)`
 
-### `loadJsonFile<T>(pathname)`
-
-Synchronous. Returns `T | undefined`. The "load with no fuss" sibling of `readJsonFile`. Same lenient semantics; missing or invalid → `undefined`.
+Async. Returns `Promise<T | null>`. Missing files return `null`; invalid JSON throws `JsonFileReadError`.
 
 ## Writing
 
-### `writeJsonAtomic(filePath, value, options?)`
+### `writeJson(filePath, value, options?)`
 
-Async. `JSON.stringify(value, replacer, space)` + [`replaceFileAtomic`](atomic.md#replacefileatomic-replacefileatomicsync) under the hood.
+Async. `JSON.stringify(value, null, 2)` + sibling-temp rename under the hood.
 
 ```ts
-await writeJsonAtomic("./state.json", state, { space: 2 });
+await writeJson("./state.json", state, { trailingNewline: true });
 ```
 
-Options pass through to `replaceFileAtomic`:
+Options:
 
 ```ts
-type WriteJsonAtomicOptions = {
-  fileMode?: number;
-  syncTempFile?: boolean;
-  syncParentDir?: boolean;
-  replacer?: Parameters<typeof JSON.stringify>[1];
-  space?: Parameters<typeof JSON.stringify>[2];
-  trailingNewline?: boolean; // default true
+type WriteJsonOptions = {
+  mode?: number;
+  ensureDirMode?: number;
+  trailingNewline?: boolean;
 };
 ```
 
-### `writeTextAtomic(filePath, content, options?)`
+### `writeText(filePath, content, options?)`
 
-Async. Atomic text write. Same options as `writeJsonAtomic` (minus `replacer`/`space`/`trailingNewline`).
+Async. Atomic text write. Same options as `writeJson`, with `appendTrailingNewline` instead of `trailingNewline`.
 
 ```ts
-await writeTextAtomic("./README.md", rendered);
+await writeText("./README.md", rendered);
 ```
 
-### `saveJsonFile(pathname, data)`
+### `writeJsonSync(pathname, data)`
 
-Synchronous, lenient. Convenience wrapper that calls the sync atomic write with sensible defaults.
+Synchronous convenience wrapper that writes formatted JSON with mode `0o600`. Existing symlink leaves are replaced, not followed.
 
 ```ts
-saveJsonFile("./prefs.json", { theme: "dark" });
+writeJsonSync("./prefs.json", { theme: "dark" });
 ```
 
 ## Concurrency: `createAsyncLock()`
@@ -111,9 +107,9 @@ const lock = createAsyncLock();
 
 async function bumpCounter() {
   return lock(async () => {
-    const state = (await readJsonFile<{ count: number }>("./counter.json")) ?? { count: 0 };
+    const state = (await tryReadJson<{ count: number }>("./counter.json")) ?? { count: 0 };
     state.count += 1;
-    await writeJsonAtomic("./counter.json", state);
+    await writeJson("./counter.json", state);
     return state.count;
   });
 }
@@ -126,9 +122,9 @@ The lock is *in-process only* — it does nothing for cross-process coordination
 ### Read-modify-write
 
 ```ts
-const state = (await readJsonFile<State>("./state.json")) ?? initialState();
+const state = (await tryReadJson<State>("./state.json")) ?? initialState();
 state.lastRun = Date.now();
-await writeJsonAtomic("./state.json", state, { space: 2, fileMode: 0o600 });
+await writeJson("./state.json", state, { mode: 0o600 });
 ```
 
 ### Atomic with secure mode
@@ -136,11 +132,7 @@ await writeJsonAtomic("./state.json", state, { space: 2, fileMode: 0o600 });
 For credentials or other sensitive JSON, write at mode `0o600`:
 
 ```ts
-await writeJsonAtomic("./auth.json", token, {
-  fileMode: 0o600,
-  syncTempFile: true,
-  syncParentDir: true,
-});
+await writeJson("./auth.json", token, { mode: 0o600, ensureDirMode: 0o700 });
 ```
 
 For higher-assurance secrets, prefer the dedicated [secret-file helpers](secret-file.md) — they create the parent directory at `0o700` if missing.
@@ -150,7 +142,7 @@ For higher-assurance secrets, prefer the dedicated [secret-file helpers](secret-
 ```ts
 let manifest: Manifest;
 try {
-  manifest = await readJsonFileStrict<Manifest>("./manifest.json");
+  manifest = await readJson<Manifest>("./manifest.json");
 } catch (err) {
   if (err instanceof JsonFileReadError) {
     console.error("manifest unreadable:", err.cause);
@@ -163,8 +155,8 @@ try {
 ### Concurrent readers, single writer
 
 ```ts
-const state = await readDurableJsonFile<State>("./state.json");
-// during a writer's atomic rename, the unlucky read returns null -> retried once
+const state = await readJsonIfExists<State>("./state.json");
+// missing returns null; malformed JSON still throws
 ```
 
 ## Error reference
@@ -172,13 +164,12 @@ const state = await readDurableJsonFile<State>("./state.json");
 | Throw / return | When |
 |---|---|
 | `null` (lenient reads) | File missing or contents are not valid JSON. |
-| `JsonFileReadError` | `readJsonFileStrict` saw missing or invalid input. Inspect `cause`. |
-| `FsSafeError` | Atomic-write helpers can throw the standard codes via `replaceFileAtomic`. |
+| `JsonFileReadError` | `readJson` or `readJsonIfExists` saw unreadable or invalid input. Inspect `cause`. |
 | Native `NodeJS.ErrnoException` | Lower-level fs errors not wrapped. |
 
 ## See also
 
-- [Atomic writes](atomic.md) — `writeJsonAtomic` builds on `replaceFileAtomic`.
+- [Atomic writes](atomic.md) — lower-level sibling-temp replacement helpers.
 - [Secret files](secret-file.md) — JSON-or-text writes with mode 0600 in mode 0700 dirs.
 - [Private file store](private-file-store.md) — root-bounded JSON+text helpers.
 - [Sidecar lock](sidecar-lock.md) — cross-process coordination.

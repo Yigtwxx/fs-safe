@@ -10,6 +10,7 @@ import {
   tryReadJson,
   writeJson,
   writeText,
+  writeJsonSync,
 } from "../src/json.js";
 
 const tempDirs: string[] = [];
@@ -98,6 +99,20 @@ describe("json file helpers", () => {
     } finally {
       lstatSpy.mockRestore();
     }
+  });
+
+  it.runIf(process.platform !== "win32")("replaces symlink leaves on sync writes", async () => {
+    const root = await tempRoot("fs-safe-json-link-");
+    const outsidePath = path.join(root, "outside.json");
+    const linkPath = path.join(root, "state.json");
+    await fs.writeFile(outsidePath, "{\"secret\":true}\n", "utf8");
+    await fs.symlink(outsidePath, linkPath);
+
+    writeJsonSync(linkPath, { ok: true });
+
+    await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("{\"secret\":true}\n");
+    await expect(fs.readFile(linkPath, "utf8")).resolves.toBe("{\n  \"ok\": true\n}\n");
+    expect((await fs.lstat(linkPath)).isSymbolicLink()).toBe(false);
   });
 
   it("serializes work through createAsyncLock", async () => {

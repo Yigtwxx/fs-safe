@@ -58,7 +58,7 @@ type Config = { tokens: string[] };
 const config = await fs.readJson<Config>("config.json");
 ```
 
-For tighter control over malformed-or-missing JSON, use the standalone helpers in [`@openclaw/fs-safe/json`](json.md): `readJsonFile` (returns `null` on missing/invalid) vs `readJsonFileStrict` (throws).
+For tighter control over malformed-or-missing JSON, use the standalone helpers in [`@openclaw/fs-safe/json`](json.md): `tryReadJson` (returns `null` on missing/invalid) vs `readJson` (throws).
 
 ### `fs.open(rel, options?)`
 
