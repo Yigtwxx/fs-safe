@@ -9,7 +9,7 @@ import type {
   FastPathMode,
   PathStat,
   SafeEncoding,
-} from "@openclaw/fs-safe";
+} from "@openclaw/fs-safe/types";
 ```
 
 ## `PathStat`

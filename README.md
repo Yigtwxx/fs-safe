@@ -100,17 +100,18 @@ await using opened = await fs.openWritable("logs/current.log", { writeMode: "app
 
 ## Subpaths
 
-The main entry point is curated around the common story: `root`, `pathScope`, `fileStore`, `jsonStore`, temp workspaces, archive extraction, and `FsSafeError`. Lower-level helpers live behind focused subpaths so their stability boundary is explicit.
+The main entry point is intentionally small: `root`, the root option/result
+types, and `FsSafeError`. Use subpaths for everything else. Low-level helpers
+that OpenClaw needs to compose higher-level APIs are grouped under
+`@openclaw/fs-safe/advanced` instead of being separate public leaf contracts.
 
 | Subpath | Contents |
 |---|---|
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types |
 | `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, `writeText`, sync variants |
-| `@openclaw/fs-safe/json-store` | locked JSON file store with fallback read, atomic write, and update |
-| `@openclaw/fs-safe/file-store` | root-bounded managed file/blob store with atomic writes, stream writes, copy-in, reads, and pruning |
-| `@openclaw/fs-safe/private-file-store` | small private JSON/text store with mode-0600 files and mode-0700 dirs |
-| `@openclaw/fs-safe/secret-file` | strict and result-shaped secret file read/write helpers |
+| `@openclaw/fs-safe/store` | `fileStore`, `jsonStore`, and private mode-0600 JSON/text stores |
+| `@openclaw/fs-safe/secret` | strict and result-shaped secret file read/write helpers |
 | `@openclaw/fs-safe/regular-file` | `readRegularFile`, `appendRegularFile`, `appendRegularFileSync`, regular-file stat helpers |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `tempFile`, `writeSiblingTempFile`, `resolveSecureTempRoot` |
@@ -118,12 +119,7 @@ The main entry point is curated around the common story: `root`, `pathScope`, `f
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection plus remediation formatting helpers |
 | `@openclaw/fs-safe/walk` | bounded directory walking with symlink policy, filters, and truncation accounting |
 | `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, `ArchiveLimitError`, preflight helpers |
-| `@openclaw/fs-safe/fs` | `pathExists`, `pathExistsSync` |
-| `@openclaw/fs-safe/timing` | `withTimeout` |
-| `@openclaw/fs-safe/home` | `resolveHomeRelativePath` |
-| `@openclaw/fs-safe/sidecar-lock` | `createSidecarLockManager`, `withSidecarLock` |
-| `@openclaw/fs-safe/install-path` | install target path segment and canonical-directory helpers |
-| `@openclaw/fs-safe/pinned-open` | sync pinned open primitive for advanced compatibility code |
+| `@openclaw/fs-safe/advanced` | composition helpers such as path scopes, pinned open, sidecar locks, install paths, filename sanitizing, local-root readers, `pathExists`, and `withTimeout` |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode` |
 | `@openclaw/fs-safe/types` | shared types: `DirEntry`, `PathStat`, … |
 | `@openclaw/fs-safe/test-hooks` | hooks the test suite uses to inject races; only active under `NODE_ENV=test` |
@@ -140,7 +136,7 @@ await readJson("./manifest.json");  // throws on missing or invalid
 ```
 
 ```ts
-import { pathExists } from "@openclaw/fs-safe/fs";
+import { pathExists } from "@openclaw/fs-safe/advanced";
 
 await pathExists("/safe/workspace/link"); // follows fs.stat() — broken symlinks return false
 ```
@@ -169,7 +165,7 @@ Use `jsonStore()` for small state files that need fallback reads, atomic writes,
 and optional sidecar locking around read-modify-write updates:
 
 ```ts
-import { jsonStore } from "@openclaw/fs-safe/json-store";
+import { jsonStore } from "@openclaw/fs-safe/store";
 
 const store = jsonStore({
   filePath: "/safe/workspace/state/settings.json",
@@ -185,7 +181,7 @@ need safe relative paths, size limits, atomic replacement, stream writes, and
 TTL cleanup behind one root:
 
 ```ts
-import { fileStore } from "@openclaw/fs-safe/file-store";
+import { fileStore } from "@openclaw/fs-safe/store";
 
 const media = fileStore({
   rootDir: "/safe/workspace/media",
@@ -290,7 +286,7 @@ Extraction stages into a private directory and merges through the same safe-open
 For code that already has a trusted absolute path and wants the same boundary semantics without going through `root()`:
 
 ```ts
-import { pathScope } from "@openclaw/fs-safe";
+import { pathScope } from "@openclaw/fs-safe/advanced";
 
 const uploads = pathScope("/safe/uploads", { label: "uploads directory" });
 const files = await uploads.files(["photo.jpg"]);

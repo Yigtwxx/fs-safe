@@ -11,7 +11,7 @@ import {
   DEFAULT_SECRET_FILE_MAX_BYTES,
   PRIVATE_SECRET_DIR_MODE,
   PRIVATE_SECRET_FILE_MODE,
-} from "@openclaw/fs-safe/secret-file";
+} from "@openclaw/fs-safe/secret";
 ```
 
 ## When to use these vs `writeJson`
@@ -46,7 +46,7 @@ type SecretFileReadResult =
 ```
 
 ```ts
-import { tryReadSecretFileSync } from "@openclaw/fs-safe/secret-file";
+import { tryReadSecretFileSync } from "@openclaw/fs-safe/secret";
 
 const r = tryReadSecretFileSync("/var/lib/app/auth.token");
 if (r.ok) {
@@ -88,7 +88,7 @@ The reader checks the file's mode bits before reading. If `nlink > 1` (the file 
 Async. Creates the parent directory at `dirMode` (default `0o700`) if missing, writes content to a sibling temp file at `mode` (default `0o600`), atomically renames over the destination, and re-asserts the file mode after rename.
 
 ```ts
-import { writePrivateSecretFileAtomic } from "@openclaw/fs-safe/secret-file";
+import { writePrivateSecretFileAtomic } from "@openclaw/fs-safe/secret";
 
 await writePrivateSecretFileAtomic({
   rootDir: "/var/lib/app",
@@ -153,7 +153,7 @@ await writePrivateSecretFileAtomic({
 ### Compose with `withTimeout`
 
 ```ts
-import { withTimeout } from "@openclaw/fs-safe/timing";
+import { withTimeout } from "@openclaw/fs-safe/advanced";
 
 await withTimeout(
   writePrivateSecretFileAtomic({ rootDir, filePath, content }),

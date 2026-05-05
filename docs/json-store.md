@@ -1,9 +1,9 @@
 # JSON store
 
-`@openclaw/fs-safe/json-store` is a small read-modify-write wrapper around a single JSON file. It bakes in atomic writes, optional fallback reads, and optional cross-process locking via [`createSidecarLockManager`](sidecar-lock.md).
+`jsonStore` is exported from `@openclaw/fs-safe/store`. It is a small read-modify-write wrapper around a single JSON file. It bakes in atomic writes, optional fallback reads, and optional cross-process locking via [`createSidecarLockManager`](sidecar-lock.md).
 
 ```ts
-import { jsonStore } from "@openclaw/fs-safe/json-store";
+import { jsonStore } from "@openclaw/fs-safe/store";
 
 const settings = jsonStore<{ theme: "light" | "dark"; volume: number }>({
   filePath: "/var/lib/app/settings.json",

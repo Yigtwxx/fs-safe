@@ -3,7 +3,7 @@
 `openPinnedFileSync()` is a low-level synchronous file open that re-pins identity after the open: it `open`s with `O_NOFOLLOW`, then `fstat`s and verifies the result matches what the path resolves to. It is the building block under `Root.open()` and a few of the other primitives — exposed for callers that want the same defense without going through `root()`.
 
 ```ts
-import { openPinnedFileSync } from "@openclaw/fs-safe/pinned-open";
+import { openPinnedFileSync } from "@openclaw/fs-safe/advanced";
 ```
 
 ## Why a separate primitive
@@ -55,7 +55,7 @@ The caller is responsible for closing the `fd` on success:
 
 ```ts
 import fs from "node:fs";
-import { openPinnedFileSync } from "@openclaw/fs-safe/pinned-open";
+import { openPinnedFileSync } from "@openclaw/fs-safe/advanced";
 
 const r = openPinnedFileSync({
   rootDir: "/srv/workspace",
@@ -85,7 +85,7 @@ By default the helper requires the result to be a regular file. Pass `allowedTyp
 The optional `fs` field accepts a partial `node:fs` interface. Use it in unit tests to simulate a TOCTOU swap or a denied open:
 
 ```ts
-import { openPinnedFileSync } from "@openclaw/fs-safe/pinned-open";
+import { openPinnedFileSync } from "@openclaw/fs-safe/advanced";
 
 const fakeFs = {
   ...fs,
@@ -110,7 +110,7 @@ import {
   matchRootFileOpenFailure,
   openRootFile,
   openRootFileSync,
-} from "@openclaw/fs-safe/root-file";
+} from "@openclaw/fs-safe/advanced";
 ```
 
 - `openRootFileSync(params)` — `openPinnedFileSync` plus a richer result that distinguishes `"validation"` failures by sub-reason.

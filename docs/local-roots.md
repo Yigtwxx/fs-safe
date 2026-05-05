@@ -11,7 +11,7 @@ The shape covers two needs:
 import {
   readLocalFileFromRoots,
   resolveLocalPathFromRootsSync,
-} from "@openclaw/fs-safe/local-roots";
+} from "@openclaw/fs-safe/advanced";
 ```
 
 ## Shape of a "roots input"
@@ -40,7 +40,7 @@ type LocalRootsPathResult =
 ```
 
 ```ts
-import { resolveLocalPathFromRootsSync } from "@openclaw/fs-safe/local-roots";
+import { resolveLocalPathFromRootsSync } from "@openclaw/fs-safe/advanced";
 
 const r = resolveLocalPathFromRootsSync("photo.jpg", {
   roots: ["/srv/uploads", "/srv/cache"],
@@ -109,7 +109,7 @@ import {
   isWindowsNetworkPath,
   safeFileURLToPath,
   trySafeFileURLToPath,
-} from "@openclaw/fs-safe/local-file-access";
+} from "@openclaw/fs-safe/advanced";
 ```
 
 - `safeFileURLToPath(fileUrl)` — `url.fileURLToPath` with explicit error throwing. Refuses URLs that decode to network paths.
@@ -134,7 +134,7 @@ const text = await readLocalFileFromRoots(name, {
 ### Validate a file:// URL at the API boundary
 
 ```ts
-import { safeFileURLToPath, isWindowsNetworkPath } from "@openclaw/fs-safe/local-file-access";
+import { safeFileURLToPath, isWindowsNetworkPath } from "@openclaw/fs-safe/advanced";
 
 let abs: string;
 try {

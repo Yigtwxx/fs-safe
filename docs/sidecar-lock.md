@@ -3,7 +3,7 @@
 `createSidecarLockManager(key)` provides a cross-process file lock with retry, stale-lock reclaim, and process-exit cleanup. The lock is implemented as a sidecar file (e.g. `state.json` ↔ `state.json.lock`) — only one acquirer can create the sidecar with `O_CREAT | O_EXCL` at a time.
 
 ```ts
-import { createSidecarLockManager } from "@openclaw/fs-safe/sidecar-lock";
+import { createSidecarLockManager } from "@openclaw/fs-safe/advanced";
 
 const locks = createSidecarLockManager("snapshot");
 
@@ -114,7 +114,7 @@ Acquires, runs `fn`, releases regardless of success/failure. Returns the result 
 When you don't need a long-lived manager, the standalone `withSidecarLock` creates one on the fly and runs your work under it:
 
 ```ts
-import { withSidecarLock } from "@openclaw/fs-safe/sidecar-lock";
+import { withSidecarLock } from "@openclaw/fs-safe/advanced";
 
 const result = await withSidecarLock(
   "/var/lib/app/state.json",

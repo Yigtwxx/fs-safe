@@ -30,101 +30,25 @@
       "types": "./dist/path.d.ts",
       "default": "./dist/path.js"
     },
-    "./path-policy": {
-      "types": "./dist/path-policy.d.ts",
-      "default": "./dist/path-policy.js"
-    },
-    "./path-scope": {
-      "types": "./dist/path-scope.d.ts",
-      "default": "./dist/path-scope.js"
-    },
-    "./root-path": {
-      "types": "./dist/root-path.d.ts",
-      "default": "./dist/root-path.js"
-    },
-    "./root-paths": {
-      "types": "./dist/root-paths.d.ts",
-      "default": "./dist/root-paths.js"
-    },
-    "./root-file": {
-      "types": "./dist/root-file.d.ts",
-      "default": "./dist/root-file.js"
+    "./advanced": {
+      "types": "./dist/advanced.d.ts",
+      "default": "./dist/advanced.js"
     },
     "./json": {
       "types": "./dist/json.d.ts",
       "default": "./dist/json.js"
     },
-    "./json-store": {
-      "types": "./dist/json-store.d.ts",
-      "default": "./dist/json-store.js"
+    "./store": {
+      "types": "./dist/store.d.ts",
+      "default": "./dist/store.js"
     },
-    "./file-store": {
-      "types": "./dist/file-store.d.ts",
-      "default": "./dist/file-store.js"
-    },
-    "./private-file-store": {
-      "types": "./dist/private-file-store.d.ts",
-      "default": "./dist/private-file-store.js"
-    },
-    "./secret-file": {
-      "types": "./dist/secret-file.d.ts",
-      "default": "./dist/secret-file.js"
-    },
-    "./fs": {
-      "types": "./dist/fs.d.ts",
-      "default": "./dist/fs.js"
+    "./secret": {
+      "types": "./dist/secret.d.ts",
+      "default": "./dist/secret.js"
     },
     "./regular-file": {
       "types": "./dist/regular-file.d.ts",
       "default": "./dist/regular-file.js"
-    },
-    "./local-file-access": {
-      "types": "./dist/local-file-access.d.ts",
-      "default": "./dist/local-file-access.js"
-    },
-    "./local-roots": {
-      "types": "./dist/local-roots.d.ts",
-      "default": "./dist/local-roots.js"
-    },
-    "./absolute-path": {
-      "types": "./dist/absolute-path.d.ts",
-      "default": "./dist/absolute-path.js"
-    },
-    "./file-identity": {
-      "types": "./dist/file-identity.d.ts",
-      "default": "./dist/file-identity.js"
-    },
-    "./pinned-open": {
-      "types": "./dist/pinned-open.d.ts",
-      "default": "./dist/pinned-open.js"
-    },
-    "./symlink-parents": {
-      "types": "./dist/symlink-parents.d.ts",
-      "default": "./dist/symlink-parents.js"
-    },
-    "./sidecar-lock": {
-      "types": "./dist/sidecar-lock.d.ts",
-      "default": "./dist/sidecar-lock.js"
-    },
-    "./install-path": {
-      "types": "./dist/install-path.d.ts",
-      "default": "./dist/install-path.js"
-    },
-    "./filename": {
-      "types": "./dist/filename.d.ts",
-      "default": "./dist/filename.js"
-    },
-    "./mode": {
-      "types": "./dist/mode.d.ts",
-      "default": "./dist/mode.js"
-    },
-    "./trash": {
-      "types": "./dist/trash.d.ts",
-      "default": "./dist/trash.js"
-    },
-    "./timing": {
-      "types": "./dist/timing.d.ts",
-      "default": "./dist/timing.js"
     },
     "./permissions": {
       "types": "./dist/permissions.d.ts",
@@ -137,10 +61,6 @@
     "./walk": {
       "types": "./dist/walk.d.ts",
       "default": "./dist/walk.js"
-    },
-    "./home": {
-      "types": "./dist/home-dir.d.ts",
-      "default": "./dist/home-dir.js"
     },
     "./temp": {
       "types": "./dist/temp.d.ts",

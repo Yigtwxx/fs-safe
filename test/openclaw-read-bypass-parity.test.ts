@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { resolveAbsolutePathForRead } from "../src/absolute-path.js";
 import { FsSafeError, root as openRoot } from "../src/index.js";
 import { openPinnedFileSync } from "../src/pinned-open.js";
-import { pathScope } from "../src/path-scope.js";
+import { pathScope } from "../src/root-paths.js";
 import { openRootFile, openRootFileSync } from "../src/root-file.js";
 
 type TempLayout = {

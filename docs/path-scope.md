@@ -3,7 +3,7 @@
 `pathScope()` gives you the same boundary semantics as `root()`, but operates on **absolute paths** the caller already trusts and returns plain `{ ok, path }` results instead of throwing. Use it when you want the boundary check up front before handing an absolute path to another library.
 
 ```ts
-import { pathScope } from "@openclaw/fs-safe";
+import { pathScope } from "@openclaw/fs-safe/advanced";
 
 const uploads = pathScope("/srv/uploads", { label: "uploads directory" });
 

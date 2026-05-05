@@ -1,6 +1,6 @@
 # File store
 
-`@openclaw/fs-safe/file-store` is a managed wrapper around `root()` for the common "store files under a directory at known modes, prune old ones, hand back absolute paths" pattern. Useful for caches, ingest staging, generated artifacts, anywhere the consumer wants object-style access plus stream and copy primitives.
+`fileStore` is exported from `@openclaw/fs-safe/store`. It is a managed wrapper around `root()` for the common "store files under a directory at known modes, prune old ones, hand back absolute paths" pattern. Useful for caches, ingest staging, generated artifacts, anywhere the consumer wants object-style access plus stream and copy primitives.
 
 ```ts
 import {
@@ -10,7 +10,7 @@ import {
   type FileStoreOptions,
   type FileStoreWriteOptions,
   type FileStorePruneOptions,
-} from "@openclaw/fs-safe/file-store";
+} from "@openclaw/fs-safe/store";
 ```
 
 ## When to reach for it
@@ -134,7 +134,7 @@ Symlinks are skipped. The walk is best-effort — failures on individual entries
 The same one-shot copy primitive used by `FileStore.copyIn`, exported separately for callers that don't want to instantiate a store:
 
 ```ts
-import { copyIntoRoot } from "@openclaw/fs-safe/file-store";
+import { copyIntoRoot } from "@openclaw/fs-safe/store";
 
 await copyIntoRoot({
   rootDir: "/var/cache/app",

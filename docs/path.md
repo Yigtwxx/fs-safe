@@ -164,7 +164,7 @@ import {
   assertNoPathAliasEscape,
   assertNoHardlinkedFinalPath,
   PATH_ALIAS_POLICIES,
-} from "@openclaw/fs-safe/path-policy";
+} from "@openclaw/fs-safe/advanced";
 ```
 
 - `assertNoPathAliasEscape({ rootRealPath, candidatePath, policy })` — async. Asserts the candidate's resolved real path is inside the root. Configurable via `PATH_ALIAS_POLICIES` (which currently ships only the default `"strict"` policy).

@@ -1,0 +1,26 @@
+export {
+  copyIntoRoot,
+  fileStore,
+  type FileStore,
+  type FileStoreOptions,
+  type FileStorePruneOptions,
+  type FileStoreWriteOptions,
+} from "./file-store.js";
+export {
+  jsonStore,
+  type JsonStore,
+  type JsonStoreLockOptions,
+  type JsonStoreOptions,
+} from "./json-store.js";
+export {
+  privateFileStore,
+  readPrivateJson,
+  readPrivateJsonSync,
+  readPrivateText,
+  readPrivateTextSync,
+  writePrivateJsonAtomic,
+  writePrivateJsonAtomicSync,
+  writePrivateTextAtomic,
+  writePrivateTextAtomicSync,
+  type PrivateFileStore,
+} from "./private-file-store.js";

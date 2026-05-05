@@ -8,7 +8,7 @@ import {
   resolveSafeInstallDir,
   safeDirName,
   safePathSegmentHashed,
-} from "@openclaw/fs-safe/install-path";
+} from "@openclaw/fs-safe/advanced";
 ```
 
 ## `resolveSafeInstallDir`
@@ -111,7 +111,7 @@ The hash is the first 10 hex chars of `sha256(originalInput)`. It guarantees tha
 ### Install a plugin
 
 ```ts
-import { resolveSafeInstallDir, assertCanonicalPathWithinBase, safePathSegmentHashed } from "@openclaw/fs-safe/install-path";
+import { resolveSafeInstallDir, assertCanonicalPathWithinBase, safePathSegmentHashed } from "@openclaw/fs-safe/advanced";
 import { extractArchive } from "@openclaw/fs-safe/archive";
 import fs from "node:fs/promises";
 

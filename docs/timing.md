@@ -3,7 +3,7 @@
 `withTimeout(promise, timeoutMs, labelOrOptions?)` is a small helper for putting a wall-clock ceiling on an async operation. It rejects with a synthetic timeout error after `timeoutMs` and clears its internal timer when the wrapped promise settles first.
 
 ```ts
-import { withTimeout } from "@openclaw/fs-safe/timing";
+import { withTimeout } from "@openclaw/fs-safe/advanced";
 ```
 
 ## Signature
@@ -27,7 +27,7 @@ If `timeoutMs` is `0`, negative, `Infinity`, or `NaN`, the helper is a no-op and
 ### Simple ceiling
 
 ```ts
-import { withTimeout } from "@openclaw/fs-safe/timing";
+import { withTimeout } from "@openclaw/fs-safe/advanced";
 
 const buf = await withTimeout(
   fs.readFile("/srv/big.bin"),
