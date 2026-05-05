@@ -9,7 +9,7 @@ import { extractArchive } from "../src/archive.js";
 import { loadZipArchiveWithPreflight, readZipCentralDirectoryEntryCount } from "../src/archive-zip-preflight.js";
 import { createAsyncLock } from "../src/async-lock.js";
 import { writeTextAtomic } from "../src/atomic.js";
-import { copyIntoRoot, fileStore } from "../src/file-store.js";
+import { copyIntoRoot, fileStore, fileStoreSync } from "../src/file-store.js";
 import {
   assertCanonicalPathWithinBase,
   resolveSafeInstallDir,
@@ -49,13 +49,6 @@ import {
   splitSafeRelativePath,
 } from "../src/path.js";
 import { assertNoHardlinkedFinalPath, assertNoPathAliasEscape } from "../src/path-policy.js";
-import {
-  privateStateStore,
-  readPrivateJsonSync,
-  readPrivateTextSync,
-  writePrivateJsonAtomicSync,
-  writePrivateTextAtomicSync,
-} from "../src/private-file-store.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath, resolveRootPathSync } from "../src/root-path.js";
 import {
   ensureDirectoryWithinRoot,
@@ -776,9 +769,9 @@ describe("file stores and private stores", () => {
     await expect(fs.stat(old)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("covers private store sync and async helpers", async () => {
+  it("covers private file store mode", async () => {
     const root = await tempRoot("fs-safe-private-store-");
-    const store = privateStateStore({ rootDir: root });
+    const store = fileStore({ rootDir: root, private: true });
 
     await store.writeText("nested/value.txt", "secret");
     await expect(store.readText("nested/value.txt")).resolves.toBe("secret");
@@ -787,28 +780,18 @@ describe("file stores and private stores", () => {
     await expect(store.exists("nested/value.json")).resolves.toBe(true);
     await expect(store.readBytes("nested/value.txt")).resolves.toEqual(Buffer.from("secret"));
     expect(store.path("nested/value.txt")).toBe(path.join(root, "nested", "value.txt"));
-    expect(() => store.path("../escape.txt")).toThrow("stay under");
-    await expect(store.readText("missing.txt")).resolves.toBeNull();
+    expect(() => store.path("../escape.txt")).toThrow("relative path");
+    await expect(store.readTextIfExists("missing.txt")).resolves.toBeNull();
+    await expect(store.readJsonIfExists("missing.json")).resolves.toBeNull();
     await store.remove("nested/value.json");
     await expect(store.exists("nested/value.json")).resolves.toBe(false);
 
-    const syncText = path.join(root, "sync", "value.txt");
-    writePrivateTextAtomicSync({ rootDir: root, filePath: syncText, content: "sync" });
-    expect(readPrivateTextSync({ rootDir: root, filePath: syncText })).toBe("sync");
-    const syncJson = path.join(root, "sync", "value.json");
-    writePrivateJsonAtomicSync({
-      rootDir: root,
-      filePath: syncJson,
-      value: { ok: true },
-      trailingNewline: true,
-    });
-    expect(readPrivateJsonSync({ rootDir: root, filePath: syncJson })).toEqual({ ok: true });
-    expect(readPrivateTextSync({ rootDir: root, filePath: path.join(root, "missing.txt") })).toBe(
-      null,
-    );
-    expect(() => readPrivateTextSync({ rootDir: root, filePath: path.dirname(root) })).toThrow(
-      "stay under",
-    );
+    const syncStore = fileStoreSync({ rootDir: root, private: true });
+    const syncText = syncStore.writeText("sync/value.txt", "sync");
+    expect(await fs.readFile(syncText, "utf8")).toBe("sync");
+    const syncJson = syncStore.writeJson("sync/value.json", { ok: true }, { trailingNewline: true });
+    expect(JSON.parse(await fs.readFile(syncJson, "utf8"))).toEqual({ ok: true });
+    expect(() => syncStore.writeText("../escape.txt", "nope")).toThrow("relative path");
   });
 });
 

@@ -27,11 +27,14 @@ const cache = fileStore({
   mode: 0o600,        // file mode for writes (default 0o600)
   dirMode: 0o700,     // mode for parent directories created on demand (default 0o700)
   maxBytes: 64 * 1024 * 1024, // optional: refuse writes/reads larger than this
-  private: true,      // optional intent marker for private 0600/0700 stores; defaults already match
+  private: true,      // use secret-file atomic writes for private state
 });
 ```
 
-The `private` flag is currently a self-documenting marker — `mode` and `dirMode` already default to `0o600` / `0o700`, so a plain `fileStore({ rootDir })` is private by default. Pass `private: true` when callers want the intent visible at the call site.
+Use `private: true` for credentials, auth profiles, tokens, and other private
+state. Private mode keeps the same `FileStore` shape but routes writes through
+the secret-file atomic path, refusing symlink parent components and re-asserting
+mode after rename.
 
 Returns a `FileStore`:
 
@@ -47,8 +50,10 @@ type FileStore = {
   read(rel, options?): Promise<ReadResult>;
   readBytes(rel, options?): Promise<Buffer>;
   readText(rel, options?): Promise<string>;
+  readTextIfExists(rel, options?): Promise<string | null>;
   readJson<T = unknown>(rel, options?): Promise<T>;
-  writeText(rel, data: string, options?): Promise<string>;
+  readJsonIfExists<T = unknown>(rel, options?): Promise<T | null>;
+  writeText(rel, data: string | Uint8Array, options?): Promise<string>;
   writeJson(rel, data: unknown, options?): Promise<string>;
   remove(rel): Promise<void>;
   exists(rel): Promise<boolean>;

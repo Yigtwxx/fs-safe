@@ -4,14 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  privateStateStore,
-  readPrivateJson,
-  readPrivateJsonSync,
-  readPrivateText,
-  readPrivateTextSync,
-  writePrivateJsonAtomicSync,
-} from "../src/private-file-store.js";
-import {
   appendRegularFile,
   appendRegularFileSync,
   readRegularFile,
@@ -34,7 +26,7 @@ import { replaceFileAtomic, replaceFileAtomicSync } from "../src/replace-file.js
 import { movePathWithCopyFallback } from "../src/move-path.js";
 import { writeSiblingTempFile } from "../src/sibling-temp.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
-import { fileStore } from "../src/file-store.js";
+import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { jsonStore } from "../src/json-store.js";
 import {
   createIcaclsResetCommand,
@@ -308,9 +300,9 @@ describe("directory walking", () => {
   });
 });
 
-describe("private state store", () => {
+describe("private file store mode", () => {
   it("writes JSON under the store root", async () => {
-    const store = privateStateStore({ rootDir: root });
+    const store = fileStore({ rootDir: root, private: true });
     await store.writeJson("nested/state.json", { ok: true }, { trailingNewline: true });
     expect(await fs.readFile(path.join(root, "nested", "state.json"), "utf8")).toBe(
       '{\n  "ok": true\n}\n',
@@ -319,41 +311,27 @@ describe("private state store", () => {
   });
 
   it("rejects paths outside the store root", async () => {
-    const store = privateStateStore({ rootDir: root });
-    await expect(store.writeText("../escape.txt", "nope")).rejects.toThrow(/stay under/);
-    await expect(store.readText("../escape.txt")).rejects.toThrow(/stay under/);
+    const store = fileStore({ rootDir: root, private: true });
+    await expect(store.writeText("../escape.txt", "nope")).rejects.toThrow(/relative path/);
+    await expect(store.readTextIfExists("../escape.txt")).rejects.toThrow(/outside workspace root/);
   });
 
   it("supports sync JSON writes", async () => {
-    const filePath = path.join(root, "sync.json");
-    writePrivateJsonAtomicSync({ rootDir: root, filePath, value: { ok: true } });
+    const filePath = fileStoreSync({ rootDir: root, private: true }).writeJson("sync.json", {
+      ok: true,
+    });
     expect(JSON.parse(await fs.readFile(filePath, "utf8"))).toEqual({ ok: true });
   });
 
-  it("reads private text and JSON by absolute path", async () => {
-    const textPath = path.join(root, "state.txt");
-    const jsonPath = path.join(root, "state.json");
-    await fs.writeFile(textPath, "hello", "utf8");
-    await fs.writeFile(jsonPath, '{"ok":true}', "utf8");
+  it("has explicit lenient read helpers", async () => {
+    const store = fileStore({ rootDir: root, private: true });
+    await store.writeText("state.txt", "hello");
+    await store.writeJson("state.json", { ok: true });
 
-    await expect(readPrivateText({ rootDir: root, filePath: textPath })).resolves.toBe("hello");
-    await expect(readPrivateJson({ rootDir: root, filePath: jsonPath })).resolves.toEqual({
-      ok: true,
-    });
-    await expect(readPrivateText({ rootDir: root, filePath: path.join(root, "missing") }))
-      .resolves
-      .toBeNull();
-  });
-
-  it("reads private text and JSON synchronously", async () => {
-    const textPath = path.join(root, "sync-state.txt");
-    const jsonPath = path.join(root, "sync-state.json");
-    await fs.writeFile(textPath, "hello", "utf8");
-    await fs.writeFile(jsonPath, '{"ok":true}', "utf8");
-
-    expect(readPrivateTextSync({ rootDir: root, filePath: textPath })).toBe("hello");
-    expect(readPrivateJsonSync({ rootDir: root, filePath: jsonPath })).toEqual({ ok: true });
-    expect(readPrivateTextSync({ rootDir: root, filePath: path.join(root, "missing") })).toBeNull();
+    await expect(store.readTextIfExists("state.txt")).resolves.toBe("hello");
+    await expect(store.readJsonIfExists("state.json")).resolves.toEqual({ ok: true });
+    await expect(store.readTextIfExists("missing.txt")).resolves.toBeNull();
+    await expect(store.readJsonIfExists("missing.json")).resolves.toBeNull();
   });
 });
 

@@ -15,7 +15,7 @@ export {
 export { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 export { sanitizeUntrustedFileName } from "./filename.js";
 export { pathExists, pathExistsSync } from "./fs.js";
-export { copyIntoRoot } from "./file-store.js";
+export { copyIntoRoot, fileStoreSync, type FileStoreSync } from "./file-store.js";
 export {
   resolveLocalPathFromRootsSync,
   readLocalFileFromRoots,
@@ -131,16 +131,3 @@ export {
   type WindowsAclEntry,
   type WindowsAclSummary,
 } from "./permissions.js";
-export {
-  privateStateStore,
-  readPrivateJson,
-  readPrivateJsonSync,
-  readPrivateText,
-  readPrivateTextSync,
-  writePrivateJsonAtomic,
-  writePrivateJsonAtomicSync,
-  writePrivateTextAtomic,
-  writePrivateTextAtomicSync,
-  type PrivateStateStore,
-  type PrivateStateStoreOptions,
-} from "./private-file-store.js";

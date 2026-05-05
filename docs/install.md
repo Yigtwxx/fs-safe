@@ -67,7 +67,7 @@ Use the main entry for the common surface, or the focused subpaths when you want
 | `@openclaw/fs-safe/config` | Process-global Python helper configuration. |
 | `@openclaw/fs-safe/path` | `isPathInside`, `safeRealpathSync`, `isWithinDir`, error helpers. |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants. |
-| `@openclaw/fs-safe/store` | `fileStore()`, `jsonStore<T>()`, and `privateStateStore()`. |
+| `@openclaw/fs-safe/store` | `fileStore()`, `fileStoreSync()`, and `jsonStore<T>()`. |
 | `@openclaw/fs-safe/secret` | Secret file read/write helpers. |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `writeTextAtomic`, `replaceDirectoryAtomic`, `movePathWithCopyFallback`. |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `withTempWorkspace`, sync variants, `resolveSecureTempRoot`. |

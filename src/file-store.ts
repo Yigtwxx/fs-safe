@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
+import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { FsSafeError } from "./errors.js";
+import { isPathInside, resolveSafeRelativePath } from "./path.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
+import { writeSecretFileAtomic } from "./secret-file.js";
 import { writeSiblingTempFile } from "./sibling-temp.js";
-import { resolveSafeRelativePath } from "./path.js";
 
 export type FileStoreOptions = {
   rootDir: string;
@@ -22,6 +25,8 @@ export type FileStoreWriteOptions = {
   tempPrefix?: string;
 };
 
+export type FileStoreReadOptions = RootReadOptions & { encoding?: BufferEncoding };
+
 export type FileStorePruneOptions = {
   ttlMs: number;
   recursive?: boolean;
@@ -35,7 +40,7 @@ export type FileStore = {
   root(): Promise<Root>;
   write(
     relativePath: string,
-    data: string | Buffer,
+    data: string | Uint8Array,
     options?: FileStoreWriteOptions,
   ): Promise<string>;
   writeStream(
@@ -53,17 +58,19 @@ export type FileStore = {
   readBytes(relativePath: string, options?: RootReadOptions): Promise<Buffer>;
   readText(
     relativePath: string,
-    options?: RootReadOptions & { encoding?: BufferEncoding },
+    options?: FileStoreReadOptions,
   ): Promise<string>;
-  readJson<T = unknown>(
+  readTextIfExists(relativePath: string, options?: FileStoreReadOptions): Promise<string | null>;
+  readJson<T = unknown>(relativePath: string, options?: FileStoreReadOptions): Promise<T>;
+  readJsonIfExists<T = unknown>(
     relativePath: string,
-    options?: RootReadOptions & { encoding?: BufferEncoding },
-  ): Promise<T>;
+    options?: FileStoreReadOptions,
+  ): Promise<T | null>;
   remove(relativePath: string): Promise<void>;
   exists(relativePath: string): Promise<boolean>;
   writeText(
     relativePath: string,
-    data: string,
+    data: string | Uint8Array,
     options?: FileStoreWriteOptions,
   ): Promise<string>;
   writeJson(
@@ -72,6 +79,20 @@ export type FileStore = {
     options?: FileStoreWriteOptions & { trailingNewline?: boolean },
   ): Promise<string>;
   pruneExpired(options: FileStorePruneOptions): Promise<void>;
+};
+
+export type FileStoreSync = {
+  readonly rootDir: string;
+  path(relativePath: string): string;
+  readTextIfExists(relativePath: string, options?: { maxBytes?: number }): string | null;
+  readJsonIfExists<T = unknown>(relativePath: string, options?: { maxBytes?: number }): T | null;
+  write(relativePath: string, data: string | Uint8Array, options?: FileStoreWriteOptions): string;
+  writeText(relativePath: string, data: string | Uint8Array, options?: FileStoreWriteOptions): string;
+  writeJson(
+    relativePath: string,
+    data: unknown,
+    options?: FileStoreWriteOptions & { trailingNewline?: boolean },
+  ): string;
 };
 
 function assertRelativePath(relativePath: string): string {
@@ -86,6 +107,12 @@ function resolveStorePath(rootDir: string, relativePath: string): string {
   return resolveSafeRelativePath(rootDir, assertRelativePath(relativePath));
 }
 
+function assertStoreFilePath(rootDir: string, filePath: string): void {
+  if (!isPathInside(rootDir, filePath)) {
+    throw new FsSafeError("outside-workspace", "file path escapes store root");
+  }
+}
+
 async function ensureParent(filePath: string, mode: number): Promise<void> {
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true, mode });
@@ -96,6 +123,13 @@ function assertMaxBytes(size: number, maxBytes?: number): void {
   if (maxBytes !== undefined && size > maxBytes) {
     throw new FsSafeError("too-large", `file exceeds maximum size of ${maxBytes} bytes`);
   }
+}
+
+function isNotFound(error: unknown): boolean {
+  return error instanceof FsSafeError
+    ? error.code === "not-found"
+    : (error as NodeJS.ErrnoException).code === "ENOENT" ||
+        (error as NodeJS.ErrnoException).code === "ENOTDIR";
 }
 
 export async function copyIntoRoot(params: {
@@ -131,6 +165,7 @@ export async function copyIntoRoot(params: {
 
 export function fileStore(options: FileStoreOptions): FileStore {
   const rootDir = path.resolve(options.rootDir);
+  const privateMode = options.private ?? false;
   const dirMode = options.dirMode ?? 0o700;
   const mode = options.mode ?? 0o600;
   const maxBytes = options.maxBytes;
@@ -141,12 +176,22 @@ export function fileStore(options: FileStoreOptions): FileStore {
 
   async function write(
     relativePath: string,
-    data: string | Buffer,
+    data: string | Uint8Array,
     writeOptions?: FileStoreWriteOptions,
   ): Promise<string> {
     const destination = resolveStorePath(rootDir, relativePath);
     const content = Buffer.isBuffer(data) ? data : Buffer.from(data);
     assertMaxBytes(content.byteLength, writeOptions?.maxBytes ?? maxBytes);
+    if (privateMode) {
+      await writeSecretFileAtomic({
+        rootDir,
+        filePath: destination,
+        content,
+        dirMode: writeOptions?.dirMode ?? dirMode,
+        mode: writeOptions?.mode ?? mode,
+      });
+      return destination;
+    }
     await ensureParent(destination, writeOptions?.dirMode ?? dirMode);
     const result = await writeSiblingTempFile({
       dir: path.dirname(destination),
@@ -171,6 +216,24 @@ export function fileStore(options: FileStoreOptions): FileStore {
     writeStream: async (relativePath, stream, writeOptions) => {
       const destination = resolveStorePath(rootDir, relativePath);
       const limit = writeOptions?.maxBytes ?? maxBytes;
+      if (privateMode) {
+        const chunks: Buffer[] = [];
+        let total = 0;
+        for await (const chunk of stream) {
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+          total += buffer.byteLength;
+          assertMaxBytes(total, limit);
+          chunks.push(buffer);
+        }
+        await writeSecretFileAtomic({
+          rootDir,
+          filePath: destination,
+          content: Buffer.concat(chunks),
+          dirMode: writeOptions?.dirMode ?? dirMode,
+          mode: writeOptions?.mode ?? mode,
+        });
+        return destination;
+      }
       await ensureParent(destination, writeOptions?.dirMode ?? dirMode);
       let total = 0;
       const result = await writeSiblingTempFile({
@@ -202,15 +265,24 @@ export function fileStore(options: FileStoreOptions): FileStore {
       return result.filePath;
     },
     copyIn: async (relativePath, sourcePath, writeOptions) =>
-      await copyIntoRoot({
-        rootDir,
-        relativePath,
-        sourcePath,
-        dirMode: writeOptions?.dirMode ?? dirMode,
-        maxBytes: writeOptions?.maxBytes ?? maxBytes,
-        mode: writeOptions?.mode ?? mode,
-        tempPrefix: writeOptions?.tempPrefix,
-      }),
+      privateMode
+        ? await (async () => {
+            const sourceStat = await fs.lstat(sourcePath);
+            if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
+              throw new FsSafeError("not-file", "source path is not a file");
+            }
+            assertMaxBytes(sourceStat.size, writeOptions?.maxBytes ?? maxBytes);
+            return await write(relativePath, await fs.readFile(sourcePath), writeOptions);
+          })()
+        : await copyIntoRoot({
+            rootDir,
+            relativePath,
+            sourcePath,
+            dirMode: writeOptions?.dirMode ?? dirMode,
+            maxBytes: writeOptions?.maxBytes ?? maxBytes,
+            mode: writeOptions?.mode ?? mode,
+            tempPrefix: writeOptions?.tempPrefix,
+          }),
     open: async (relativePath, readOptions) =>
       await (await openRoot()).open(assertRelativePath(relativePath), readOptions),
     read: async (relativePath, readOptions) =>
@@ -222,15 +294,35 @@ export function fileStore(options: FileStoreOptions): FileStore {
       return (await (await openRoot()).read(assertRelativePath(relativePath), options)).buffer
         .toString(encoding);
     },
-    readJson: async <T = unknown>(
-      relativePath: string,
-      readOptions?: RootReadOptions & { encoding?: BufferEncoding },
-    ) => {
+    readTextIfExists: async (relativePath, readOptions) => {
+      try {
+        return await (await openRoot()).readText(assertRelativePath(relativePath), readOptions);
+      } catch (error) {
+        if (isNotFound(error)) {
+          return null;
+        }
+        throw error;
+      }
+    },
+    readJson: async <T = unknown>(relativePath: string, readOptions?: FileStoreReadOptions) => {
       const { encoding = "utf8", ...options } = readOptions ?? {};
       return JSON.parse(
         (await (await openRoot()).read(assertRelativePath(relativePath), options)).buffer
           .toString(encoding),
       ) as T;
+    },
+    readJsonIfExists: async <T = unknown>(
+      relativePath: string,
+      readOptions?: FileStoreReadOptions,
+    ) => {
+      try {
+        return await (await openRoot()).readJson<T>(assertRelativePath(relativePath), readOptions);
+      } catch (error) {
+        if (isNotFound(error)) {
+          return null;
+        }
+        throw error;
+      }
     },
     remove: async (relativePath) => {
       await (await openRoot()).remove(assertRelativePath(relativePath));
@@ -278,6 +370,179 @@ export function fileStore(options: FileStoreOptions): FileStore {
       }
       await fs.mkdir(rootDir, { recursive: true, mode: dirMode });
       await pruneDir(rootDir, 0);
+    },
+  };
+}
+
+function ensureParentSync(filePath: string, mode: number): void {
+  const dir = path.dirname(filePath);
+  syncFs.mkdirSync(dir, { recursive: true, mode });
+  try {
+    syncFs.chmodSync(dir, mode);
+  } catch {
+    // Best-effort on platforms that do not enforce POSIX modes.
+  }
+}
+
+function ensurePrivateDirectorySync(rootDir: string, targetDir: string, mode: number): void {
+  const root = path.resolve(rootDir);
+  const target = path.resolve(targetDir);
+  assertStoreFilePath(root, target);
+  let current = root;
+  syncFs.mkdirSync(current, { recursive: true, mode });
+  const rootStat = syncFs.lstatSync(current);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new FsSafeError("not-file", `private store root must be a directory: ${current}`);
+  }
+  try {
+    syncFs.chmodSync(current, mode);
+  } catch {
+    // Best-effort on platforms that do not enforce POSIX modes.
+  }
+  for (const segment of path.relative(root, target).split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    try {
+      const stat = syncFs.lstatSync(current);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw new FsSafeError(
+          "not-file",
+          `private store directory component must be a directory: ${current}`,
+        );
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+      syncFs.mkdirSync(current, { mode });
+    }
+    const rootReal = syncFs.realpathSync(root);
+    const currentReal = syncFs.realpathSync(current);
+    if (!isPathInside(rootReal, currentReal)) {
+      throw new FsSafeError("outside-workspace", "private store directory escapes root");
+    }
+    try {
+      syncFs.chmodSync(current, mode);
+    } catch {
+      // Best-effort on platforms that do not enforce POSIX modes.
+    }
+  }
+}
+
+function writeFileSyncAtomic(params: {
+  rootDir: string;
+  filePath: string;
+  content: string | Uint8Array;
+  privateMode: boolean;
+  dirMode: number;
+  mode: number;
+}): string {
+  const filePath = path.resolve(params.filePath);
+  assertStoreFilePath(params.rootDir, filePath);
+  if (params.privateMode) {
+    ensurePrivateDirectorySync(params.rootDir, path.dirname(filePath), params.dirMode);
+    try {
+      const stat = syncFs.lstatSync(filePath);
+      if (stat.isSymbolicLink() || !stat.isFile()) {
+        throw new FsSafeError("not-file", `private store target must be a regular file: ${filePath}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+  } else {
+    ensureParentSync(filePath, params.dirMode);
+  }
+  const tempPath = path.join(path.dirname(filePath), `.fs-safe-${process.pid}-${randomUUID()}.tmp`);
+  let tempExists = false;
+  try {
+    syncFs.writeFileSync(tempPath, params.content, { flag: "wx", mode: params.mode });
+    tempExists = true;
+    try {
+      syncFs.chmodSync(tempPath, params.mode);
+    } catch {
+      // Best-effort on platforms that do not enforce POSIX modes.
+    }
+    syncFs.renameSync(tempPath, filePath);
+    tempExists = false;
+    try {
+      syncFs.chmodSync(filePath, params.mode);
+    } catch {
+      // Best-effort on platforms that do not enforce POSIX modes.
+    }
+    return filePath;
+  } finally {
+    if (tempExists) {
+      try {
+        syncFs.unlinkSync(tempPath);
+      } catch {
+        // Best-effort cleanup after write failure.
+      }
+    }
+  }
+}
+
+export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
+  const rootDir = path.resolve(options.rootDir);
+  const privateMode = options.private ?? false;
+  const dirMode = options.dirMode ?? 0o700;
+  const mode = options.mode ?? 0o600;
+  const maxBytes = options.maxBytes;
+
+  function write(
+    relativePath: string,
+    data: string | Uint8Array,
+    writeOptions?: FileStoreWriteOptions,
+  ): string {
+    const destination = resolveStorePath(rootDir, relativePath);
+    const content = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    assertMaxBytes(content.byteLength, writeOptions?.maxBytes ?? maxBytes);
+    return writeFileSyncAtomic({
+      rootDir,
+      filePath: destination,
+      content,
+      privateMode,
+      dirMode: writeOptions?.dirMode ?? dirMode,
+      mode: writeOptions?.mode ?? mode,
+    });
+  }
+
+  return {
+    rootDir,
+    path: (relativePath) => resolveStorePath(rootDir, relativePath),
+    readTextIfExists: (relativePath, readOptions) => {
+      const targetPath = resolveStorePath(rootDir, relativePath);
+      try {
+        const stat = syncFs.lstatSync(targetPath);
+        if (stat.isSymbolicLink() || !stat.isFile()) {
+          throw new FsSafeError("not-file", "store target is not a file");
+        }
+        assertMaxBytes(stat.size, readOptions?.maxBytes ?? maxBytes);
+        if (privateMode && stat.nlink > 1) {
+          throw new FsSafeError("hardlink", "private store target must not be hardlinked");
+        }
+        return syncFs.readFileSync(targetPath, "utf8");
+      } catch (error) {
+        if (isNotFound(error)) {
+          return null;
+        }
+        throw error;
+      }
+    },
+    readJsonIfExists: <T = unknown>(relativePath: string, readOptions?: { maxBytes?: number }) => {
+      const raw = fileStoreSync({ rootDir, private: privateMode, dirMode, mode, maxBytes })
+        .readTextIfExists(relativePath, readOptions);
+      return raw === null ? null : (JSON.parse(raw) as T);
+    },
+    write,
+    writeText: (relativePath, data, writeOptions) => write(relativePath, data, writeOptions),
+    writeJson: (relativePath, data, writeOptions) => {
+      const json = JSON.stringify(data, null, 2);
+      return write(
+        relativePath,
+        writeOptions?.trailingNewline === false ? json : `${json}\n`,
+        writeOptions,
+      );
     },
   };
 }

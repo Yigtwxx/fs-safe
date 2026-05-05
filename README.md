@@ -153,7 +153,7 @@ that OpenClaw needs to compose higher-level APIs are grouped under
 | `@openclaw/fs-safe/config` | process-global Python helper configuration |
 | `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants |
-| `@openclaw/fs-safe/store` | `fileStore`, `jsonStore`, and `privateStateStore` |
+| `@openclaw/fs-safe/store` | `fileStore`, `fileStoreSync`, and `jsonStore` |
 | `@openclaw/fs-safe/secret` | strict and try-style secret file read/write helpers |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `withTempWorkspace`, `resolveSecureTempRoot` |
@@ -216,15 +216,11 @@ the common merge-into-defaults case. Standalone helpers use options bags
 because they do not carry a bound root and often need multiple authority, path,
 and policy knobs.
 
-Use `privateStateStore()` when the state is a directory of private text or JSON
-files rather than one known JSON file: credentials, auth profiles, tokens, and
-per-agent private state. It always writes files at `0o600` under directories at
-`0o700`, returns `null` for missing text/JSON reads, and otherwise shares the
-same managed-store shape as `fileStore`.
-
 Use `fileStore()` for cache/blob/media-style directories where callers
 need safe relative paths, size limits, atomic replacement, stream writes, and
-TTL cleanup behind one root:
+TTL cleanup behind one root. Pass `private: true` for credentials, auth
+profiles, tokens, and per-agent private state; private mode keeps the same
+store shape while routing writes through the secret-file atomic path.
 
 ```ts
 import { fileStore } from "@openclaw/fs-safe/store";
@@ -237,6 +233,7 @@ const media = fileStore({
 
 await media.write("inbound/photo.jpg", bytes);
 await media.writeJson("state/photo.json", { id: "photo" });
+const cached = await media.readJsonIfExists("state/photo.json");
 const opened = await media.open("inbound/photo.jpg");
 await media.pruneExpired({ ttlMs: 10 * 60 * 1000, recursive: true });
 ```
