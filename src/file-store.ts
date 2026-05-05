@@ -5,6 +5,7 @@ import path from "node:path";
 import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { FsSafeError } from "./errors.js";
+import { createJsonStore, type JsonFileStoreOptions, type JsonStore } from "./json-document-store.js";
 import { isPathInside, resolveSafeRelativePath } from "./path.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
@@ -78,6 +79,7 @@ export type FileStore = {
     data: unknown,
     options?: FileStoreWriteOptions & { trailingNewline?: boolean },
   ): Promise<string>;
+  json<T = unknown>(relativePath: string, options?: JsonFileStoreOptions): JsonStore<T>;
   pruneExpired(options: FileStorePruneOptions): Promise<void>;
 };
 
@@ -336,6 +338,34 @@ export function fileStore(options: FileStoreOptions): FileStore {
         relativePath,
         writeOptions?.trailingNewline === false ? json : `${json}\n`,
         writeOptions,
+      );
+    },
+    json: <T = unknown>(relativePath: string, jsonOptions?: JsonFileStoreOptions) => {
+      const filePath = resolveStorePath(rootDir, relativePath);
+      return createJsonStore<T>(
+        {
+          filePath,
+          readIfExists: async () => {
+            try {
+              return await (await openRoot()).readJson<T>(assertRelativePath(relativePath));
+            } catch (error) {
+              if (isNotFound(error)) {
+                return null;
+              }
+              throw error;
+            }
+          },
+          readRequired: async () =>
+            await (await openRoot()).readJson<T>(assertRelativePath(relativePath)),
+          write: async (value, options) => {
+            const json = JSON.stringify(value, null, 2);
+            await write(
+              relativePath,
+              options?.trailingNewline === false ? json : `${json}\n`,
+            );
+          },
+        },
+        jsonOptions,
       );
     },
     pruneExpired: async (pruneOptions) => {

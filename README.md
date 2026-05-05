@@ -197,19 +197,21 @@ await replaceFileAtomic({
 
 ## Stores
 
-Use `jsonStore()` for small state files that need explicit fallback reads, atomic writes,
-and optional sidecar locking around read-modify-write updates:
+Use `fileStore().json()` for small state files that need explicit fallback
+reads, atomic writes, and optional sidecar locking around read-modify-write
+updates:
 
 ```ts
-import { jsonStore } from "@openclaw/fs-safe/store";
+import { fileStore } from "@openclaw/fs-safe/store";
 
-const store = jsonStore({
-  filePath: "/safe/workspace/state/settings.json",
-  lock: true,
-});
+const files = fileStore({ rootDir: "/safe/workspace/state", private: true });
+const store = files.json("settings.json", { lock: true });
 
 await store.updateOr({ enabled: false }, (current) => ({ ...current, enabled: true }));
 ```
+
+`jsonStore({ filePath })` is the absolute-path convenience wrapper for the same
+primitive.
 
 Use `update()` when missing state is part of your model; use `updateOr()` for
 the common merge-into-defaults case. Standalone helpers use options bags

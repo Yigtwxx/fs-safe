@@ -1,6 +1,10 @@
 # JSON store
 
-`jsonStore` is exported from `@openclaw/fs-safe/store`. It is a small read-modify-write wrapper around a single JSON file. It bakes in atomic writes, explicit fallback reads, and optional cross-process locking via [`createSidecarLockManager`](sidecar-lock.md).
+`jsonStore` is exported from `@openclaw/fs-safe/store`. It is the absolute-path
+convenience wrapper for `fileStore(...).json(...)`: a small read-modify-write
+handle around a single JSON file. It bakes in atomic writes, explicit fallback
+reads, and optional cross-process locking via
+[`createSidecarLockManager`](sidecar-lock.md).
 
 ```ts
 import { jsonStore } from "@openclaw/fs-safe/store";
@@ -14,13 +18,25 @@ await settings.write({ ...current, volume: 1 });
 await settings.updateOr({ theme: "dark", volume: 0.7 }, (prev) => ({ ...prev, theme: "light" }));
 ```
 
+If you already have a store/root context, prefer binding the JSON file from that
+store:
+
+```ts
+import { fileStore } from "@openclaw/fs-safe/store";
+
+const files = fileStore({ rootDir: "/var/lib/app", private: true });
+const settings = files.json<Settings>("settings.json", { lock: true });
+```
+
 ## When to reach for it
 
 - You have a single JSON state file and want `read / readOr / readRequired / write / update` semantics.
 - You want every write atomic at file mode `0o600` and parents at `0o700` by default.
 - You want optional cross-process locking with one boolean.
 
-For ad-hoc read/write of multiple JSON files, use the standalone helpers in [`json`](json.md). For object-style storage of many files at known modes, use [`fileStore`](file-store.md).
+For ad-hoc read/write of multiple JSON files, use the standalone helpers in
+[`json`](json.md). For object-style storage of many files at known modes, use
+[`fileStore`](file-store.md) and bind JSON files with `store.json(rel)`.
 
 ## Factory: `jsonStore<T>(options)`
 
@@ -50,6 +66,9 @@ type JsonStore<T> = {
   updateOr(fallback: T, run: (current: T) => T | Promise<T>): Promise<T>;
 };
 ```
+
+`jsonStore({ filePath })` resolves `rootDir = dirname(filePath)` and calls
+`fileStore({ rootDir, private: true }).json(basename(filePath), options)`.
 
 The store does **not** validate the parsed value against `T` at runtime — the cast is unchecked. Wrap with a schema (zod/valibot) if the file might be hand-edited or written by another process you don't control.
 

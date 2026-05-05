@@ -145,14 +145,15 @@ describe("file store", () => {
 describe("json store", () => {
   it("reads fallback, writes atomically, and updates under a lock", async () => {
     const filePath = path.join(root, "state", "store.json");
-    const store = jsonStore({
-      filePath,
+    const store = fileStore({ rootDir: path.dirname(filePath), private: true }).json<{
+      count: number;
+    }>(path.basename(filePath), {
       lock: true,
     });
 
     await expect(store.read()).resolves.toBeUndefined();
     await expect(store.readOr({ count: 10 })).resolves.toEqual({ count: 10 });
-    await expect(store.readRequired()).rejects.toMatchObject({ name: "JsonFileReadError" });
+    await expect(store.readRequired()).rejects.toMatchObject({ code: "not-found" });
     await store.updateOr({ count: 0 }, (current) => ({ count: current.count + 1 }));
     await expect(store.read()).resolves.toEqual({ count: 1 });
     await expect(store.readRequired()).resolves.toEqual({ count: 1 });

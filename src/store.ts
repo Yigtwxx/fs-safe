@@ -11,6 +11,7 @@ export {
 export {
   jsonStore,
   type JsonStore,
+  type JsonFileStoreOptions,
   type JsonStoreLockOptions,
   type JsonStoreOptions,
 } from "./json-store.js";

@@ -55,6 +55,7 @@ type FileStore = {
   readJsonIfExists<T = unknown>(rel, options?): Promise<T | null>;
   writeText(rel, data: string | Uint8Array, options?): Promise<string>;
   writeJson(rel, data: unknown, options?): Promise<string>;
+  json<T = unknown>(rel, options?): JsonStore<T>;
   remove(rel): Promise<void>;
   exists(rel): Promise<boolean>;
   pruneExpired(options: FileStorePruneOptions): Promise<void>;
@@ -80,6 +81,20 @@ Buffer or string. Returns the final absolute path. Throws `too-large` if `data.b
 ### `writeText(rel, data, options?)` / `writeJson(rel, data, options?)`
 
 Convenience wrappers over `write`. `writeJson` pretty-prints with a trailing newline by default and accepts `{ trailingNewline: false }` when the exact bytes matter.
+
+### `json<T>(rel, options?)`
+
+Returns a typed single-file JSON state helper for a file under this store. It
+inherits the store's root, mode, max-size, and private-write policy, then adds
+`readOr`, `readRequired`, `update`, `updateOr`, and optional sidecar locking:
+
+```ts
+const state = cache.json<State>("state/settings.json", { lock: true });
+await state.updateOr(defaultState, (current) => ({ ...current, enabled: true }));
+```
+
+Use this when one JSON file owns one piece of state. `jsonStore({ filePath })`
+is the absolute-path convenience wrapper for the same primitive.
 
 ### `writeStream(rel, stream, options?)`
 

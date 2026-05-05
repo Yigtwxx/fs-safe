@@ -567,8 +567,7 @@ describe("JSON and regular-file helpers", () => {
   it("covers json store fallback, unlocked writes, locked writes, and updates", async () => {
     const root = await tempRoot("fs-safe-json-store-extra-");
     const fallback = { count: 1 };
-    const store = jsonStore({
-      filePath: path.join(root, "state.json"),
+    const store = fileStore({ rootDir: root, private: true }).json<{ count: number }>("state.json", {
       lock: {
         managerKey: `coverage-json-store-${Date.now()}-${Math.random()}`,
         staleMs: 60_000,
