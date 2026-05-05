@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="fs-safe — Safe filesystem primitives for Node.js">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a0e16"/>
+      <stop offset="100%" stop-color="#101725"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.18" cy="0.55" r="0.6">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.22"/>
+      <stop offset="60%" stop-color="#10b981" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="shieldFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#0d9b6f"/>
+    </linearGradient>
+    <pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse">
+      <path d="M 80 0 L 0 0 0 80" fill="none" stroke="#1a2235" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <!-- background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#grid)" opacity="0.6"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+
+  <!-- top accent bar -->
+  <rect x="0" y="0" width="1200" height="4" fill="#10b981"/>
+
+  <!-- shield mark, large on the left -->
+  <g transform="translate(150, 205)">
+    <path d="M110 0 L220 38 L220 134 C220 207 173 260 110 282 C47 260 0 207 0 134 L0 38 Z"
+          fill="url(#shieldFill)"/>
+    <path d="M50 134 L97 178 L182 95"
+          fill="none" stroke="#0a0e16" stroke-width="20"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- text block -->
+  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" fill="#f1f5f9">
+    <!-- eyebrow -->
+    <text x="540" y="245" font-size="22" font-weight="600" letter-spacing="3"
+          fill="#34d399" opacity="0.95">
+      NODE.JS · TYPESCRIPT · MIT
+    </text>
+
+    <!-- product name -->
+    <text x="540" y="335" font-size="100" font-weight="700" letter-spacing="-2">
+      fs-safe
+    </text>
+
+    <!-- tagline -->
+    <text x="540" y="395" font-size="32" font-weight="500" fill="#cbd2dc">
+      Safe filesystem primitives for Node.js
+    </text>
+
+    <!-- description -->
+    <g font-size="21" fill="#9aa3b2" font-weight="400">
+      <text x="540" y="450">Race-resistant. Root-bounded.</text>
+      <text x="540" y="480">Defends symlink swaps, hardlink aliases,</text>
+      <text x="540" y="510">traversal, and TOCTOU rename races.</text>
+    </g>
+
+    <!-- url footer -->
+    <text x="540" y="575" font-family="JetBrains Mono, SF Mono, ui-monospace, monospace"
+          font-size="22" font-weight="500" fill="#5eead4">
+      fs-safe.io
+    </text>
+  </g>
+
+  <!-- bottom accent dots -->
+  <g transform="translate(1040, 575)" opacity="0.85">
+    <circle cx="0" cy="0" r="6" fill="#10b981"/>
+    <circle cx="22" cy="0" r="6" fill="#10b981" opacity="0.55"/>
+    <circle cx="44" cy="0" r="6" fill="#10b981" opacity="0.25"/>
+  </g>
+</svg>

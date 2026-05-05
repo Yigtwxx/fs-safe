@@ -81,10 +81,17 @@ for (const page of pages) {
 }
 
 fs.writeFileSync(path.join(outDir, "favicon.svg"), faviconSvg(), "utf8");
+copyStaticAsset("social-card.png");
+copyStaticAsset("social-card.svg");
 fs.writeFileSync(path.join(outDir, ".nojekyll"), "", "utf8");
 if (cname) fs.writeFileSync(path.join(outDir, "CNAME"), cname, "utf8");
 validateLinks(outDir);
 console.log(`built docs site: ${path.relative(root, outDir)}`);
+
+function copyStaticAsset(name) {
+  const source = path.join(docsDir, name);
+  if (fs.existsSync(source)) fs.copyFileSync(source, path.join(outDir, name));
+}
 
 function readCname() {
   for (const candidate of [path.join(docsDir, "CNAME"), path.join(root, "CNAME")]) {
@@ -413,6 +420,9 @@ function layout({ page, html, toc, prev, next, sectionName }) {
   const titleSuffix = home ? `${productName} — ${productTagline}` : `${page.title} — ${productName}`;
   const description = page.frontmatter.description || (home ? productDescription : `${page.title} — ${productName} documentation.`);
   const canonicalUrl = pageCanonicalUrl(page);
+  const socialImage = siteBase
+    ? `${siteBase}/social-card.png`
+    : `${rootPrefix}social-card.png`;
   const socialMeta = [
     ["link", "rel", "canonical", "href", canonicalUrl],
     ["meta", "property", "og:type", "content", "website"],
@@ -420,9 +430,15 @@ function layout({ page, html, toc, prev, next, sectionName }) {
     ["meta", "property", "og:title", "content", titleSuffix],
     ["meta", "property", "og:description", "content", description],
     ["meta", "property", "og:url", "content", canonicalUrl],
-    ["meta", "name", "twitter:card", "content", "summary"],
+    ["meta", "property", "og:image", "content", socialImage],
+    ["meta", "property", "og:image:width", "content", "1200"],
+    ["meta", "property", "og:image:height", "content", "630"],
+    ["meta", "property", "og:image:alt", "content", `${productName} — ${productTagline}`],
+    ["meta", "name", "twitter:card", "content", "summary_large_image"],
     ["meta", "name", "twitter:title", "content", titleSuffix],
     ["meta", "name", "twitter:description", "content", description],
+    ["meta", "name", "twitter:image", "content", socialImage],
+    ["meta", "name", "twitter:image:alt", "content", `${productName} — ${productTagline}`],
   ].map(tagHtml).join("\n  ");
   return `<!doctype html>
 <html lang="en">
