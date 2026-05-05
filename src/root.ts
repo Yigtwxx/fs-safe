@@ -1613,16 +1613,16 @@ async function copyFileFallback(
     }
     throw err;
   } finally {
-    if (tempPath) {
-      await fs.rm(tempPath, { force: true }).catch(() => {});
-    }
-    unregisterTempPath?.();
     if (!sourceClosedByStream) {
       await source.handle.close().catch(() => {});
     }
     if (tempHandle && !tempClosedByStream) {
       await tempHandle.close().catch(() => {});
     }
+    if (tempPath) {
+      await fs.rm(tempPath, { force: true }).catch(() => {});
+    }
+    unregisterTempPath?.();
     if (target && !targetClosedByUs) {
       await target.handle.close().catch(() => {});
     }
