@@ -8,11 +8,13 @@ description: "Capability-style filesystem roots for Node.js apps that handle unt
 
 Trusted Node.js code that has to touch caller-controlled paths inside a directory it owns gets one boundary it can rely on. `root()` returns a capability-style handle that resolves every relative path against a real directory, refuses anything that escapes it, pins the file you opened, and verifies the write landed where you intended.
 
+Think Go's `os.Root` / `OpenInRoot` or Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std), but for Node. `root()` is the product; everything else in this doc set — JSON stores, atomic writes, secret files, archive extraction, temp workspaces — is supporting cast for the same boundary.
+
 ## Why
 
 `path.resolve(root, input).startsWith(root)` validates a string. It does not pin the file you opened, defend against a symlink retarget between check and use, reject hardlinked aliases, or verify that a write landed where you intended after a rename. `fs-safe` does those things, packaged so every call site picks up the same defense without re-implementing it.
 
-This is a library-level guardrail, not OS-level isolation. It does not replace containers, seccomp, or filesystem permissions — it is for code that already runs with the privileges of its workspace and wants to stop trivial path tricks from escaping it.
+This is a **library-level guardrail**, not OS-level isolation. It does not replace containers, seccomp, AppArmor, or filesystem permissions. It is for code that already runs with the privileges of its workspace and wants to stop trivial path tricks from escaping it. Typical fits: agent runtimes, plugin systems, upload extraction, local workspaces, CLIs — anywhere trusted code touches untrusted relative path names.
 
 ## Hello world
 

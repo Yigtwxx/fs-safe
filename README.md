@@ -2,13 +2,33 @@
 
 Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.
 
-Use this when trusted application code has to touch caller-controlled paths inside a directory it owns. The package gives you one `root()` handle that survives symlink swaps, `..` traversal, hardlink aliases, and TOCTOU rename races between check and use.
+Think Go's `os.Root` / `OpenInRoot` or Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std), but for Node. Hand `root()` a trusted directory and you get back a handle whose every method resolves relative paths against it and refuses to escape — through `..`, symlink swaps, hardlink aliases, or TOCTOU rename races between check and use.
 
-## Why
+```ts
+import { root } from "@openclaw/fs-safe";
 
-`path.resolve(root, input).startsWith(root)` validates a string. It does not pin the file you opened, defend against a symlink retarget between check and use, reject hardlinked aliases, or verify that a write landed where you intended after a rename. `fs-safe` does those things, packaged so every call site picks up the same defense without re-implementing it.
+const fs = await root("/safe/workspace");
+await fs.write("notes/today.txt", "hello\n");   // ok
+await fs.write("../escape.txt", "x");            // throws FsSafeError("outside-workspace")
+```
 
-This is a library-level guardrail, not OS-level isolation. It does not replace containers, seccomp, or filesystem permissions — it is for code that already runs with the privileges of its workspace and wants to stop trivial path tricks from escaping it.
+That's the whole pitch. `root()` is the product; the rest of the package — JSON stores, atomic writes, secret files, archive extraction, temp workspaces — is supporting cast for the same boundary.
+
+## Why this exists
+
+Most Node code that has to touch caller-controlled paths reaches for:
+
+```ts
+path.resolve(root, input).startsWith(root)
+```
+
+That validates a *string*. It does not pin the file you opened, defend against a symlink retarget between check and use, reject hardlinked aliases of out-of-tree inodes, or verify that a write landed where you intended after a rename. The pieces to do those things exist scattered across the ecosystem — [`write-file-atomic`](https://www.npmjs.com/package/write-file-atomic) for atomic writes, `tar` / `jszip` for archive extraction, various `safefs`-style convenience wrappers — but none of them give you one root handle with traversal-resistant semantics across every operation.
+
+The same idea has landed in other languages. Go [added `os.Root` and `OpenInRoot`](https://go.dev/blog/osroot); Rust has had [`cap-std`](https://github.com/bytecodealliance/cap-std) for years. Node's `fs` is path-string-oriented and exposes flags like `O_NOFOLLOW` but not an ergonomic "operate inside this root" API. `fs-safe` fills that gap.
+
+## Not a sandbox
+
+This is a **library-level guardrail**, not OS-level isolation. It does not replace containers, seccomp, AppArmor, or filesystem permissions. It is for code that already runs with the privileges of its workspace and wants to stop trivial path tricks from escaping it. If your threat model is a hostile process, you need OS isolation; if your threat model is "an agent, plugin, upload handler, or CLI will eventually be tricked into writing somewhere it shouldn't," `fs-safe` catches that.
 
 ## Install
 
