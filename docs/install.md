@@ -66,16 +66,19 @@ Use the main entry for the common surface, or the focused subpaths when you want
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types. |
 | `@openclaw/fs-safe/path` | `isPathInside`, `safeRealpathSync`, `isWithinDir`, error helpers. |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, `writeText`. |
+| `@openclaw/fs-safe/json-store` | `jsonStore<T>()` — keyed read-modify-write JSON state. |
+| `@openclaw/fs-safe/file-store` | `fileStore()`, `copyIntoRoot()` — managed multi-file store. |
 | `@openclaw/fs-safe/regular-file` | `readRegularFile`, `appendRegularFile`, regular-file stat helpers. |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceDirectoryAtomic`, `movePathWithCopyFallback`. |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `withTempWorkspace`, `tempFile`, `writeSiblingTempFile`. |
 | `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, limits, preflight helpers. |
+| `@openclaw/fs-safe/local-roots` | `readLocalFileFromRoots`, `resolveLocalPathFromRootsSync`. |
 | `@openclaw/fs-safe/fs` | `pathExists`, `pathExistsSync`. |
 | `@openclaw/fs-safe/timing` | `withTimeout`. |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode`. |
 | `@openclaw/fs-safe/types` | Shared types: `DirEntry`, `PathStat`, `BasePathOptions`, … |
 | `@openclaw/fs-safe/test-hooks` | Test-only hooks for injecting races. Active under `NODE_ENV=test`. |
-| `@openclaw/fs-safe/home` | `expandHomePrefix`, `homeDir`. |
+| `@openclaw/fs-safe/home` | `expandHomePrefix`, `resolveEffectiveHomeDir`, `resolveOsHomeDir`. |
 
 ## Runtime dependencies
 

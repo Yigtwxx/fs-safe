@@ -79,6 +79,7 @@ type SidecarLockHandle = {
   lockPath: string;
   normalizedTargetPath: string;
   release: () => Promise<void>;
+  [Symbol.asyncDispose](): Promise<void>;
 };
 ```
 
@@ -107,6 +108,27 @@ const result = await locks.withLock(
 ```
 
 Acquires, runs `fn`, releases regardless of success/failure. Returns the result of `fn`.
+
+## Top-level `withSidecarLock`
+
+When you don't need a long-lived manager, the standalone `withSidecarLock` creates one on the fly and runs your work under it:
+
+```ts
+import { withSidecarLock } from "@openclaw/fs-safe";
+
+const result = await withSidecarLock(
+  "/var/lib/app/state.json",
+  {
+    staleMs: 30_000,
+    payload: () => ({ pid: process.pid, what: "compact" }),
+  },
+  async () => {
+    return await runCompaction();
+  },
+);
+```
+
+`WithSidecarLockOptions` is `SidecarLockAcquireOptions` minus `targetPath` (the first positional argument), plus an optional `managerKey` to share an existing manager namespace.
 
 ## Reclaim policy: `shouldReclaim`
 

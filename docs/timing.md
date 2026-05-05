@@ -86,7 +86,7 @@ const fresh = await withTimeout(
   5_000,
   "refresh oauth token",
 );
-await writePrivateSecretFileAtomic({ filePath, content: JSON.stringify(fresh) });
+await writePrivateSecretFileAtomic({ rootDir, filePath, content: JSON.stringify(fresh) });
 ```
 
 ### Compose with archive extraction

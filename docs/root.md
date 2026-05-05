@@ -22,6 +22,7 @@ type RootDefaults = {
   hardlinks?: "reject" | "allow";  // refuse files with nlink > 1 on read; defaults to "reject"
   maxBytes?: number;               // refuse reads larger than this many bytes; defaults to 16 MiB
   mkdir?: boolean;                 // create missing parent dirs on write/openWritable/append
+  mode?: number;                   // file mode applied to new writes; per-call override available
   nonBlockingRead?: boolean;       // schedule reads on a worker; useful for large files
   symlinks?: "reject" | "follow-within-root"; // policy when a path component is a symlink
 };
@@ -43,7 +44,7 @@ fs.readBytes(rel, options?)    // Buffer
 fs.readText(rel, options?)     // string
 fs.readJson<T>(rel, options?)  // parsed T
 fs.open(rel, options?)         // { handle, realPath, stat, [Symbol.asyncDispose] }
-fs.readPath(absPath, options?) // ReadResult; absPath must already be inside the root
+fs.readAbsolute(absPath, options?) // ReadResult; absPath must already be inside the root
 fs.reader(options?)            // (path) => Promise<Buffer>; useful for loader APIs
 ```
 

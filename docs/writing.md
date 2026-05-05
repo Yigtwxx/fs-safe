@@ -35,7 +35,7 @@ await fs.write("state/last-run.json", JSON.stringify(run));
 await fs.write("notes/today.txt", "hello\n", { encoding: "utf8" });
 ```
 
-`data` accepts `string | Buffer`. `options` are `{ encoding?: BufferEncoding; mkdir?: boolean }`.
+`data` accepts `string | Buffer`. `options` are `{ encoding?: BufferEncoding; mkdir?: boolean; mode?: number }`. `mode` sets the file's POSIX mode; if omitted, falls back to the `mode` from `RootDefaults` and then to umask.
 
 ### `fs.create(rel, data, options?)`
 
@@ -64,6 +64,7 @@ Options:
 type RootWriteJsonOptions = {
   encoding?: BufferEncoding;
   mkdir?: boolean;
+  mode?: number;
   replacer?: (this: any, key: string, value: any) => any | (number | string)[];
   space?: number | string;
   trailingNewline?: boolean; // default true

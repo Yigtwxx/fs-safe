@@ -16,7 +16,7 @@ Regardless of shape, every read goes through the same boundary checks:
 
 1. Resolve the relative path against the canonical real root.
 2. Reject anything that escapes the root (`outside-workspace`).
-3. Reject `..` segments and absolute inputs (unless via `readPath` with an in-root absolute path).
+3. Reject `..` segments and absolute inputs (unless via `readAbsolute` with an in-root absolute path).
 4. Open with `O_NOFOLLOW` where available. A symlink in the path triggers `symlink` unless the call's `symlinks` policy is `follow-within-root`.
 5. Stat the open fd and compare to the resolved path's identity (`sameFileIdentity`). A swap mid-call triggers `path-mismatch`.
 6. If `hardlinks: "reject"`, refuse files with `nlink > 1` (`hardlink`).
@@ -91,16 +91,16 @@ type RootReadOptions = {
 
 `nonBlockingRead` is a scheduling hint. It does not affect safety — it lets you keep the event loop responsive when reading large files.
 
-## `readPath()` and `reader()`
+## `readAbsolute()` and `reader()`
 
 Some APIs hand you an absolute path that the caller has already produced. Going back to a relative form just to call `read()` is awkward, so the library exposes:
 
 ```ts
-fs.readPath(absPath, options?)   // ReadResult, abs path must be inside the root
+fs.readAbsolute(absPath, options?)   // ReadResult, abs path must be inside the root
 fs.reader(options?)              // (path) => Promise<Buffer>
 ```
 
-`readPath` accepts absolute paths. Anything outside the root throws `outside-workspace`.
+`readAbsolute` accepts absolute paths. Anything outside the root throws `outside-workspace`.
 
 `reader()` returns a closure that takes either a relative or an absolute path and returns a Buffer. Useful for plugging `fs-safe` into framework loader hooks:
 
@@ -157,7 +157,7 @@ try {
 
 ## Common errors
 
-- **`outside-workspace`** — relative path escaped the root, or `readPath` got an absolute path outside.
+- **`outside-workspace`** — relative path escaped the root, or `readAbsolute` got an absolute path outside.
 - **`not-found`** — the file is gone.
 - **`not-file`** — you read a directory or a non-regular file (FIFO, socket, …).
 - **`symlink`** — a path component is a symlink and the policy is `reject`.

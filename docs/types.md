@@ -86,6 +86,7 @@ type RootDefaults = {
   hardlinks?: "reject" | "allow";
   maxBytes?: number;
   mkdir?: boolean;
+  mode?: number;
   nonBlockingRead?: boolean;
   symlinks?: "reject" | "follow-within-root";
 };
@@ -102,12 +103,11 @@ type RootOptions = {
 
 ```ts
 type RootReadOptions = Pick<RootDefaults, "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks">;
-type RootWriteOptions = Pick<RootDefaults, "encoding" | "mkdir">;
-type RootCopyOptions = Pick<RootDefaults, "maxBytes" | "mkdir"> & {
+type RootWriteOptions = Pick<RootDefaults, "encoding" | "mkdir" | "mode">;
+type RootCopyOptions = Pick<RootDefaults, "maxBytes" | "mkdir" | "mode"> & {
   sourceHardlinks?: "reject" | "allow";
 };
-type RootOpenWritableOptions = Pick<RootDefaults, "mkdir"> & {
-  mode?: number;
+type RootOpenWritableOptions = Pick<RootDefaults, "mkdir" | "mode"> & {
   truncateExisting?: boolean;
   append?: boolean;
 };

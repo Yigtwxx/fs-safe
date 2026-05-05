@@ -50,6 +50,8 @@ await fs.remove("notes/archive/today.txt");
 | [`pathScope()`](path-scope.md) | Same boundary semantics over an absolute path you already trust. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
 | [`writeJson` / `readJson*`](json.md) | JSON state files with strict and lenient read variants. |
+| [`jsonStore`](json-store.md) | Single JSON state file with fallback, atomic writes, and optional locking. |
+| [`fileStore`](file-store.md) | Managed multi-file/blob store with modes, stream writes, copy-in, and pruning. |
 | [`tempWorkspace`](temp.md) | 0700 scratch dir with auto-cleanup. |
 | [`extractArchive`](archive.md) | ZIP/TAR extraction with size, count, link, and traversal limits. |
 | [Secret files](secret-file.md) | Mode-0600 credentials with size and TOCTOU defense. |

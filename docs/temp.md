@@ -67,7 +67,7 @@ try {
 ### Options
 
 ```ts
-type PrivateTempWorkspaceOptions = {
+type TempWorkspaceOptions = {
   rootDir: string;          // parent directory for workspaces
   prefix: string;           // dir prefix (sanitized)
   dirMode?: number;         // dir mode; default 0o700
@@ -96,11 +96,12 @@ try {
 Returns:
 
 ```ts
-type TempFileTarget = {
-  path: string;             // absolute path; safe to write to
-  dir: string;              // the enclosing private workspace dir
-  file(name: string): string;
-  cleanup(): Promise<void>; // removes the private workspace dir
+type TempFile = {
+  path: string;                            // absolute path; safe to write to
+  dir: string;                             // the enclosing private workspace dir
+  file(fileName?: string): string;          // resolve another file in the same dir
+  cleanup(): Promise<void>;                 // removes the private workspace dir
+  [Symbol.asyncDispose](): Promise<void>;   // alias of cleanup()
 };
 ```
 

@@ -85,16 +85,15 @@ The reader checks the file's mode bits before reading. If `nlink > 1` (the file 
 
 ### `writePrivateSecretFileAtomic(params)`
 
-Async. Creates the parent directory at `0o700` if missing, writes content to a sibling temp file at `0o600`, atomically renames over the destination.
+Async. Creates the parent directory at `dirMode` (default `0o700`) if missing, writes content to a sibling temp file at `mode` (default `0o600`), atomically renames over the destination, and re-asserts the file mode after rename.
 
 ```ts
 import { writePrivateSecretFileAtomic } from "@openclaw/fs-safe";
 
 await writePrivateSecretFileAtomic({
+  rootDir: "/var/lib/app",
   filePath: "/var/lib/app/auth.token",
   content: token,
-  syncTempFile: true,
-  syncParentDir: true,
 });
 ```
 
@@ -102,15 +101,26 @@ await writePrivateSecretFileAtomic({
 
 ```ts
 type WritePrivateSecretFileParams = {
-  filePath: string;            // absolute path
-  content: string | Buffer;
-  encoding?: BufferEncoding;   // default utf8
-  syncTempFile?: boolean;      // fsync the temp file before rename
-  syncParentDir?: boolean;     // fsync parent dir after rename (POSIX)
+  rootDir: string;             // trusted root directory (created at dirMode if missing)
+  filePath: string;             // absolute path; must be inside rootDir
+  content: string | Uint8Array;
+  mode?: number;                // file mode for the new file (default PRIVATE_SECRET_FILE_MODE = 0o600)
+  dirMode?: number;             // mode for the root and intermediate dirs (default PRIVATE_SECRET_DIR_MODE = 0o700)
 };
 ```
 
-The directory mode is set on creation only — if the directory exists with wider permissions, the helper does **not** narrow them. This is deliberate: silently changing mode bits on existing dirs would be surprising. Audit and tighten existing secret directories yourself.
+The directory mode is asserted on each component along the path: `rootDir`, then any intermediate dirs, then the parent. The helper enforces that every component matches `dirMode` — wider permissions on an existing directory cause the write to fail. Audit and tighten existing secret directories yourself.
+
+For more permissive credentials, override `mode`:
+
+```ts
+await writePrivateSecretFileAtomic({
+  rootDir: "/var/lib/app",
+  filePath: "/var/lib/app/readonly.token",
+  content: token,
+  mode: 0o400, // tighter than the default
+});
+```
 
 ## Common patterns
 
@@ -134,10 +144,9 @@ if (!r.ok) {
 ```ts
 const fresh = await refreshToken(currentRefresh);
 await writePrivateSecretFileAtomic({
+  rootDir: "/var/lib/app",
   filePath: "/var/lib/app/auth.token",
   content: JSON.stringify(fresh),
-  syncTempFile: true,
-  syncParentDir: true,
 });
 ```
 
@@ -147,8 +156,9 @@ await writePrivateSecretFileAtomic({
 import { withTimeout } from "@openclaw/fs-safe/timing";
 
 await withTimeout(
-  writePrivateSecretFileAtomic({ filePath, content }),
-  { timeoutMs: 5_000, label: "persist auth token" },
+  writePrivateSecretFileAtomic({ rootDir, filePath, content }),
+  5_000,
+  "persist auth token",
 );
 ```
 

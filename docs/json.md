@@ -1,6 +1,6 @@
 # JSON files
 
-`@openclaw/fs-safe/json` is the standalone JSON surface. Strict and lenient read variants, atomic writes, and a small async lock for serializing in-process writers.
+`@openclaw/fs-safe/json` is the standalone JSON surface — strict and lenient read variants, atomic writes, and a small async lock for serializing in-process writers.
 
 ```ts
 import {
@@ -17,54 +17,65 @@ import {
 } from "@openclaw/fs-safe/json";
 ```
 
-## Failure semantics in the name
+## Three reads, three failure shapes
 
-Two read helpers, same input, different failure shape:
+Same input, three distinct contracts — pick the one whose error story matches your call site:
 
 ```ts
-await tryReadJson<T>("./config.json"); // returns null on missing or invalid
-await readJson<T>("./manifest.json");  // throws JsonFileReadError on missing or invalid
+await readJson<T>("./manifest.json");      // throws JsonFileReadError on missing or invalid
+await readJsonIfExists<T>("./cache.json"); // returns null on missing; throws on invalid
+await tryReadJson<T>("./optional.json");   // returns null on missing or invalid
 ```
 
-Use `tryReadJson` when "absent or unreadable" is a normal outcome (first run, optional caches). Use `readJson` when missing or malformed JSON is a programmer error you want to surface immediately.
+| Helper | Missing file | Invalid JSON |
+|---|---|---|
+| `readJson` | throws | throws |
+| `readJsonIfExists` | `null` | throws |
+| `tryReadJson` | `null` | `null` |
 
-`JsonFileReadError` carries `cause` so you can inspect whether it was an `ENOENT`, a `SyntaxError`, or something else.
+Use `readJson` when missing-or-malformed is a programmer error you want to surface immediately. Use `readJsonIfExists` when "file not there" is normal but malformed bytes should still page someone. Use `tryReadJson` when neither outcome should crash the caller.
+
+`JsonFileReadError` carries `cause` so you can inspect whether the underlying failure was an `ENOENT`, a `SyntaxError`, or something else.
 
 ## Reading
 
-### `tryReadJson<T>(filePath)`
-
-Async. Returns `Promise<T | null>`:
-
-- file missing → `null`
-- file present but invalid JSON → `null`
-- file present and valid → parsed value cast to `T`
-
-```ts
-const cache = (await tryReadJson<Cache>("./cache.json")) ?? defaultCache();
-```
-
 ### `readJson<T>(filePath)`
 
-Async. Returns `Promise<T>`. Throws `JsonFileReadError` on missing-or-invalid. The cast is unchecked — validate the shape with your own schema (zod, valibot, …) if it came from an untrusted source.
+Async strict reader. Throws `JsonFileReadError` on missing or invalid input. The cast is unchecked — validate the shape with your own schema (zod, valibot, …) if it came from an untrusted source.
 
-### `readJsonSync(filePath)`
-
-Synchronous strict-ish variant. Returns `unknown` for valid JSON and `null` for missing or invalid input.
-
-### `tryReadJsonSync<T>(pathname)`
-
-Synchronous lenient variant. Returns `T | null`; missing or invalid input returns `null`.
+```ts
+const manifest = await readJson<Manifest>("./manifest.json");
+```
 
 ### `readJsonIfExists<T>(filePath)`
 
-Async. Returns `Promise<T | null>`. Missing files return `null`; invalid JSON throws `JsonFileReadError`.
+Async semi-lenient reader. Returns `null` if the file is missing; throws `JsonFileReadError` if the file exists but cannot be parsed.
+
+```ts
+const cache = (await readJsonIfExists<Cache>("./cache.json")) ?? freshCache();
+```
+
+### `tryReadJson<T>(filePath)`
+
+Async lenient reader. Returns `null` for any failure (missing, unreadable, invalid). The "no fuss" sibling.
+
+```ts
+const optional = (await tryReadJson<Settings>("./settings.json")) ?? defaults;
+```
+
+### `readJsonSync(filePath)`
+
+Synchronous lenient variant. Returns `unknown` on success, `null` on any failure. Cast and validate at the boundary.
+
+### `tryReadJsonSync<T>(pathname)`
+
+Synchronous, generic, lenient. Returns `T | null`. Useful in boot paths where you want a typed result without async.
 
 ## Writing
 
 ### `writeJson(filePath, value, options?)`
 
-Async. `JSON.stringify(value, null, 2)` + sibling-temp rename under the hood.
+Async atomic JSON write. `JSON.stringify(value, null, 2)` + sibling-temp + rename. Defaults to file mode `0o600`.
 
 ```ts
 await writeJson("./state.json", state, { trailingNewline: true });
@@ -74,23 +85,23 @@ Options:
 
 ```ts
 type WriteJsonOptions = {
-  mode?: number;
-  ensureDirMode?: number;
-  trailingNewline?: boolean;
+  mode?: number;             // file mode (default 0o600)
+  dirMode?: number;          // mode for parent dirs created on demand
+  trailingNewline?: boolean; // append "\n" if missing (default false)
 };
 ```
 
 ### `writeText(filePath, content, options?)`
 
-Async. Atomic text write. Same options as `writeJson`, with `appendTrailingNewline` instead of `trailingNewline`.
+Async atomic text write. Same options as `writeJson` (minus the JSON-specific behavior).
 
 ```ts
-await writeText("./README.md", rendered);
+await writeText("./README.md", rendered, { trailingNewline: true });
 ```
 
 ### `writeJsonSync(pathname, data)`
 
-Synchronous convenience wrapper that writes formatted JSON with mode `0o600`. Existing symlink leaves are replaced, not followed.
+Synchronous variant. Convenience wrapper that uses the sync atomic-write path with sensible defaults.
 
 ```ts
 writeJsonSync("./prefs.json", { theme: "dark" });
@@ -98,7 +109,7 @@ writeJsonSync("./prefs.json", { theme: "dark" });
 
 ## Concurrency: `createAsyncLock()`
 
-For in-process serialization of writers to the same file. Return value is a function that accepts an async task and runs it under the lock:
+For in-process serialization of writers to the same file. Returns a function that runs an async task under the lock:
 
 ```ts
 import { createAsyncLock } from "@openclaw/fs-safe/json";
@@ -107,7 +118,7 @@ const lock = createAsyncLock();
 
 async function bumpCounter() {
   return lock(async () => {
-    const state = (await tryReadJson<{ count: number }>("./counter.json")) ?? { count: 0 };
+    const state = (await readJsonIfExists<{ count: number }>("./counter.json")) ?? { count: 0 };
     state.count += 1;
     await writeJson("./counter.json", state);
     return state.count;
@@ -115,16 +126,16 @@ async function bumpCounter() {
 }
 ```
 
-The lock is *in-process only* — it does nothing for cross-process coordination. For multi-process locking, see [`createSidecarLockManager`](sidecar-lock.md).
+The lock is *in-process only* — it does nothing for cross-process coordination. For multi-process locking, see [`createSidecarLockManager`](sidecar-lock.md) or [`jsonStore`](json-store.md).
 
 ## Common patterns
 
 ### Read-modify-write
 
 ```ts
-const state = (await tryReadJson<State>("./state.json")) ?? initialState();
+const state = (await readJsonIfExists<State>("./state.json")) ?? initialState();
 state.lastRun = Date.now();
-await writeJson("./state.json", state, { mode: 0o600 });
+await writeJson("./state.json", state, { mode: 0o600, dirMode: 0o700 });
 ```
 
 ### Atomic with secure mode
@@ -132,7 +143,7 @@ await writeJson("./state.json", state, { mode: 0o600 });
 For credentials or other sensitive JSON, write at mode `0o600`:
 
 ```ts
-await writeJson("./auth.json", token, { mode: 0o600, ensureDirMode: 0o700 });
+await writeJson("./auth.json", token, { mode: 0o600, dirMode: 0o700 });
 ```
 
 For higher-assurance secrets, prefer the dedicated [secret-file helpers](secret-file.md) — they create the parent directory at `0o700` if missing.
@@ -169,6 +180,7 @@ const state = await readJsonIfExists<State>("./state.json");
 
 ## See also
 
+- [JSON store](json-store.md) — a single-file state wrapper with fallback and optional sidecar locking.
 - [Atomic writes](atomic.md) — lower-level sibling-temp replacement helpers.
 - [Secret files](secret-file.md) — JSON-or-text writes with mode 0600 in mode 0700 dirs.
 - [Private file store](private-file-store.md) — root-bounded JSON+text helpers.
