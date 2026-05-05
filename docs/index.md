@@ -47,11 +47,11 @@ await fs.remove("notes/archive/today.txt");
 | Surface | Use it for |
 |---|---|
 | [`root()`](root.md) | One boundary for read/write/move/remove inside a trusted directory. |
-| [`pathScope()`](path-scope.md) | Advanced boundary validation over an absolute path you already trust. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
 | [`writeJson` / `readJson*`](json.md) | JSON state files with strict and lenient read variants. |
-| [`jsonStore`](json-store.md) | Single JSON state file with fallback, atomic writes, and optional locking. |
+| [`jsonStore`](json-store.md) | Single JSON state file with explicit fallback, atomic writes, and optional locking. |
 | [`fileStore`](file-store.md) | Managed multi-file/blob store with modes, stream writes, copy-in, and pruning. |
+| [`privateStateStore`](private-file-store.md) | Multi-file private text/JSON state at 0600 under 0700 dirs. |
 | [`tempWorkspace`](temp.md) | 0700 scratch dir with auto-cleanup. |
 | [`readSecureFile`](secure-file.md) | Absolute file reads with fd pinning, permissions, owner, size, and timeout checks. |
 | [`walkDirectory`](walk.md) | Budget-bounded recursive directory scan with symlink policy and filters. |
@@ -59,7 +59,8 @@ await fs.remove("notes/archive/today.txt");
 | [Secret files](secret-file.md) | Mode-0600 credentials with size and TOCTOU defense. |
 | [Permissions](permissions.md) | POSIX mode and Windows ACL inspection/remediation helpers. |
 | [`createSidecarLockManager`](sidecar-lock.md) | Cross-process file lock with retry and stale-lock recovery. |
-| [`FsSafeError`](errors.md) | Closed code union you can branch on. |
+| [`FsSafeError`](errors.md) | Closed code union (with `policy` / `operational` category) you can branch on. |
+| [`pathScope()`](path-scope.md) | Lower-level absolute-path boundary helper; lives behind `@openclaw/fs-safe/advanced`. |
 
 ## Status
 

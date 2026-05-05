@@ -22,7 +22,22 @@ A private workspace is a directory created at mode `0o700` under a caller-provid
 
 ### `tempWorkspace`
 
-The compact factory. It returns `{ dir, file(name), path(name), writePrivate(), read(), cleanup(), [Symbol.asyncDispose] }`.
+The compact factory. Returns:
+
+```ts
+type TempWorkspace = {
+  dir: string;
+  file(fileName: string): string;
+  path(fileName: string): string;
+  writePrivate(fileName: string, data: string | Uint8Array): Promise<string>;
+  writeText(fileName: string, data: string): Promise<string>;
+  writeJson(fileName: string, data: unknown, options?: { trailingNewline?: boolean }): Promise<string>;
+  copyIn(fileName: string, sourcePath: string): Promise<string>;
+  read(fileName: string): Promise<Buffer>;
+  cleanup(): Promise<void>;
+  [Symbol.asyncDispose](): Promise<void>;
+};
+```
 
 ```ts
 import { tempWorkspace } from "@openclaw/fs-safe/temp";
@@ -31,6 +46,10 @@ await using workspace = await tempWorkspace({ rootDir: "/tmp/my-app", prefix: "b
 const inputPath = await workspace.writePrivate("input.txt", "data");
 await runBuild(workspace.dir, inputPath);
 ```
+
+`writePrivate` writes at `mode` (default `0o600`); `writeText` and `writeJson` are convenience wrappers for the common scratch-file shapes; `copyIn` ingests an absolute source path through the same atomic-rename machinery as `Root.copyIn`. `read` is a small accessor that reads back any file you wrote into the workspace.
+
+The sync variant `tempWorkspaceSync` exposes the same surface with sync return types.
 
 ### `withTempWorkspace`
 
