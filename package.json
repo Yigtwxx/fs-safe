@@ -1,0 +1,89 @@
+{
+  "name": "@openclaw/fs-safe",
+  "version": "0.0.0",
+  "description": "Race-resistant root-bounded filesystem primitives for Node.js.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openclaw/fs-safe.git"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./root": {
+      "types": "./dist/root.d.ts",
+      "default": "./dist/root.js"
+    },
+    "./path": {
+      "types": "./dist/path.d.ts",
+      "default": "./dist/path.js"
+    },
+    "./json": {
+      "types": "./dist/json.d.ts",
+      "default": "./dist/json.js"
+    },
+    "./temp": {
+      "types": "./dist/temp.d.ts",
+      "default": "./dist/temp.js"
+    },
+    "./atomic": {
+      "types": "./dist/atomic.d.ts",
+      "default": "./dist/atomic.js"
+    },
+    "./archive": {
+      "types": "./dist/archive.d.ts",
+      "default": "./dist/archive.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "default": "./dist/errors.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
+    },
+    "./test-hooks": {
+      "types": "./dist/test-hooks.d.ts",
+      "default": "./dist/test-hooks.js"
+    },
+    "./internal/pinned-open": {
+      "types": "./dist/pinned-open.d.ts",
+      "default": "./dist/pinned-open.js"
+    },
+    "./internal/pinned-path": {
+      "types": "./dist/pinned-path.d.ts",
+      "default": "./dist/pinned-path.js"
+    },
+    "./internal/pinned-write": {
+      "types": "./dist/pinned-write.d.ts",
+      "default": "./dist/pinned-write.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "pnpm build",
+    "test": "vitest run",
+    "check": "pnpm build && pnpm test"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "tar": "7.5.13"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.19",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
+}

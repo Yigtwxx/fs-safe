@@ -1,0 +1,132 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  pathScope,
+  resolveExistingPathsWithinRoot,
+  resolvePathWithinRoot,
+  resolveStrictExistingPathsWithinRoot,
+  resolveWritablePathWithinRoot,
+} from "../src/root-paths.js";
+
+async function withFixtureRoot<T>(
+  run: (ctx: { baseDir: string; uploadsDir: string }) => Promise<T>,
+): Promise<T> {
+  const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-root-paths-"));
+  const uploadsDir = path.join(baseDir, "uploads");
+  await fs.mkdir(uploadsDir, { recursive: true });
+  try {
+    return await run({ baseDir, uploadsDir });
+  } finally {
+    await fs.rm(baseDir, { recursive: true, force: true });
+  }
+}
+
+function expectInvalidResult(result: { ok: true; paths: string[] } | { ok: false; error: string }) {
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error).toContain("uploads directory");
+  }
+}
+
+describe("root path list helpers", () => {
+  it("creates a root-scoped helper with shorter method names", async () => {
+    await withFixtureRoot(async ({ uploadsDir }) => {
+      const uploads = pathScope(uploadsDir, { label: "uploads directory" });
+      const filePath = path.join(uploadsDir, "ok.txt");
+      await fs.writeFile(filePath, "ok", "utf8");
+
+      await expect(uploads.files(["ok.txt"])).resolves.toEqual({
+        ok: true,
+        paths: [await fs.realpath(filePath)],
+      });
+      await expect(uploads.writable(" ", { defaultName: "fallback.txt" })).resolves.toEqual({
+        ok: true,
+        path: path.join(uploadsDir, "fallback.txt"),
+      });
+    });
+  });
+
+  it("accepts existing files under the root", async () => {
+    await withFixtureRoot(async ({ uploadsDir }) => {
+      const filePath = path.join(uploadsDir, "ok.txt");
+      await fs.writeFile(filePath, "ok", "utf8");
+
+      const result = await resolveExistingPathsWithinRoot({
+        rootDir: uploadsDir,
+        requestedPaths: [filePath],
+        scopeLabel: "uploads directory",
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.paths).toEqual([await fs.realpath(filePath)]);
+      }
+    });
+  });
+
+  it("keeps lexical in-root paths when missing fallbacks are allowed", async () => {
+    await withFixtureRoot(async ({ uploadsDir }) => {
+      const result = await resolveExistingPathsWithinRoot({
+        rootDir: uploadsDir,
+        requestedPaths: ["missing.txt"],
+        scopeLabel: "uploads directory",
+      });
+
+      expect(result).toEqual({ ok: true, paths: [path.join(uploadsDir, "missing.txt")] });
+    });
+  });
+
+  it("rejects missing files in strict mode", async () => {
+    await withFixtureRoot(async ({ uploadsDir }) => {
+      const result = await resolveStrictExistingPathsWithinRoot({
+        rootDir: uploadsDir,
+        requestedPaths: ["missing.txt"],
+        scopeLabel: "uploads directory",
+      });
+
+      expectInvalidResult(result);
+    });
+  });
+
+  it.runIf(process.platform !== "win32")("rejects symlink escapes", async () => {
+    await withFixtureRoot(async ({ baseDir, uploadsDir }) => {
+      const outsideDir = path.join(baseDir, "outside");
+      await fs.mkdir(outsideDir, { recursive: true });
+      await fs.writeFile(path.join(outsideDir, "secret.txt"), "secret", "utf8");
+      await fs.symlink(outsideDir, path.join(uploadsDir, "alias"));
+
+      const result = await resolveExistingPathsWithinRoot({
+        rootDir: uploadsDir,
+        requestedPaths: ["alias/secret.txt"],
+        scopeLabel: "uploads directory",
+      });
+
+      expect(result).toEqual({ ok: false, error: "File is outside uploads directory" });
+    });
+  });
+
+  it("uses a default file name for blank writable paths", async () => {
+    await withFixtureRoot(async ({ uploadsDir }) => {
+      const result = await resolveWritablePathWithinRoot({
+        rootDir: uploadsDir,
+        requestedPath: " ",
+        scopeLabel: "uploads directory",
+        defaultFileName: "fallback.txt",
+      });
+
+      expect(result).toEqual({ ok: true, path: path.join(uploadsDir, "fallback.txt") });
+    });
+  });
+
+  it("rejects root-level path aliases", () => {
+    const result = resolvePathWithinRoot({
+      rootDir: "/tmp/uploads",
+      requestedPath: ".",
+      scopeLabel: "uploads directory",
+    });
+
+    expect(result.ok).toBe(false);
+  });
+});
