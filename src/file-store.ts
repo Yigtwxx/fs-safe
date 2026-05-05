@@ -220,7 +220,8 @@ export function fileStore(options: FileStoreOptions): FileStore {
         const chunks: Buffer[] = [];
         let total = 0;
         for await (const chunk of stream) {
-          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+          const buffer =
+            typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk as Uint8Array);
           total += buffer.byteLength;
           assertMaxBytes(total, limit);
           chunks.push(buffer);
