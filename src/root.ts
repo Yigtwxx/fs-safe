@@ -28,6 +28,7 @@ export type OpenResult = {
   handle: FileHandle;
   realPath: string;
   stat: Stats;
+  [Symbol.asyncDispose](): Promise<void>;
 };
 
 export type ReadResult = {
@@ -66,7 +67,11 @@ export type RootReadOptions = Pick<
 
 export type RootOpenOptions = Omit<RootReadOptions, "maxBytes">;
 
-export type RootWriteOptions = Pick<RootDefaults, "encoding" | "mkdir">;
+export type RootFileModeOptions = {
+  fileMode?: number;
+};
+
+export type RootWriteOptions = Pick<RootDefaults, "encoding" | "mkdir"> & RootFileModeOptions;
 
 export type RootOpenWritableOptions = Pick<RootDefaults, "mkdir"> & {
   mode?: number;
@@ -120,6 +125,27 @@ const OPEN_APPEND_CREATE_FLAGS =
   fsConstants.O_CREAT |
   fsConstants.O_EXCL |
   (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
+
+export const DEFAULT_ROOT_MAX_BYTES = 16 * 1024 * 1024;
+
+function closeHandleForDispose(handle: FileHandle): Promise<void> {
+  return handle.close().catch(() => undefined);
+}
+
+function openResult(params: {
+  handle: FileHandle;
+  realPath: string;
+  stat: Stats;
+}): OpenResult {
+  return {
+    handle: params.handle,
+    realPath: params.realPath,
+    stat: params.stat,
+    [Symbol.asyncDispose]: async () => {
+      await closeHandleForDispose(params.handle);
+    },
+  };
+}
 
 const ensureTrailingSep = (value: string) => (value.endsWith(path.sep) ? value : value + path.sep);
 
@@ -227,7 +253,7 @@ async function openVerifiedLocalFile(
       throw new FsSafeError("path-mismatch", "path mismatch");
     }
 
-    return { handle, realPath, stat };
+    return openResult({ handle, realPath, stat });
   } catch (err) {
     await handle.close().catch(() => {});
     if (err instanceof FsSafeError) {
@@ -566,7 +592,7 @@ class RootHandle implements Root {
 function readDefaults(defaults: RootDefaults): RootReadParams {
   return {
     hardlinks: defaults.hardlinks,
-    maxBytes: defaults.maxBytes,
+    maxBytes: defaults.maxBytes ?? DEFAULT_ROOT_MAX_BYTES,
     nonBlockingRead: defaults.nonBlockingRead,
     symlinks: defaults.symlinks,
   };
@@ -685,6 +711,12 @@ async function readOpenedFileSafely(params: {
     );
   }
   const buffer = await params.opened.handle.readFile();
+  if (params.maxBytes !== undefined && buffer.byteLength > params.maxBytes) {
+    throw new FsSafeError(
+      "too-large",
+      `file exceeds limit of ${params.maxBytes} bytes (got ${buffer.byteLength})`,
+    );
+  }
   return {
     buffer,
     realPath: params.opened.realPath,
@@ -697,6 +729,7 @@ export type WritableOpenResult = {
   createdForWrite: boolean;
   realPath: string;
   stat: Stats;
+  [Symbol.asyncDispose](): Promise<void>;
 };
 
 function emitWriteBoundaryWarning(reason: string) {
@@ -971,6 +1004,9 @@ async function openWritableFileInRoot(
       createdForWrite,
       realPath,
       stat,
+      [Symbol.asyncDispose]: async () => {
+        await closeHandleForDispose(handle);
+      },
     };
   } catch (err) {
     const cleanupCreatedPath = createdForWrite && err instanceof FsSafeError;
@@ -989,6 +1025,7 @@ async function appendFileInRoot(
     relativePath: string;
     data: string | Buffer;
     encoding?: BufferEncoding;
+    fileMode?: number;
     mkdir?: boolean;
     prependNewlineIfNeeded?: boolean;
   },
@@ -996,6 +1033,7 @@ async function appendFileInRoot(
   const target = await openWritableFileInRoot(root, {
     relativePath: params.relativePath,
     mkdir: params.mkdir,
+    mode: params.fileMode,
     truncateExisting: false,
     append: true,
   });
@@ -1082,6 +1120,7 @@ async function writeFileInRoot(
     relativePath: string;
     data: string | Buffer;
     encoding?: BufferEncoding;
+    fileMode?: number;
     mkdir?: boolean;
     overwrite?: boolean;
   },
@@ -1100,7 +1139,7 @@ async function writeFileInRoot(
       relativeParentPath: pinned.relativeParentPath,
       basename: pinned.basename,
       mkdir: params.mkdir !== false,
-      mode: pinned.mode,
+      mode: params.fileMode ?? pinned.mode,
       overwrite: params.overwrite,
       input: {
         kind: "buffer",
@@ -1375,6 +1414,7 @@ async function writeFileFallback(
     relativePath: string;
     data: string | Buffer;
     encoding?: BufferEncoding;
+    fileMode?: number;
     mkdir?: boolean;
     overwrite?: boolean;
   },
@@ -1387,10 +1427,11 @@ async function writeFileFallback(
   const target = await openWritableFileInRoot(root, {
     relativePath: params.relativePath,
     mkdir: params.mkdir,
+    mode: params.fileMode,
     truncateExisting: false,
   });
   const destinationPath = target.realPath;
-  const targetMode = target.stat.mode & 0o777;
+  const targetMode = params.fileMode ?? (target.stat.mode & 0o777);
   await target.handle.close().catch(() => {});
   let tempPath: string | null = null;
   try {
@@ -1426,6 +1467,7 @@ async function writeMissingFileFallback(
     relativePath: string;
     data: string | Buffer;
     encoding?: BufferEncoding;
+    fileMode?: number;
     mkdir?: boolean;
   },
 ): Promise<void> {
@@ -1446,7 +1488,7 @@ async function writeMissingFileFallback(
   let handle: FileHandle | null = null;
   let created = false;
   try {
-    handle = await fs.open(resolved, OPEN_WRITE_CREATE_FLAGS, 0o600);
+    handle = await fs.open(resolved, OPEN_WRITE_CREATE_FLAGS, params.fileMode ?? 0o600);
     created = true;
     if (typeof params.data === "string") {
       await handle.writeFile(params.data, params.encoding ?? "utf8");

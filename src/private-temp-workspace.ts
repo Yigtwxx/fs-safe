@@ -12,19 +12,25 @@ export type PrivateTempWorkspaceOptions = {
 
 export type PrivateTempWorkspace = {
   dir: string;
+  file(fileName: string): string;
   path(fileName: string): string;
   writePrivate(fileName: string, data: string | Uint8Array): Promise<string>;
   read(fileName: string): Promise<Buffer>;
   cleanup(): Promise<void>;
+  [Symbol.asyncDispose](): Promise<void>;
 };
 
 export type PrivateTempWorkspaceSync = {
   dir: string;
+  file(fileName: string): string;
   path(fileName: string): string;
   writePrivate(fileName: string, data: string | Uint8Array): string;
   read(fileName: string): Buffer;
   cleanup(): void;
+  [Symbol.dispose](): void;
 };
+
+export type TempWorkspace = PrivateTempWorkspace;
 
 function sanitizeTempPrefix(prefix: string): string {
   const sanitized = prefix.trim().replace(/[^a-zA-Z0-9._-]/g, "-");
@@ -89,6 +95,7 @@ export async function createPrivateTempWorkspace(
 
   return {
     dir,
+    file: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     path: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     writePrivate: async (fileName, data) => {
       const filePath = resolveWorkspaceLeaf(dir, fileName);
@@ -100,7 +107,16 @@ export async function createPrivateTempWorkspace(
     cleanup: async () => {
       await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
     },
+    [Symbol.asyncDispose]: async () => {
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    },
   };
+}
+
+export async function tempWorkspace(
+  options: PrivateTempWorkspaceOptions,
+): Promise<TempWorkspace> {
+  return await createPrivateTempWorkspace(options);
 }
 
 export async function withPrivateTempWorkspace<T>(
@@ -144,6 +160,7 @@ export function createPrivateTempWorkspaceSync(
 
   return {
     dir,
+    file: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     path: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     writePrivate: (fileName, data) => {
       const filePath = resolveWorkspaceLeaf(dir, fileName);
@@ -157,6 +174,13 @@ export function createPrivateTempWorkspaceSync(
     },
     read: (fileName) => fsSync.readFileSync(resolveWorkspaceLeaf(dir, fileName)),
     cleanup: () => {
+      try {
+        fsSync.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup.
+      }
+    },
+    [Symbol.dispose]: () => {
       try {
         fsSync.rmSync(dir, { recursive: true, force: true });
       } catch {

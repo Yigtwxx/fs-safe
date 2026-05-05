@@ -1,11 +1,13 @@
 export {
   createPrivateTempWorkspace,
   createPrivateTempWorkspaceSync,
+  tempWorkspace,
   withPrivateTempWorkspace,
   withPrivateTempWorkspaceSync,
   type PrivateTempWorkspace,
   type PrivateTempWorkspaceOptions,
   type PrivateTempWorkspaceSync,
+  type TempWorkspace,
 } from "./private-temp-workspace.js";
 export {
   buildRandomTempFilePath,

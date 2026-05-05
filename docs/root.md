@@ -20,7 +20,7 @@ function root(rootDir: string, defaults?: RootDefaults): Promise<Root>;
 type RootDefaults = {
   encoding?: BufferEncoding;       // text encoding for read/write helpers; defaults to "utf8"
   hardlinks?: "reject" | "allow";  // refuse files with nlink > 1 on read; defaults to "reject"
-  maxBytes?: number;               // refuse reads larger than this many bytes
+  maxBytes?: number;               // refuse reads larger than this many bytes; defaults to 16 MiB
   mkdir?: boolean;                 // create missing parent dirs on write/openWritable/append
   nonBlockingRead?: boolean;       // schedule reads on a worker; useful for large files
   symlinks?: "reject" | "follow-within-root"; // policy when a path component is a symlink
@@ -42,21 +42,19 @@ fs.read(rel, options?)         // { buffer, realPath, stat }
 fs.readBytes(rel, options?)    // Buffer
 fs.readText(rel, options?)     // string
 fs.readJson<T>(rel, options?)  // parsed T
-fs.open(rel, options?)         // { handle, realPath, stat } — call handle.close() when done
+fs.open(rel, options?)         // { handle, realPath, stat, [Symbol.asyncDispose] }
 fs.readPath(absPath, options?) // ReadResult; absPath must already be inside the root
 fs.reader(options?)            // (path) => Promise<Buffer>; useful for loader APIs
 ```
 
-`open()` returns a Node `FileHandle` for streaming. Always close it:
+`open()` returns a Node `FileHandle` for streaming. Prefer `await using` for cleanup:
 
 ```ts
-const opened = await fs.open("large.log");
-try {
+await using opened = await fs.open("large.log");
+{
   for await (const chunk of opened.handle.createReadStream()) {
     process.stdout.write(chunk);
   }
-} finally {
-  await opened.handle.close();
 }
 ```
 
@@ -69,18 +67,18 @@ fs.writeJson(rel, value, options?)       // JSON.stringify + atomic write
 fs.createJson(rel, value, options?)      // create() variant of writeJson
 fs.append(rel, data, options?)           // append text/buffer; respects mkdir default
 fs.copyIn(rel, sourceAbsPath, options?)  // copy from outside the root, atomically, with size cap
-fs.openWritable(rel, options?)           // FileHandle for streaming writes; call .close()
+fs.openWritable(rel, options?)           // FileHandle for streaming writes; supports await using
 fs.move(from, to, options?)              // rename within the root; defaults to no clobber
 fs.remove(rel)                           // unlink file or rmdir empty directory
 fs.mkdir(rel)                            // mkdir -p (creates missing parents)
 fs.ensureRoot()                          // accepts "" / "." as the root itself
 ```
 
-`writeJson` accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
+`write`, `create`, `append`, `writeJson`, and `createJson` accept `fileMode?: number`; use `0o600` for credentials and other private state. `writeJson` also accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
 
 `copyIn` is a one-shot ingest from a trusted absolute source path: it streams the source through the boundary, atomically renames into the root, and respects `maxBytes`.
 
-`openWritable` opens a writable file with options `mode?: number`, `truncateExisting?: boolean`, `append?: boolean`. Use it for streaming output. Always close the returned handle.
+`openWritable` opens a writable file with options `mode?: number`, `truncateExisting?: boolean`, `append?: boolean`. Use it for streaming output. Prefer `await using` for cleanup.
 
 ### Inspection (advisory)
 

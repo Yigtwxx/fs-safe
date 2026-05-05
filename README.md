@@ -71,25 +71,25 @@ const opened = await fs.open("large.log"); // FileHandle for streaming
 For streams, use `open()` and the returned `FileHandle`:
 
 ```ts
-const opened = await fs.open("large.log");
-try {
+await using opened = await fs.open("large.log");
+{
   const stream = opened.handle.createReadStream();
   // consume stream
-} finally {
-  await opened.handle.close();
 }
 ```
 
+Root reads default to `DEFAULT_ROOT_MAX_BYTES` (16 MiB). Pass a larger `maxBytes`
+for expected large reads, or `Number.POSITIVE_INFINITY` when the caller has a
+separate size budget.
+
 `reader()` returns a callback that reads absolute or relative paths through the same root boundary. It is useful for APIs that accept a `(path) => Promise<Buffer>` loader. Absolute paths outside the root are rejected with `outside-workspace`. `readPath()` has the same absolute-path behavior directly.
 
-When you need a writable `FileHandle`, use `openWritable()` and close the handle yourself:
+When you need a writable `FileHandle`, use `openWritable()` and prefer `await using` for cleanup:
 
 ```ts
-const opened = await fs.openWritable("logs/current.log", { append: true });
-try {
+await using opened = await fs.openWritable("logs/current.log", { append: true });
+{
   await opened.handle.appendFile("line\n");
-} finally {
-  await opened.handle.close();
 }
 ```
 
@@ -108,7 +108,7 @@ The main entry point re-exports the common surface (`root`, `pathScope`, root pa
 | `@openclaw/fs-safe/json` | `readJsonFile`, `readJsonFileStrict`, `writeJsonAtomic`, `writeTextAtomic` |
 | `@openclaw/fs-safe/regular-file` | `readRegularFile`, `appendRegularFile`, `appendRegularFileSync`, regular-file stat helpers |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryStaged`, `movePathWithCopyFallback` |
-| `@openclaw/fs-safe/temp` | `createPrivateTempWorkspace`, `createTempFileTarget`, `writeSiblingTempFile`, `resolveSecureTempRoot` |
+| `@openclaw/fs-safe/temp` | `tempWorkspace`, `createPrivateTempWorkspace`, `createTempFileTarget`, `writeSiblingTempFile`, `resolveSecureTempRoot` |
 | `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, `ArchiveLimitError`, preflight helpers |
 | `@openclaw/fs-safe/fs` | `pathExists`, `pathExistsSync` |
 | `@openclaw/fs-safe/timing` | `withTimeout` |

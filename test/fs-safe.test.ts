@@ -1,5 +1,5 @@
 import { appendFileSync } from "node:fs";
-import { mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -62,6 +62,16 @@ describe("@openclaw/fs-safe", () => {
     await expect(readFile(path.join(rootPath, "nested/config.json"), "utf8")).resolves.toBe(
       '{\n  "ok": true\n}\n',
     );
+  });
+
+  it("limits root reads by default and allows explicit larger reads", async () => {
+    const rootPath = await tempRoot("fs-safe-default-max-");
+    const root = await openRoot(rootPath);
+    await writeFile(path.join(rootPath, "large.bin"), Buffer.alloc(16 * 1024 * 1024 + 1));
+
+    await expect(root.read("large.bin")).rejects.toMatchObject({ code: "too-large" });
+    await expect(root.readBytes("large.bin", { maxBytes: Number.POSITIVE_INFINITY })).resolves
+      .toHaveLength(16 * 1024 * 1024 + 1);
   });
 
   it("creates files only when missing", async () => {
@@ -232,6 +242,39 @@ describe("@openclaw/fs-safe", () => {
       await expect(opened.handle.readFile("utf8")).resolves.toBe("fast");
     } finally {
       await opened.handle.close();
+    }
+  });
+
+  it("supports await using for escaped read and write handles", async () => {
+    const rootPath = await tempRoot("fs-safe-dispose-");
+    const root = await openRoot(rootPath);
+    await root.write("file.txt", "fast");
+
+    {
+      await using opened = await root.open("file.txt");
+      await expect(opened.handle.readFile("utf8")).resolves.toBe("fast");
+    }
+
+    {
+      await using writable = await root.openWritable("write.txt");
+      await writable.handle.writeFile("written");
+    }
+
+    await expect(readFile(path.join(rootPath, "write.txt"), "utf8")).resolves.toBe("written");
+  });
+
+  it("honors fileMode on root text and JSON writes", async () => {
+    const rootPath = await tempRoot("fs-safe-write-mode-");
+    const root = await openRoot(rootPath);
+
+    await root.write("secret.txt", "secret", { fileMode: 0o640 });
+    await root.writeJson("secret.json", { ok: true }, { fileMode: 0o640 });
+
+    if (process.platform !== "win32") {
+      await expect(stat(path.join(rootPath, "secret.txt")).then((s) => s.mode & 0o777)).resolves
+        .toBe(0o640);
+      await expect(stat(path.join(rootPath, "secret.json")).then((s) => s.mode & 0o777)).resolves
+        .toBe(0o640);
     }
   });
 });

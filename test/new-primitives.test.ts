@@ -20,6 +20,7 @@ import {
 import {
   createPrivateTempWorkspace,
   createPrivateTempWorkspaceSync,
+  tempWorkspace,
   withPrivateTempWorkspace,
   withPrivateTempWorkspaceSync,
 } from "../src/private-temp-workspace.js";
@@ -31,6 +32,7 @@ import { pathScope } from "../src/root-paths.js";
 import { replaceFileAtomic, replaceFileAtomicSync } from "../src/replace-file.js";
 import { movePathWithCopyFallback } from "../src/move-path.js";
 import { writeSiblingTempFile } from "../src/sibling-temp.js";
+import { createSidecarLockManager } from "../src/sidecar-lock.js";
 
 let root: string;
 
@@ -83,6 +85,19 @@ describe("private temp workspaces", () => {
       tmp.cleanup();
     }
   });
+
+  it("supports the compact tempWorkspace factory and await using cleanup", async () => {
+    let workspaceDir = "";
+    {
+      await using tmp = await tempWorkspace({ rootDir: root, prefix: "compact-" });
+      workspaceDir = tmp.dir;
+      const filePath = await tmp.writePrivate("input.txt", "hello");
+      expect(filePath).toBe(tmp.file("input.txt"));
+      expect(tmp.path("input.txt")).toBe(filePath);
+    }
+
+    await expect(fs.stat(workspaceDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
 });
 
 describe("private file store", () => {
@@ -131,6 +146,26 @@ describe("private file store", () => {
     expect(readPrivateTextSync({ rootDir: root, filePath: textPath })).toBe("hello");
     expect(readPrivateJsonSync({ rootDir: root, filePath: jsonPath })).toEqual({ ok: true });
     expect(readPrivateTextSync({ rootDir: root, filePath: path.join(root, "missing") })).toBeNull();
+  });
+});
+
+describe("sidecar locks", () => {
+  it("supports await using cleanup", async () => {
+    const manager = createSidecarLockManager(`test-${Date.now()}-${Math.random()}`);
+    const targetPath = path.join(root, "locked.txt");
+    let lockPath = "";
+
+    {
+      await using lock = await manager.acquire({
+        targetPath,
+        staleMs: 60_000,
+        payload: () => ({ owner: "test" }),
+      });
+      lockPath = lock.lockPath;
+      await expect(fs.stat(lockPath)).resolves.toMatchObject({});
+    }
+
+    await expect(fs.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

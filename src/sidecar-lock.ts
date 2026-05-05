@@ -34,6 +34,7 @@ export type SidecarLockHandle = {
   lockPath: string;
   normalizedTargetPath: string;
   release: () => Promise<void>;
+  [Symbol.asyncDispose](): Promise<void>;
 };
 
 export type SidecarLockHeldEntry = {
@@ -197,10 +198,12 @@ export function createSidecarLockManager(key: string) {
     const held = state.held.get(normalizedTargetPath);
     if (held && options.allowReentrant) {
       held.count += 1;
+      const release = () => releaseHeldLock(state, normalizedTargetPath, held).then(() => undefined);
       return {
         lockPath,
         normalizedTargetPath,
-        release: () => releaseHeldLock(state, normalizedTargetPath, held).then(() => undefined),
+        release,
+        [Symbol.asyncDispose]: release,
       };
     }
 
@@ -221,11 +224,13 @@ export function createSidecarLockManager(key: string) {
         };
         state.held.set(normalizedTargetPath, createdHeld);
         await handle.writeFile(`${JSON.stringify(await options.payload(), null, 2)}\n`, "utf8");
+        const release = () =>
+          releaseHeldLock(state, normalizedTargetPath, createdHeld).then(() => undefined);
         return {
           lockPath,
           normalizedTargetPath,
-          release: () =>
-            releaseHeldLock(state, normalizedTargetPath, createdHeld).then(() => undefined),
+          release,
+          [Symbol.asyncDispose]: release,
         };
       } catch (err) {
         if (handle) {

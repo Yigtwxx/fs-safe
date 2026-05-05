@@ -4,6 +4,7 @@
 
 ```ts
 import {
+  tempWorkspace,
   createPrivateTempWorkspace,
   withPrivateTempWorkspace,
   createPrivateTempWorkspaceSync,
@@ -18,7 +19,19 @@ import {
 
 ## Private temp workspaces
 
-A private workspace is a directory created at mode `0o700` under a per-user secure temp root. It is unique per call (random suffix) and cleaned up when you call `dispose()` (or when the `with*` helper's callback returns/throws).
+A private workspace is a directory created at mode `0o700` under a caller-provided temp root. It is unique per call (random suffix) and cleaned up when you call `cleanup()` or leave an `await using` scope.
+
+### `tempWorkspace`
+
+The compact factory. It returns `{ dir, file(name), path(name), writePrivate(), read(), cleanup(), [Symbol.asyncDispose] }`.
+
+```ts
+import { tempWorkspace } from "@openclaw/fs-safe/temp";
+
+await using workspace = await tempWorkspace({ rootDir: "/tmp/my-app", prefix: "build-" });
+const inputPath = await workspace.writePrivate("input.txt", "data");
+await runBuild(workspace.dir, inputPath);
+```
 
 ### `withPrivateTempWorkspace`
 
@@ -27,24 +40,24 @@ The recommended shape. Auto-cleanup on every exit path:
 ```ts
 import { withPrivateTempWorkspace } from "@openclaw/fs-safe/temp";
 
-const result = await withPrivateTempWorkspace({ prefix: "build-" }, async (workspace) => {
-  await fs.writeFile(path.join(workspace.dir, "input.txt"), "data");
+const result = await withPrivateTempWorkspace({ rootDir: "/tmp/my-app", prefix: "build-" }, async (workspace) => {
+  await workspace.writePrivate("input.txt", "data");
   return await runBuild(workspace.dir);
 });
 ```
 
-The callback receives `workspace = { dir, dispose }`. The workspace dir is the absolute path; `dispose` is wired to run after the callback resolves or rejects.
+The callback receives the same workspace shape as `tempWorkspace()`. Cleanup is wired to run after the callback resolves or rejects.
 
 ### `createPrivateTempWorkspace`
 
 Lower-level. You manage the lifetime:
 
 ```ts
-const workspace = await createPrivateTempWorkspace({ prefix: "scan-" });
+const workspace = await createPrivateTempWorkspace({ rootDir: "/tmp/my-app", prefix: "scan-" });
 try {
   // …work in workspace.dir…
 } finally {
-  await workspace.dispose();
+  await workspace.cleanup();
 }
 ```
 
@@ -56,9 +69,10 @@ try {
 
 ```ts
 type PrivateTempWorkspaceOptions = {
-  prefix?: string;          // dir prefix (sanitized); default ""
-  rootHint?: string;        // override the secure temp root; falls back to resolveSecureTempRoot()
-  mode?: number;            // dir mode; default 0o700
+  rootDir: string;          // parent directory for workspaces
+  prefix: string;           // dir prefix (sanitized)
+  dirMode?: number;         // dir mode; default 0o700
+  fileMode?: number;        // writePrivate file mode; default 0o600
 };
 ```
 
