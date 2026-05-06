@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { sameFileIdentity } from "./file-identity.js";
+import { guardedRenameSync, guardedRmSync } from "./guarded-mutation.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type MovePathToTrashOptions = {
   allowedRoots?: Iterable<string>;
@@ -27,28 +30,68 @@ function isSameOrChildPath(candidate: string, parent: string): boolean {
 }
 
 function resolveAllowedTrashRoots(allowedRoots?: Iterable<string>): string[] {
-  const roots = [...(allowedRoots ?? [os.homedir(), os.tmpdir()])].map((root) => {
+  const roots = [...(allowedRoots ?? [os.homedir(), os.tmpdir()])].flatMap((root) => {
+    const lexicalRoot = path.resolve(root);
     try {
-      return path.resolve(fs.realpathSync.native(root));
+      // Keep both spellings: broken symlink targets cannot be realpathed and
+      // may only compare equal to the caller's lexical allowed root.
+      return [path.resolve(fs.realpathSync.native(root)), lexicalRoot];
     } catch {
-      return path.resolve(root);
+      return [lexicalRoot];
     }
   });
   return [...new Set(roots)];
 }
 
-function assertAllowedTrashTarget(targetPath: string, allowedRoots?: Iterable<string>): void {
-  let resolvedTargetPath = path.resolve(targetPath);
+type TrashTargetGuard = {
+  path: string;
+  realPath: string;
+  realPathResolved: boolean;
+  stat: fs.Stats;
+};
+
+function resolveTrashTargetPath(targetPath: string): { path: string; resolved: boolean } {
   try {
-    resolvedTargetPath = path.resolve(fs.realpathSync.native(targetPath));
+    return { path: path.resolve(fs.realpathSync.native(targetPath)), resolved: true };
   } catch {
-    // The subsequent move will surface missing or inaccessible targets.
+    // Broken symlinks are valid trash targets. Fall back to the lexical path,
+    // then rely on lstat identity so the move renames the symlink itself.
+    return { path: path.resolve(targetPath), resolved: false };
   }
+}
+
+function assertAllowedTrashTarget(
+  targetPath: string,
+  allowedRoots?: Iterable<string>,
+): TrashTargetGuard {
+  const stat = fs.lstatSync(path.resolve(targetPath));
+  const resolvedTarget = resolveTrashTargetPath(targetPath);
+  const resolvedTargetPath = resolvedTarget.path;
   const isAllowed = resolveAllowedTrashRoots(allowedRoots).some(
     (root) => resolvedTargetPath !== root && isSameOrChildPath(resolvedTargetPath, root),
   );
   if (!isAllowed) {
     throw new Error(`Refusing to trash path outside allowed roots: ${targetPath}`);
+  }
+  return {
+    path: path.resolve(targetPath),
+    realPath: resolvedTargetPath,
+    realPathResolved: resolvedTarget.resolved,
+    stat,
+  };
+}
+
+function assertTrashTargetGuard(guard: TrashTargetGuard): void {
+  const stat = fs.lstatSync(guard.path);
+  if (!sameFileIdentity(stat, guard.stat)) {
+    throw new Error(`Refusing to trash path after it changed: ${guard.path}`);
+  }
+  const current = resolveTrashTargetPath(guard.path);
+  if (guard.realPathResolved && (!current.resolved || current.path !== guard.realPath)) {
+    throw new Error(`Refusing to trash path after it changed: ${guard.path}`);
+  }
+  if (!guard.realPathResolved && current.resolved) {
+    throw new Error(`Refusing to trash path after it changed: ${guard.path}`);
   }
 }
 
@@ -103,9 +146,11 @@ function reserveTrashDestination(trashDir: string, base: string, timestamp: numb
   return resolveContainedPath(container, base);
 }
 
-function movePathToDestination(targetPath: string, dest: string): boolean {
+function movePathToDestination(target: TrashTargetGuard, dest: string): boolean {
+  getFsSafeTestHooks()?.beforeTrashMove?.(target.path, dest);
+  assertTrashTargetGuard(target);
   try {
-    fs.renameSync(targetPath, dest);
+    guardedRenameSync({ from: target.path, to: dest });
     return true;
   } catch (error) {
     if (getFsErrorCode(error) !== "EXDEV") {
@@ -117,8 +162,10 @@ function movePathToDestination(targetPath: string, dest: string): boolean {
   }
 
   try {
-    fs.cpSync(targetPath, dest, { recursive: true, force: false, errorOnExist: true });
-    fs.rmSync(targetPath, { recursive: true, force: false });
+    assertTrashTargetGuard(target);
+    fs.cpSync(target.path, dest, { recursive: true, force: false, errorOnExist: true });
+    assertTrashTargetGuard(target);
+    guardedRmSync({ target: target.path, recursive: true, force: false, verifyAfter: false });
     return true;
   } catch (error) {
     if (isTrashDestinationCollision(error)) {
@@ -134,12 +181,12 @@ export async function movePathToTrash(
 ): Promise<string> {
   // Avoid resolving external trash helpers through the service PATH during cleanup.
   const base = trashBaseName(targetPath);
-  assertAllowedTrashTarget(targetPath, options.allowedRoots);
+  const target = assertAllowedTrashTarget(targetPath, options.allowedRoots);
   const trashDir = resolveTrashDir();
   const timestamp = Date.now();
   for (let attempt = 0; attempt < TRASH_DESTINATION_RETRY_LIMIT; attempt += 1) {
     const dest = reserveTrashDestination(trashDir, base, timestamp);
-    if (movePathToDestination(targetPath, dest)) {
+    if (movePathToDestination(target, dest)) {
       return dest;
     }
   }

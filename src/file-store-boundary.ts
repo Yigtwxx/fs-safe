@@ -3,15 +3,17 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import {
+  assertSyncDirectoryGuard as assertDirectoryGuardSync,
+  createSyncDirectoryGuard,
+  type SyncDirectoryGuard,
+} from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { isPathInside } from "./path.js";
 import { resolveOpenedFileRealPathForHandle, root, type Root } from "./root.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 
-export type SyncParentGuard = {
-  dir: string;
-  realPath: string;
-};
+export type SyncParentGuard = SyncDirectoryGuard;
 
 function parentRelativePath(relativePath: string): string {
   const parent = path.posix.dirname(relativePath);
@@ -132,13 +134,15 @@ export async function writeStreamToTempSource(params: {
 }
 
 export function assertSyncDirectoryGuard(guard: SyncParentGuard): void {
-  const stat = syncFs.lstatSync(guard.dir);
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new FsSafeError("not-file", `store directory component must be a directory: ${guard.dir}`);
-  }
-  const realPath = syncFs.realpathSync(guard.dir);
-  if (realPath !== guard.realPath) {
-    throw new FsSafeError("path-mismatch", "store directory changed during write");
+  try {
+    assertDirectoryGuardSync(guard);
+  } catch (error) {
+    if (error instanceof FsSafeError && error.code === "path-mismatch") {
+      throw new FsSafeError("path-mismatch", "store directory changed during write", {
+        cause: error,
+      });
+    }
+    throw error;
   }
 }
 
@@ -191,7 +195,7 @@ export function ensureParentSync(params: {
     chmodDirectorySyncBestEffort(current, params.mode);
   }
 
-  const guard = { dir, realPath: syncFs.realpathSync(dir) };
+  const guard = createSyncDirectoryGuard(dir);
   assertSyncDirectoryGuard(guard);
   return guard;
 }

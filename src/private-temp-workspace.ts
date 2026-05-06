@@ -8,6 +8,7 @@ import {
   type FileStore,
   type FileStoreSync,
 } from "./file-store.js";
+import { openRootFileSync } from "./root-file.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 
 export type TempWorkspaceOptions = {
@@ -55,24 +56,23 @@ function sanitizeTempPrefix(prefix: string): string {
 }
 
 function resolveWorkspaceLeaf(dir: string, fileName: string): string {
-  const raw = fileName.trim();
-  if (
-    !raw ||
-    raw === "." ||
-    raw === ".." ||
-    raw.includes("\0") ||
-    raw.includes("/") ||
-    raw.includes("\\") ||
-    path.basename(raw) !== raw
-  ) {
-    throw new Error(`Invalid temp workspace file name: ${JSON.stringify(fileName)}`);
-  }
-  return path.join(dir, raw);
+  return path.join(dir, assertWorkspaceFileName(fileName));
 }
 
 function assertWorkspaceFileName(fileName: string): string {
-  resolveWorkspaceLeaf(".", fileName);
-  return fileName.trim();
+  const value = fileName.trim();
+  if (
+    !value ||
+    value === "." ||
+    value === ".." ||
+    value.includes("\0") ||
+    value.includes("/") ||
+    value.includes("\\") ||
+    path.basename(value) !== value
+  ) {
+    throw new Error(`Invalid temp workspace file name: ${JSON.stringify(fileName)}`);
+  }
+  return value;
 }
 
 async function ensurePrivateDirectory(dir: string, mode: number): Promise<void> {
@@ -208,8 +208,20 @@ export function tempWorkspaceSync(
         trailingNewline: writeOptions?.trailingNewline,
       }),
     read: (fileName) => {
-      const filePath = store.path(assertWorkspaceFileName(fileName));
-      return fsSync.readFileSync(filePath);
+      const opened = openRootFileSync({
+        absolutePath: store.path(assertWorkspaceFileName(fileName)),
+        rootPath: dir,
+        boundaryLabel: "temp workspace",
+        rejectHardlinks: true,
+      });
+      if (!opened.ok) {
+        throw Object.assign(new Error(`File not found: ${fileName}`), { code: "ENOENT" });
+      }
+      try {
+        return fsSync.readFileSync(opened.fd);
+      } finally {
+        fsSync.closeSync(opened.fd);
+      }
     },
     cleanup: () => {
       try {

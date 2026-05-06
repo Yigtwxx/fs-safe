@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { replaceFileAtomic } from "./replace-file.js";
+import { assertSafePathSegment } from "./safe-path-segment.js";
 
 export type JsonDurableQueueEntryPaths = {
   jsonPath: string;
@@ -23,6 +24,10 @@ function getErrnoCode(error: unknown): string | null {
   return error && typeof error === "object" && "code" in error
     ? String((error as { code?: unknown }).code)
     : null;
+}
+
+function assertSafeQueueEntryId(id: string): void {
+  assertSafePathSegment(id, { label: "queue entry id" });
 }
 
 export async function unlinkBestEffort(filePath: string): Promise<void> {
@@ -62,6 +67,7 @@ export function resolveJsonDurableQueueEntryPaths(
   queueDir: string,
   id: string,
 ): JsonDurableQueueEntryPaths {
+  assertSafeQueueEntryId(id);
   return {
     jsonPath: path.join(queueDir, `${id}.json`),
     deliveredPath: path.join(queueDir, `${id}.delivered`),
@@ -193,6 +199,7 @@ export async function moveJsonDurableQueueEntryToFailed(params: {
   failedDir: string;
   id: string;
 }): Promise<void> {
+  assertSafeQueueEntryId(params.id);
   await fs.promises.mkdir(params.failedDir, { recursive: true, mode: 0o700 });
   await fs.promises.rename(
     path.join(params.queueDir, `${params.id}.json`),

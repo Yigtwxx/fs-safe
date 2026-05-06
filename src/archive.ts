@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
@@ -33,6 +32,7 @@ import {
 } from "./archive-tar.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
 import { isNotFoundPathError } from "./path.js";
+import { writeSiblingTempFile } from "./sibling-temp.js";
 import { withTimeout } from "./timing.js";
 
 export type ArchiveLogger = {
@@ -93,13 +93,6 @@ async function cleanupPartialRegularFile(filePath: string): Promise<void> {
   if (stat.isFile()) {
     await fs.unlink(filePath).catch(() => undefined);
   }
-}
-
-function buildArchiveAtomicTempPath(targetPath: string): string {
-  return path.join(
-    path.dirname(targetPath),
-    `.${path.basename(targetPath)}.${process.pid}.${randomUUID()}.tmp`,
-  );
 }
 
 type ZipEntry = {
@@ -184,29 +177,34 @@ async function writeZipFileEntry(params: {
   const destinationPath = params.outPath;
 
   let tempHandle: FileHandle | null = null;
-  let tempPath: string | null = null;
   let handleClosedByStream = false;
 
   try {
-    tempPath = buildArchiveAtomicTempPath(destinationPath);
-    tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o666);
-    const writable = tempHandle.createWriteStream();
-    writable.once("close", () => {
-      handleClosedByStream = true;
-    });
+    await writeSiblingTempFile({
+      dir: path.dirname(destinationPath),
+      tempPrefix: `.${path.basename(destinationPath)}.fs-safe-archive`,
+      chmodDir: false,
+      writeTemp: async (tempPath) => {
+        tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o666);
+        const writable = tempHandle.createWriteStream();
+        writable.once("close", () => {
+          handleClosedByStream = true;
+        });
 
-    await pipeline(
-      readable,
-      createExtractBudgetTransform({ onChunkBytes: params.budget.addBytes }),
-      writable,
-    );
-    if (!handleClosedByStream) {
-      await tempHandle.close().catch(() => undefined);
-      handleClosedByStream = true;
-    }
-    tempHandle = null;
-    await fs.rename(tempPath, destinationPath);
-    tempPath = null;
+        await pipeline(
+          readable,
+          createExtractBudgetTransform({ onChunkBytes: params.budget.addBytes }),
+          writable,
+        );
+        if (!handleClosedByStream) {
+          await tempHandle.close().catch(() => undefined);
+          handleClosedByStream = true;
+        }
+        tempHandle = null;
+        return destinationPath;
+      },
+      resolveFinalPath: (filePath) => filePath,
+    });
 
     // Best-effort permission restore for zip entries created on unix.
     if (typeof params.entry.unixPermissions === "number") {
@@ -216,15 +214,12 @@ async function writeZipFileEntry(params: {
       }
     }
   } catch (err) {
-    if (tempPath) {
-      await fs.rm(tempPath, { force: true }).catch(() => undefined);
-    } else {
-      await cleanupPartialRegularFile(destinationPath).catch(() => undefined);
-    }
+    await cleanupPartialRegularFile(destinationPath).catch(() => undefined);
     throw err;
   } finally {
-    if (tempHandle && !handleClosedByStream) {
-      await tempHandle.close().catch(() => undefined);
+    const openTempHandle = tempHandle as FileHandle | null;
+    if (openTempHandle && !handleClosedByStream) {
+      await openTempHandle.close().catch(() => undefined);
     }
   }
 }

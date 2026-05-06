@@ -68,7 +68,12 @@ If `beforeRename` throws, the rename is skipped and the temp file is removed —
 
 ### `EPERM` and copy fallback
 
-On systems where `rename` fails with `EPERM`/`EEXIST`, pass `copyFallbackOnPermissionError: true` to fall back to copy + unlink. The fallback refuses symlink destinations before copying so it does not write through a replaced destination link.
+On systems where `rename` fails with `EPERM`/`EEXIST`, pass
+`copyFallbackOnPermissionError: true` to fall back to a non-atomic copy
+replacement. The fallback removes the old destination, opens the replacement
+with exclusive/no-follow flags where the platform supports them, and refuses
+known symlink destinations so it does not write through a replaced destination
+link.
 
 ### Sync variant
 
@@ -111,15 +116,17 @@ await writeTextAtomic("/srv/workspace/rendered.md", rendered, {
 
 ## `movePathWithCopyFallback`
 
-Rename a path. If the rename fails with `EXDEV` (cross-device) or `EPERM`, fall back to copy + remove. Preserves atomicity at the destination by writing the copy through `replaceFileAtomic` (for files) or staged-rename (for directories).
+Rename a path. If the rename fails with `EXDEV` (cross-device), fall back to
+copying into a staged sibling path, renaming that staged path into place, and
+then removing the source. The fallback avoids buffering regular files into
+memory and does not tighten the destination parent directory mode.
 
 ```ts
 import { movePathWithCopyFallback } from "@openclaw/fs-safe/atomic";
 
 await movePathWithCopyFallback({
-  source: "/srv/cache/blob.bin",
-  destination: "/srv/persistent/blob.bin",
-  overwrite: true,
+  from: "/srv/cache/blob.bin",
+  to: "/srv/persistent/blob.bin",
 });
 ```
 

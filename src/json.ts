@@ -75,8 +75,8 @@ function renameJsonFileWithFallback(tmpPath: string, pathname: string) {
         fsSync.renameSync(tmpPath, pathname);
         return;
       }
-      fsSync.copyFileSync(tmpPath, pathname);
-      fsSync.rmSync(tmpPath, { force: true });
+      fsSync.rmSync(pathname, { force: true });
+      fsSync.renameSync(tmpPath, pathname);
       return;
     }
     throw error;

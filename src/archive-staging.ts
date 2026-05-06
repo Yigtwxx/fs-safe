@@ -1,9 +1,16 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
+import {
+  assertAsyncDirectoryGuard,
+  createAsyncDirectoryGuard,
+  type AsyncDirectoryGuard,
+} from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { root } from "./root.js";
+import { resolveOpenedFileRealPathForHandle, root } from "./root.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 
 const ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK = "archive entry traverses symlink in destination";
 const ARCHIVE_STAGING_MODE = 0o700;
@@ -28,6 +35,31 @@ function symlinkTraversalError(originalPath: string): ArchiveSecurityError {
     "destination-symlink-traversal",
     `${ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK}: ${originalPath}`,
   );
+}
+
+async function createDirectoryIdentityGuard(dir: string): Promise<AsyncDirectoryGuard> {
+  try {
+    return await createAsyncDirectoryGuard(dir);
+  } catch (err) {
+    if (err instanceof FsSafeError && err.code === "not-file") {
+      throw new ArchiveSecurityError("destination-symlink", "archive destination is a symlink");
+    }
+    throw err;
+  }
+}
+
+async function assertDirectoryIdentityGuard(guard: AsyncDirectoryGuard): Promise<void> {
+  try {
+    await assertAsyncDirectoryGuard(guard);
+  } catch (err) {
+    if (err instanceof FsSafeError) {
+      throw new ArchiveSecurityError(
+        "destination-symlink-traversal",
+        "archive destination changed during extraction",
+      );
+    }
+    throw err;
+  }
 }
 
 export async function prepareArchiveDestinationDir(destDir: string): Promise<string> {
@@ -95,14 +127,20 @@ export async function prepareArchiveOutputPath(params: {
   originalPath: string;
   isDirectory: boolean;
 }): Promise<void> {
+  const targetRoot = await root(params.destinationRealDir);
+  const destinationGuard = await createDirectoryIdentityGuard(params.destinationRealDir);
+  const relPath = params.relPath.split(path.sep).join(path.posix.sep);
   await assertNoSymlinkTraversal({
     rootDir: params.destinationDir,
-    relPath: params.relPath,
+    relPath,
     originalPath: params.originalPath,
   });
 
   if (params.isDirectory) {
-    await fs.mkdir(params.outPath, { recursive: true });
+    await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("mkdir", params.outPath);
+    await assertDirectoryIdentityGuard(destinationGuard);
+    await targetRoot.mkdir(relPath);
+    await assertDirectoryIdentityGuard(destinationGuard);
     await assertResolvedInsideDestination({
       destinationRealDir: params.destinationRealDir,
       targetPath: params.outPath,
@@ -111,13 +149,57 @@ export async function prepareArchiveOutputPath(params: {
     return;
   }
 
-  const parentDir = path.dirname(params.outPath);
-  await fs.mkdir(parentDir, { recursive: true });
+  const parentRel = path.posix.dirname(relPath);
+  if (parentRel !== ".") {
+    await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("mkdir", path.dirname(params.outPath));
+    await assertDirectoryIdentityGuard(destinationGuard);
+    await targetRoot.mkdir(parentRel);
+    await assertDirectoryIdentityGuard(destinationGuard);
+  }
   await assertResolvedInsideDestination({
     destinationRealDir: params.destinationRealDir,
-    targetPath: parentDir,
+    targetPath: path.dirname(params.outPath),
     originalPath: params.originalPath,
   });
+}
+
+async function chmodInsideDestinationBestEffort(params: {
+  destinationRealDir: string;
+  destinationPath: string;
+  mode: number;
+  originalPath: string;
+}): Promise<void> {
+  await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("chmod", params.destinationPath);
+  const destinationGuard = await createDirectoryIdentityGuard(params.destinationRealDir);
+  await assertDirectoryIdentityGuard(destinationGuard);
+  const noFollowFlag =
+    process.platform !== "win32" && "O_NOFOLLOW" in fsSync.constants
+      ? fsSync.constants.O_NOFOLLOW
+      : 0;
+  const handle = await fs
+    .open(params.destinationPath, fsSync.constants.O_RDONLY | noFollowFlag)
+    .catch(() => null);
+  if (!handle) {
+    const stat = await fs.lstat(params.destinationPath).catch(() => null);
+    if (stat?.isSymbolicLink()) {
+      throw symlinkTraversalError(params.originalPath);
+    }
+    return;
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isDirectory() && !stat.isFile()) {
+      return;
+    }
+    const realPath = await resolveOpenedFileRealPathForHandle(handle, params.destinationPath);
+    if (!isPathInside(params.destinationRealDir, realPath)) {
+      throw symlinkTraversalError(params.originalPath);
+    }
+    await handle.chmod(params.mode).catch(() => undefined);
+    await assertDirectoryIdentityGuard(destinationGuard);
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
 }
 
 async function applyStagedEntryMode(params: {
@@ -133,7 +215,12 @@ async function applyStagedEntryMode(params: {
     originalPath: params.originalPath,
   });
   if (params.mode !== 0) {
-    await fs.chmod(destinationPath, params.mode).catch(() => undefined);
+    await chmodInsideDestinationBestEffort({
+      destinationRealDir: params.destinationRealDir,
+      destinationPath,
+      mode: params.mode,
+      originalPath: params.originalPath,
+    });
   }
 }
 

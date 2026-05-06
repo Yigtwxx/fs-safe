@@ -229,4 +229,21 @@ describe("trash edge paths", () => {
       await fs.rm(path.dirname(copiedDest), { recursive: true, force: true });
     }
   });
+
+  it.runIf(process.platform !== "win32")("moves broken symlinks to trash", async () => {
+    const root = await tempRoot("fs-safe-trash-broken-link-");
+    const linkPath = path.join(root, "broken-link");
+    const missingTarget = path.join(root, "missing-target");
+    await fs.symlink(missingTarget, linkPath);
+
+    const dest = await movePathToTrash(linkPath, { allowedRoots: [root] });
+    try {
+      // Broken links cannot be realpathed; the guard keeps lstat identity and
+      // renames the link itself instead of requiring the target to exist.
+      await expect(fs.readlink(dest)).resolves.toBe(missingTarget);
+      await expect(fs.lstat(linkPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await fs.rm(path.dirname(dest), { recursive: true, force: true });
+    }
+  });
 });

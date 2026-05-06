@@ -2,7 +2,9 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { createAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
+import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
 import { openPinnedFileSync } from "./pinned-open.js";
 
@@ -241,6 +243,7 @@ export async function writeSecretFileAtomic(params: {
   const resolvedRootReal = await fsp.realpath(resolvedRoot);
   const parentDir = await fsp.realpath(intendedParentDir);
   assertRealPathWithinRoot(resolvedRootReal, parentDir);
+  const parentGuard = await createAsyncDirectoryGuard(parentDir);
   const fileName = path.basename(resolvedFile);
   const finalFilePath = path.join(parentDir, fileName);
 
@@ -276,7 +279,9 @@ export async function writeSecretFileAtomic(params: {
     if (refreshedParentReal !== parentDir) {
       throw new Error(`Private secret parent directory changed during write for ${finalFilePath}.`);
     }
-    await fsp.rename(tempPath, finalFilePath);
+    await withAsyncDirectoryGuards([parentGuard], async () => {
+      await fsp.rename(tempPath, finalFilePath);
+    });
     createdTemp = false;
     await enforcePrivatePathMode(finalFilePath, mode, "file");
   } finally {

@@ -87,4 +87,11 @@ describe("durable JSON queues", () => {
     ).resolves.toEqual([{ ok: true }]);
     await expect(fs.access(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("rejects whitespace-padded queue ids", async () => {
+    const queueDir = path.join(root, "queue");
+
+    expect(() => resolveJsonDurableQueueEntryPaths(queueDir, "job ")).toThrow();
+    expect(() => resolveJsonDurableQueueEntryPaths(queueDir, " job")).toThrow();
+  });
 });

@@ -3,7 +3,13 @@ import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Readable } from "node:stream";
+import { createSyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import {
+  pruneExpiredStoreEntries,
+  type FileStorePruneOptions,
+} from "./file-store-prune.js";
+export type { FileStorePruneOptions } from "./file-store-prune.js";
 import {
   assertSyncDirectoryGuard,
   ensureParentInRoot,
@@ -15,7 +21,9 @@ import {
 import { createJsonStore, type JsonFileStoreOptions, type JsonStore } from "./json-document-store.js";
 import { isPathInside, resolveSafeRelativePath } from "./path.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
+import { matchRootFileOpenFailure, openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type FileStoreOptions = {
   rootDir: string;
@@ -33,13 +41,6 @@ export type FileStoreWriteOptions = {
 };
 
 export type FileStoreReadOptions = RootReadOptions & { encoding?: BufferEncoding };
-
-export type FileStorePruneOptions = {
-  ttlMs: number;
-  recursive?: boolean;
-  maxDepth?: number;
-  pruneEmptyDirs?: boolean;
-};
 
 export type FileStore = {
   readonly rootDir: string;
@@ -128,10 +129,38 @@ function assertMaxBytes(size: number, maxBytes?: number): void {
 }
 
 function isNotFound(error: unknown): boolean {
+  if (!error) {
+    return false;
+  }
   return error instanceof FsSafeError
     ? error.code === "not-found"
     : (error as NodeJS.ErrnoException).code === "ENOENT" ||
         (error as NodeJS.ErrnoException).code === "ENOTDIR";
+}
+
+function handleSyncStoreReadOpenFailure(opened: RootFileOpenFailure): null {
+  return matchRootFileOpenFailure<null>(opened, {
+    path: (failure) => {
+      if (isNotFound(failure.error)) {
+        return null;
+      }
+      throw new FsSafeError("path-mismatch", "store target changed during read", {
+        cause: failure.error instanceof Error ? failure.error : undefined,
+      });
+    },
+    validation: (failure) => {
+      // Validation failures mean the path existed but violated store policy
+      // (directory, hardlink, symlink race). Do not report them as missing.
+      throw new FsSafeError("path-mismatch", "store target failed read validation", {
+        cause: failure.error instanceof Error ? failure.error : undefined,
+      });
+    },
+    fallback: (failure) => {
+      throw new FsSafeError("path-mismatch", "store target changed during read", {
+        cause: failure.error instanceof Error ? failure.error : undefined,
+      });
+    },
+  });
 }
 
 async function copyIntoRoot(params: {
@@ -359,43 +388,12 @@ export function fileStore(options: FileStoreOptions): FileStore {
       );
     },
     pruneExpired: async (pruneOptions) => {
-      const now = Date.now();
-      const recursive = pruneOptions.recursive ?? false;
-      const maxDepth = pruneOptions.maxDepth;
-      const pruneEmptyDirs =
-        (recursive || maxDepth !== undefined) && (pruneOptions.pruneEmptyDirs ?? false);
-      async function pruneDir(dir: string, depth: number): Promise<boolean> {
-        const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
-        for (const entry of entries) {
-          const fullPath = path.join(dir, entry.name);
-          const stat = await fs.lstat(fullPath).catch(() => null);
-          if (!stat || stat.isSymbolicLink()) {
-            continue;
-          }
-          if (stat.isDirectory()) {
-            const shouldDescend = maxDepth !== undefined ? depth < maxDepth : recursive;
-            if (shouldDescend && (await pruneDir(fullPath, depth + 1))) {
-              await fs.rmdir(fullPath).catch(() => undefined);
-            }
-            continue;
-          }
-          if (stat.isFile() && now - stat.mtimeMs > pruneOptions.ttlMs) {
-            await fs.rm(fullPath, { force: true }).catch(() => undefined);
-          }
-        }
-        if (!pruneEmptyDirs) {
-          return false;
-        }
-        const remaining = await fs.readdir(dir).catch(() => null);
-        return remaining !== null && remaining.length === 0;
-      }
-      await fs.mkdir(rootDir, { recursive: true, mode: dirMode });
-      await pruneDir(rootDir, 0);
+      await pruneExpiredStoreEntries({ rootDir, dirMode, options: pruneOptions });
     },
   };
 }
 
-function ensurePrivateDirectorySync(rootDir: string, targetDir: string, mode: number): void {
+function ensurePrivateDirectorySync(rootDir: string, targetDir: string, mode: number): SyncParentGuard {
   const root = path.resolve(rootDir);
   const target = path.resolve(targetDir);
   assertStoreFilePath(root, target);
@@ -437,6 +435,9 @@ function ensurePrivateDirectorySync(rootDir: string, targetDir: string, mode: nu
       // Best-effort on platforms that do not enforce POSIX modes.
     }
   }
+  const guard = createSyncDirectoryGuard(target);
+  assertSyncDirectoryGuard(guard);
+  return guard;
 }
 
 function writeFileSyncAtomic(params: {
@@ -451,7 +452,7 @@ function writeFileSyncAtomic(params: {
   assertStoreFilePath(params.rootDir, filePath);
   let parentGuard: SyncParentGuard | undefined;
   if (params.privateMode) {
-    ensurePrivateDirectorySync(params.rootDir, path.dirname(filePath), params.dirMode);
+    parentGuard = ensurePrivateDirectorySync(params.rootDir, path.dirname(filePath), params.dirMode);
     try {
       const stat = syncFs.lstatSync(filePath);
       if (stat.isSymbolicLink() || !stat.isFile()) {
@@ -475,6 +476,7 @@ function writeFileSyncAtomic(params: {
   );
   let tempExists = false;
   try {
+    getFsSafeTestHooks()?.beforeFileStoreSyncPrivateWrite?.(filePath);
     if (parentGuard) {
       assertSyncDirectoryGuard(parentGuard);
     }
@@ -540,21 +542,22 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
     path: (relativePath) => resolveStorePath(rootDir, relativePath),
     readTextIfExists: (relativePath, readOptions) => {
       const targetPath = resolveStorePath(rootDir, relativePath);
+      const opened = openRootFileSync({
+        absolutePath: targetPath,
+        rootPath: rootDir,
+        boundaryLabel: "store root",
+        rejectHardlinks: privateMode,
+      });
+      if (!opened.ok) {
+        return handleSyncStoreReadOpenFailure(opened);
+      }
       try {
-        const stat = syncFs.lstatSync(targetPath);
-        if (stat.isSymbolicLink() || !stat.isFile()) {
-          throw new FsSafeError("not-file", "store target is not a file");
-        }
-        assertMaxBytes(stat.size, readOptions?.maxBytes ?? maxBytes);
-        if (privateMode && stat.nlink > 1) {
-          throw new FsSafeError("hardlink", "private store target must not be hardlinked");
-        }
-        return syncFs.readFileSync(targetPath, "utf8");
-      } catch (error) {
-        if (isNotFound(error)) {
-          return null;
-        }
-        throw error;
+        assertMaxBytes(opened.stat.size, readOptions?.maxBytes ?? maxBytes);
+        const raw = syncFs.readFileSync(opened.fd, "utf8");
+        assertMaxBytes(Buffer.byteLength(raw, "utf8"), readOptions?.maxBytes ?? maxBytes);
+        return raw;
+      } finally {
+        syncFs.closeSync(opened.fd);
       }
     },
     readJsonIfExists: <T = unknown>(relativePath: string, readOptions?: { maxBytes?: number }) => {
