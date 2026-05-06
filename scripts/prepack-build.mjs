@@ -1,14 +1,21 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 
-const tscBin =
-  process.platform === "win32" ? "node_modules/.bin/tsc.cmd" : "node_modules/.bin/tsc";
+const require = createRequire(import.meta.url);
+
+function resolveTypeScriptCompiler() {
+  try {
+    return require.resolve("typescript/bin/tsc");
+  } catch {
+    return undefined;
+  }
+}
 
 function run(command, args, env = {}) {
   const result = spawnSync(command, args, {
     stdio: "inherit",
-    shell: process.platform === "win32",
     env: { ...process.env, ...env },
   });
   if (result.status !== 0) {
@@ -16,7 +23,9 @@ function run(command, args, env = {}) {
   }
 }
 
-if (!existsSync(tscBin)) {
+let tscBin = resolveTypeScriptCompiler();
+
+if (!tscBin || !existsSync(tscBin)) {
   run(
     "pnpm",
     [
@@ -32,6 +41,10 @@ if (!existsSync(tscBin)) {
       PNPM_CONFIG_LOCKFILE_ONLY: "false",
     },
   );
+  tscBin = resolveTypeScriptCompiler();
+  if (!tscBin || !existsSync(tscBin)) {
+    throw new Error("TypeScript compiler is unavailable after installing dev dependencies");
+  }
 }
 
-run(tscBin, ["-p", "tsconfig.json"]);
+run(process.execPath, [tscBin, "-p", "tsconfig.json"]);
