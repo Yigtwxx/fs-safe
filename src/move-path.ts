@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { guardedRename, guardedRm } from "./guarded-mutation.js";
-import { replaceFileAtomic } from "./replace-file.js";
 
 export type MovePathWithCopyFallbackOptions = {
   from: string;
@@ -20,19 +19,6 @@ export async function movePathWithCopyFallback(
       throw error;
     }
   }
-  const sourceStat = await fs.lstat(options.from);
-  if (sourceStat.isFile()) {
-    await replaceFileAtomic({
-      filePath: options.to,
-      content: await fs.readFile(options.from),
-      mode: sourceStat.mode & 0o777,
-      syncTempFile: true,
-      syncParentDir: true,
-    });
-    await guardedRm({ target: options.from, force: true, verifyAfter: false });
-    return;
-  }
-
   const targetDir = path.dirname(path.resolve(options.to));
   const staged = path.join(targetDir, `.fs-safe-move-${process.pid}-${randomUUID()}.tmp`);
   try {

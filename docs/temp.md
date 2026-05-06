@@ -175,6 +175,10 @@ const result = await writeSiblingTempFile<string>({
 
 `writeSiblingTempFile` chooses a random sibling name in `dir`, calls your `writeTemp()` callback, validates that `resolveFinalPath(result)` is still inside that same directory, and renames the temp file there.
 
+By default it preserves the historical private-helper behavior of chmodding
+`dir` to `dirMode` (default `0o700`). Pass `chmodDir: false` when the directory
+is a public staging/output path whose existing mode must be preserved.
+
 ### `writeViaSiblingTempPath`
 
 A higher-level convenience for callback-based producers. The callback writes to

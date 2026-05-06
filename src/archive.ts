@@ -183,6 +183,7 @@ async function writeZipFileEntry(params: {
     await writeSiblingTempFile({
       dir: path.dirname(destinationPath),
       tempPrefix: `.${path.basename(destinationPath)}.fs-safe-archive`,
+      chmodDir: false,
       writeTemp: async (tempPath) => {
         tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o666);
         const writable = tempHandle.createWriteStream();

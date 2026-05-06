@@ -7,7 +7,7 @@
 - Reject `fileStore()` and `fileStoreSync()` writes through symlinked parent directories so store commits cannot escape the configured root.
 - Harden Root fallback mutators, archive merges, private store reads/writes, durable queue ids, JSON fallback writes, sibling temp writes, temp filename sanitization, and trash moves against symlink-swap and path traversal edge cases.
 - Centralize safe path segment validation, directory identity guards, and guarded mutation wrappers so future filesystem helpers reuse the same race-resistant checks.
-- Route JSON sync writes, archive ZIP staging, temp workspace sync reads, secret-file commits, and atomic move/replace fallbacks through shared pinned-read or guarded-write primitives.
+- Route archive ZIP staging, temp workspace sync reads, secret-file commits, and atomic move/replace fallbacks through shared pinned-read or guarded-write primitives without applying private-directory modes to public paths.
 
 ### Tests
 

@@ -116,7 +116,10 @@ await writeTextAtomic("/srv/workspace/rendered.md", rendered, {
 
 ## `movePathWithCopyFallback`
 
-Rename a path. If the rename fails with `EXDEV` (cross-device) or `EPERM`, fall back to copy + remove. Preserves atomicity at the destination by writing the copy through `replaceFileAtomic` (for files) or staged-rename (for directories).
+Rename a path. If the rename fails with `EXDEV` (cross-device), fall back to
+copying into a staged sibling path, renaming that staged path into place, and
+then removing the source. The fallback avoids buffering regular files into
+memory and does not tighten the destination parent directory mode.
 
 ```ts
 import { movePathWithCopyFallback } from "@openclaw/fs-safe/atomic";

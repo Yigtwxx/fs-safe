@@ -2,12 +2,15 @@ import fsSync from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import JSZip from "jszip";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { extractArchive } from "../src/archive.js";
 import { configureFsSafePython, root as openRoot } from "../src/index.js";
 import { prepareArchiveDestinationDir, prepareArchiveOutputPath, mergeExtractedTreeIntoDestination } from "../src/archive-staging.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { writeJsonSync } from "../src/json.js";
 import { moveJsonDurableQueueEntryToFailed, resolveJsonDurableQueueEntryPaths } from "../src/json-durable-queue.js";
+import { movePathWithCopyFallback } from "../src/move-path.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import { replaceFileAtomic } from "../src/replace-file.js";
 import { writeViaSiblingTempPath } from "../src/sibling-temp.js";
@@ -269,6 +272,17 @@ describe("security finding regressions", () => {
     await expect(fsp.readFile(target, "utf8")).resolves.toContain('"ok": true');
   });
 
+  it.runIf(process.platform !== "win32")("does not chmod existing parents during sync JSON writes", async () => {
+    const base = await tempRoot("fs-safe-json-parent-mode-");
+    const parent = path.join(base, "shared");
+    await fsp.mkdir(parent, { mode: 0o755 });
+    await fsp.chmod(parent, 0o755);
+
+    writeJsonSync(path.join(parent, "state.json"), { ok: true });
+
+    expect((await fsp.stat(parent)).mode & 0o777).toBe(0o755);
+  });
+
   it.runIf(process.platform !== "win32")("does not copy atomic fallback through a raced destination symlink", async () => {
     const base = await tempRoot("fs-safe-atomic-fallback-race-");
     const outside = await tempRoot("fs-safe-atomic-fallback-outside-");
@@ -304,6 +318,55 @@ describe("security finding regressions", () => {
 
     await expect(fsp.readFile(outsideFile, "utf8")).resolves.toBe("outside");
     await expect(fsp.readFile(target, "utf8")).resolves.toBe("new");
+  });
+
+  it.runIf(process.platform !== "win32")("stages EXDEV file moves without buffering or chmodding parents", async () => {
+    const base = await tempRoot("fs-safe-move-exdev-mode-");
+    const source = path.join(base, "source.bin");
+    const destDir = path.join(base, "public");
+    const dest = path.join(destDir, "dest.bin");
+    await fsp.mkdir(destDir, { mode: 0o755 });
+    await fsp.chmod(destDir, 0o755);
+    await fsp.writeFile(source, Buffer.alloc(1024 * 1024, 7));
+    const realRename = fsp.rename;
+    const realReadFile = fsp.readFile;
+    vi.spyOn(fsp, "rename").mockImplementation(async (from, to) => {
+      if (from === source && to === dest) {
+        throw Object.assign(new Error("cross-device"), { code: "EXDEV" });
+      }
+      return await realRename(from, to);
+    });
+    vi.spyOn(fsp, "readFile").mockImplementation(async (target, options) => {
+      if (target === source) {
+        throw new Error("move fallback must not buffer source files");
+      }
+      return await realReadFile(target, options as never);
+    });
+
+    await movePathWithCopyFallback({ from: source, to: dest });
+
+    expect((await fsp.stat(destDir)).mode & 0o777).toBe(0o755);
+    await expect(fsp.stat(source)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await fsp.readFile(dest)).byteLength).toBe(1024 * 1024);
+  });
+
+  it.runIf(process.platform !== "win32")("preserves public directory modes for zip staging parents", async () => {
+    const oldUmask = process.umask(0o022);
+    try {
+      const base = await tempRoot("fs-safe-zip-dir-mode-");
+      const archivePath = path.join(base, "pkg.zip");
+      const destDir = path.join(base, "dest");
+      await fsp.mkdir(destDir);
+      const zip = new JSZip();
+      zip.file("assets/app.js", "console.log('ok');");
+      await fsp.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+      await extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 });
+
+      expect((await fsp.stat(path.join(destDir, "assets"))).mode & 0o777).toBe(0o755);
+    } finally {
+      process.umask(oldUmask);
+    }
   });
 
   it("rejects durable queue ids that are not safe path segments", async () => {

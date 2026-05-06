@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import path from "node:path";
 import { readRegularFile, readRegularFileSync } from "./regular-file.js";
-import { replaceFileAtomicSync } from "./replace-file.js";
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { writeTextAtomic } from "./text-atomic.js";
 
@@ -105,20 +104,23 @@ export function tryReadJsonSync<T = unknown>(pathname: string): T | null {
 
 export function writeJsonSync(pathname: string, data: unknown) {
   const targetPath = pathname;
+  const tmpPath = `${targetPath}.${randomUUID()}.tmp`;
   const payload = `${JSON.stringify(data, null, 2)}\n`;
 
-  replaceFileAtomicSync({
-    filePath: targetPath,
-    content: payload,
-    mode: JSON_FILE_MODE,
-    dirMode: JSON_DIR_MODE,
-    copyFallbackOnPermissionError: true,
-    syncTempFile: true,
-    syncParentDir: true,
-    tempPrefix: `.fs-safe-json.${randomUUID()}`,
-  });
-  trySetSecureMode(targetPath);
-  trySyncDirectory(targetPath);
+  fsSync.mkdirSync(path.dirname(targetPath), { recursive: true, mode: JSON_DIR_MODE });
+  try {
+    writeTempJsonFile(tmpPath, payload);
+    trySetSecureMode(tmpPath);
+    renameJsonFileWithFallback(tmpPath, targetPath);
+    trySetSecureMode(targetPath);
+    trySyncDirectory(targetPath);
+  } finally {
+    try {
+      fsSync.rmSync(tmpPath, { force: true });
+    } catch {
+      // best-effort cleanup when rename does not happen
+    }
+  }
 }
 
 export class JsonFileReadError extends Error {

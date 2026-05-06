@@ -16,6 +16,7 @@ export type WriteSiblingTempFileOptions<T> = {
   resolveFinalPath: (result: T) => string;
   tempPrefix?: string;
   dirMode?: number;
+  chmodDir?: boolean;
   mode?: number;
   syncTempFile?: boolean;
   syncParentDir?: boolean;
@@ -68,7 +69,9 @@ export async function writeSiblingTempFile<T>(
 ): Promise<WriteSiblingTempFileResult<T>> {
   const dir = path.resolve(options.dir);
   await fs.mkdir(dir, { recursive: true, mode: options.dirMode ?? 0o700 });
-  await fs.chmod(dir, options.dirMode ?? 0o700).catch(() => undefined);
+  if (options.chmodDir !== false) {
+    await fs.chmod(dir, options.dirMode ?? 0o700).catch(() => undefined);
+  }
   const dirGuard = await createAsyncDirectoryGuard(dir);
   const tempPath = buildTempPath(dir, options.tempPrefix);
   const unregisterTempPath = registerTempPathForExit(tempPath);
