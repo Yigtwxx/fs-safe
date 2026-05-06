@@ -17,7 +17,7 @@ import {
 } from "@openclaw/fs-safe/path";
 ```
 
-These helpers are also re-exported from the main entry; the `/path` subpath is for callers that want the smallest possible import.
+Only `root()`, `FsSafeError`, and the Python helper config live on the main entry. Path helpers are deliberately a subpath import so the main entry stays small.
 
 ## Boundary checks
 
@@ -34,15 +34,22 @@ isPathInside("/srv/uploads", "/srv/uploads");                // true (root itsel
 
 The check is platform-aware: on Windows, paths are normalized for case and separator before comparison.
 
-### `isPathInsideWithRealpath(rootDir, target)`
+### `isPathInsideWithRealpath(rootDir, target, opts?)`
 
-Async. Same as `isPathInside`, but resolves both inputs through `realpath` first. Use this when you want the canonical answer and either input might be a symlink.
+Synchronous. Same as `isPathInside`, but resolves both inputs through `realpath` first. Use this when you want the canonical answer and either input might be a symlink.
 
 ```ts
-await isPathInsideWithRealpath("/srv/uploads", "/srv/symlink-to-elsewhere"); // false
+isPathInsideWithRealpath("/srv/uploads", "/srv/symlink-to-elsewhere"); // false
 ```
 
-Throws on `realpath` failure for either input. Catch with `isNotFoundPathError(err)` if you want missing inputs to be a "no" rather than an exception.
+```ts
+type Options = {
+  requireRealpath?: boolean;            // default true
+  cache?: Map<string, string>;
+};
+```
+
+Does not throw on missing inputs — `realpath` failures are absorbed by the underlying `safeRealpathSync`. By default (`requireRealpath: true`) the function returns `false` when either input cannot be resolved. Pass `{ requireRealpath: false }` to fall back to the lexical answer from `isPathInside` instead.
 
 ### `isWithinDir(rootDir, targetPath)`
 
@@ -60,14 +67,14 @@ const base = resolveSafeBaseDir("/srv/uploads/.");  // "/srv/uploads"
 
 ### `safeRealpathSync(targetPath, cache?)`
 
-Synchronous `realpath` that returns `null` instead of throwing on missing paths. Pass an optional `Map<string, string>` to cache results across calls within a single operation.
+Synchronous `realpath` that returns `null` instead of throwing on any error. Pass an optional `Map<string, string>` to cache results across calls within a single operation.
 
 ```ts
 const real = safeRealpathSync("/srv/uploads/photo.jpg");
 if (real === null) return notFound();
 ```
 
-Errors other than `ENOENT` propagate normally.
+All `realpath` failures collapse to `null` — there is no distinction between `ENOENT`, `EACCES`, and other I/O errors. Use `fs.realpathSync` directly if you need to branch on the error code.
 
 ### `safeStatSync(targetPath)`
 
@@ -133,7 +140,7 @@ try {
   if (isNotFoundPathError(err)) return reply(404);
   throw err;
 }
-if (!await isPathInsideWithRealpath("/srv/uploads", canonical)) {
+if (!isPathInsideWithRealpath("/srv/uploads", canonical)) {
   return reply(403);
 }
 ```

@@ -11,6 +11,7 @@
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
+    "docs/**/*.md",
     "README.md",
     "CHANGELOG.md",
     "SECURITY.md",

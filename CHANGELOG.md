@@ -14,6 +14,8 @@
 ### Docs
 
 - Added missing docs pages for `@openclaw/fs-safe/config`, `@openclaw/fs-safe/store`, `@openclaw/fs-safe/advanced`, and `@openclaw/fs-safe/test-hooks`.
+- Corrected path-helper docs for the synchronous `isPathInsideWithRealpath` and `safeRealpathSync` behavior.
+- Included the Markdown docs in the npm package so README links resolve after install.
 
 ## 0.1.1 - 2026-05-06
 
