@@ -1,12 +1,26 @@
 # Changelog
 
+## 0.1.2 - 2026-05-06
+
+### Fixes
+
+- Reject `fileStore()` and `fileStoreSync()` writes through symlinked parent directories so store commits cannot escape the configured root.
+
+### Tests
+
+- Increased filesystem edge coverage around secure temp fallback handling, sibling-temp cleanup, local-root resolution, file locks, and file identity checks.
+- Prevented POSIX test runs from leaving Windows-style secure-temp fallback paths in the repository root.
+
+### Docs
+
+- Added missing docs pages for `@openclaw/fs-safe/config`, `@openclaw/fs-safe/store`, `@openclaw/fs-safe/advanced`, and `@openclaw/fs-safe/test-hooks`.
+
 ## 0.1.1 - 2026-05-06
 
 ### Fixes
 
 - Preserve the caller's destination path spelling during staged archive merges so symlink-rebind checks catch alias races on macOS.
 - Reject archive writes that gain a hardlink alias during post-write verification and clean up the destination file.
-- Reject `fileStore()` and `fileStoreSync()` writes through symlinked parent directories so store commits cannot escape the configured root.
 
 ## 0.1.0 - 2026-05-06
 

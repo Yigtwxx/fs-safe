@@ -891,16 +891,13 @@ describe("secret files and temp roots", () => {
     expect(resolveSecureTempRoot({ fallbackPrefix: "fallback", preferredDir: secure })).toBe(
       path.resolve(secure),
     );
-    expect(
-      resolveSecureTempRoot({
-        fallbackPrefix: "fallback",
-        preferredDir: secure,
-        skipPreferredOnWindows: true,
-        platform: "win32",
-        tmpdir: () => root,
-        getuid: () => undefined,
-      }),
-    ).toBe(path.win32.join(root, "fallback"));
+    const winFallback = path.win32.join(root, "fallback");
+    const winFallbackStat = { isDirectory: () => true, isSymbolicLink: () => false };
+    expect(resolveSecureTempRoot({
+      accessSync: vi.fn(), chmodSync: vi.fn(), fallbackPrefix: "fallback",
+      getuid: () => undefined, lstatSync: vi.fn(() => winFallbackStat), mkdirSync: vi.fn(),
+      platform: "win32", preferredDir: secure, skipPreferredOnWindows: true, tmpdir: () => root,
+    })).toBe(winFallback);
     await expect(withTimeout(Promise.resolve("ok"), 10, { message: "slow" })).resolves.toBe("ok");
     await expect(withTimeout(new Promise(() => undefined), 1, { message: "slow" }))
       .rejects
