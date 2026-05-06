@@ -9,7 +9,7 @@ import { extractArchive } from "../src/archive.js";
 import { loadZipArchiveWithPreflight, readZipCentralDirectoryEntryCount } from "../src/archive-zip-preflight.js";
 import { createAsyncLock } from "../src/async-lock.js";
 import { writeTextAtomic } from "../src/atomic.js";
-import { copyIntoRoot, fileStore, fileStoreSync } from "../src/file-store.js";
+import { fileStore, fileStoreSync } from "../src/file-store.js";
 import {
   assertCanonicalPathWithinBase,
   resolveSafeInstallDir,
@@ -624,8 +624,8 @@ describe("temporary workspace and symlink parent helpers", () => {
     await fs.writeFile(source, "copy", "utf8");
 
     const workspace = await tempWorkspace({ rootDir: root, prefix: "bad prefix!" });
-    expect(() => workspace.file("../bad")).toThrow("Invalid temp workspace");
-    const privateFile = await workspace.writePrivate("private.bin", Buffer.from("private"));
+    expect(() => workspace.path("../bad")).toThrow("Invalid temp workspace");
+    const privateFile = await workspace.write("private.bin", Buffer.from("private"));
     await workspace.store.writeText("store.txt", "stored");
     const textFile = await workspace.writeText("text.txt", "text");
     const jsonFile = await workspace.writeJson("data.json", { ok: true }, {
@@ -648,8 +648,8 @@ describe("temporary workspace and symlink parent helpers", () => {
 
     const syncWorkspace = tempWorkspaceSync({ rootDir: root, prefix: ".." });
     try {
-      expect(() => syncWorkspace.file("bad/name")).toThrow("Invalid temp workspace");
-      expect(syncWorkspace.writePrivate("private.bin", Buffer.from("private"))).toContain(
+      expect(() => syncWorkspace.path("bad/name")).toThrow("Invalid temp workspace");
+      expect(syncWorkspace.write("private.bin", Buffer.from("private"))).toContain(
         "private.bin",
       );
       expect(syncWorkspace.store.writeText("store.txt", "stored")).toContain("store.txt");
@@ -756,7 +756,7 @@ describe("file stores and private stores", () => {
       maxBytes: 4,
     })).rejects.toMatchObject({ code: "too-large" });
     await expect(store.copyIn("copied.txt", source)).resolves.toBe(path.join(root, "copied.txt"));
-    await expect(copyIntoRoot({ rootDir: root, relativePath: "bad.txt", sourcePath: sourceRoot }))
+    await expect(store.copyIn("bad.txt", sourceRoot))
       .rejects
       .toMatchObject({ code: "not-file" });
     await expect(store.exists("copied.txt")).resolves.toBe(true);

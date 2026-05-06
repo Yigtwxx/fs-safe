@@ -20,9 +20,8 @@ export type TempWorkspaceOptions = {
 export type TempWorkspace = {
   dir: string;
   store: FileStore;
-  file(fileName: string): string;
   path(fileName: string): string;
-  writePrivate(fileName: string, data: string | Uint8Array): Promise<string>;
+  write(fileName: string, data: string | Uint8Array): Promise<string>;
   writeText(fileName: string, data: string): Promise<string>;
   writeJson(
     fileName: string,
@@ -38,9 +37,8 @@ export type TempWorkspace = {
 export type TempWorkspaceSync = {
   dir: string;
   store: FileStoreSync;
-  file(fileName: string): string;
   path(fileName: string): string;
-  writePrivate(fileName: string, data: string | Uint8Array): string;
+  write(fileName: string, data: string | Uint8Array): string;
   writeText(fileName: string, data: string): string;
   writeJson(fileName: string, data: unknown, options?: { trailingNewline?: boolean }): string;
   read(fileName: string): Buffer;
@@ -119,9 +117,8 @@ async function createTempWorkspace(
   return {
     dir,
     store,
-    file: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     path: (fileName) => resolveWorkspaceLeaf(dir, fileName),
-    writePrivate: async (fileName, data) =>
+    write: async (fileName, data) =>
       await store.write(assertWorkspaceFileName(fileName), data, { mode }),
     writeText: async (fileName, data) =>
       await store.writeText(assertWorkspaceFileName(fileName), data, { mode }),
@@ -200,9 +197,8 @@ export function tempWorkspaceSync(
   return {
     dir,
     store,
-    file: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     path: (fileName) => resolveWorkspaceLeaf(dir, fileName),
-    writePrivate: (fileName, data) =>
+    write: (fileName, data) =>
       store.write(assertWorkspaceFileName(fileName), data, { mode }),
     writeText: (fileName, data) =>
       store.writeText(assertWorkspaceFileName(fileName), data, { mode }),

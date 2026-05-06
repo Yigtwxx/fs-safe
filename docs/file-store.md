@@ -159,26 +159,6 @@ type FileStorePruneOptions = {
 
 Symlinks are skipped. The walk is best-effort — failures on individual entries don't abort the whole prune. Compares against `mtimeMs`.
 
-## Standalone: `copyIntoRoot`
-
-The same one-shot copy primitive used by `FileStore.copyIn`, available from the advanced surface for callers that don't want to instantiate a store:
-
-```ts
-import { copyIntoRoot } from "@openclaw/fs-safe/advanced";
-
-await copyIntoRoot({
-  rootDir: "/var/cache/app",
-  relativePath: "ingest/upload.bin",
-  sourcePath: "/tmp/upload.bin",
-  mode: 0o600,
-  dirMode: 0o700,
-  maxBytes: 32 * 1024 * 1024,
-  tempPrefix: ".upload.bin", // optional
-});
-```
-
-Returns the final absolute path. Throws `not-file` if the source is a symlink or non-regular file; throws `too-large` if it exceeds `maxBytes`.
-
 ## Difference from `Root`
 
 | `FileStore` | `Root` |
@@ -230,4 +210,4 @@ await root.move(`pending/${id}`, `done/${id}`);
 - [`root()`](root.md) — the boundary `FileStore` is built on; reach for it when you need move/list/append.
 - [JSON store](json-store.md) — the JSON-state-file equivalent of this surface.
 - [Atomic writes](atomic.md) — `writeSiblingTempFile` is what every write goes through.
-- [Temp workspaces](temp.md) — `TempWorkspace.copyIn` uses `copyIntoRoot`.
+- [Temp workspaces](temp.md) — private scratch directories backed by `FileStore`.

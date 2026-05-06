@@ -134,7 +134,7 @@ function isNotFound(error: unknown): boolean {
         (error as NodeJS.ErrnoException).code === "ENOTDIR";
 }
 
-export async function copyIntoRoot(params: {
+async function copyIntoRoot(params: {
   rootDir: string;
   relativePath: string;
   sourcePath: string;

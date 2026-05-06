@@ -52,7 +52,7 @@ describe("private temp workspaces", () => {
     let workspaceDir = "";
     const content = await withTempWorkspace({ rootDir: root, prefix: "work-" }, async (tmp) => {
       workspaceDir = tmp.dir;
-      const filePath = await tmp.writePrivate("input.txt", "hello");
+      const filePath = await tmp.write("input.txt", "hello");
       expect(await fs.readFile(filePath, "utf8")).toBe("hello");
       return await tmp.read("input.txt");
     });
@@ -64,7 +64,7 @@ describe("private temp workspaces", () => {
   it("rejects path-like file names", async () => {
     const tmp = await tempWorkspace({ rootDir: root, prefix: "work-" });
     try {
-      await expect(tmp.writePrivate("../escape.txt", "nope")).rejects.toThrow(/Invalid/);
+      await expect(tmp.write("../escape.txt", "nope")).rejects.toThrow(/Invalid/);
     } finally {
       await tmp.cleanup();
     }
@@ -74,7 +74,7 @@ describe("private temp workspaces", () => {
     let workspaceDir = "";
     const result = withTempWorkspaceSync({ rootDir: root, prefix: "sync-" }, (tmp) => {
       workspaceDir = tmp.dir;
-      const filePath = tmp.writePrivate("input.txt", "hello");
+      const filePath = tmp.write("input.txt", "hello");
       expect(tmp.read("input.txt").toString("utf8")).toBe("hello");
       return filePath;
     });
@@ -83,7 +83,7 @@ describe("private temp workspaces", () => {
 
     const tmp = tempWorkspaceSync({ rootDir: root, prefix: "sync-" });
     try {
-      expect(tmp.writePrivate("again.txt", "ok")).toContain("again.txt");
+      expect(tmp.write("again.txt", "ok")).toContain("again.txt");
     } finally {
       tmp.cleanup();
     }
@@ -94,8 +94,8 @@ describe("private temp workspaces", () => {
     {
       await using tmp = await tempWorkspace({ rootDir: root, prefix: "compact-" });
       workspaceDir = tmp.dir;
-      const filePath = await tmp.writePrivate("input.txt", "hello");
-      expect(filePath).toBe(tmp.file("input.txt"));
+      const filePath = await tmp.write("input.txt", "hello");
+      expect(filePath).toBe(tmp.path("input.txt"));
       expect(tmp.path("input.txt")).toBe(filePath);
       await tmp.store.json<{ ok: boolean }>("state.json").write({ ok: true });
       await expect(tmp.store.readJson("state.json")).resolves.toEqual({ ok: true });

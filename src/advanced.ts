@@ -15,7 +15,6 @@ export {
 export { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 export { sanitizeUntrustedFileName } from "./filename.js";
 export { pathExists, pathExistsSync } from "./fs.js";
-export { copyIntoRoot, fileStoreSync, type FileStoreSync } from "./file-store.js";
 export {
   resolveLocalPathFromRootsSync,
   readLocalFileFromRoots,
