@@ -218,7 +218,6 @@ async function runPinnedWriteFallback(params: {
       {
         onPostGuardFailure: async (openedHandle) => {
           await openedHandle.close().catch(() => undefined);
-          await fs.rm(targetPath, { force: true }).catch(() => undefined);
         },
       },
     );

@@ -30,14 +30,13 @@ export function assertSafePathSegment(
   segment: string,
   options: SafePathSegmentOptions = {},
 ): string {
-  const value = segment.trim();
-  if (!isSafePathSegment(value, options)) {
+  if (!isSafePathSegment(segment, options)) {
     throw new FsSafeError(
       "invalid-path",
       `${options.label ?? "path segment"} must be a safe path segment`,
     );
   }
-  return value;
+  return segment;
 }
 
 export function sanitizeSafePathSegment(

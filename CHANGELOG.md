@@ -8,7 +8,7 @@
 - Harden Root fallback mutators, archive merges, private store reads/writes, durable queue ids, JSON fallback writes, sibling temp writes, temp filename sanitization, and trash moves against symlink-swap and path traversal edge cases.
 - Centralize safe path segment validation, directory identity guards, and guarded mutation wrappers so future filesystem helpers reuse the same race-resistant checks.
 - Route archive ZIP staging, temp workspace sync reads, secret-file commits, and atomic move/replace fallbacks through shared pinned-read or guarded-write primitives without applying private-directory modes to public paths.
-- Close guarded fallback write handles if post-write directory verification fails, avoiding descriptor leaks in symlink-swap races.
+- Close guarded fallback write handles without following path names if post-write directory verification fails, avoiding descriptor leaks and unsafe cleanup in symlink-swap races.
 
 ### Tests
 

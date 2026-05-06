@@ -17,6 +17,7 @@ async function replaceParentAfterOpen(params: {
   targetPath: string;
   parentPath: string;
   movedParentPath: string;
+  symlinkTargetPath: string;
 }): Promise<() => void> {
   const originalOpen = fs.open;
   let closeSpy: ReturnType<typeof vi.spyOn> | undefined;
@@ -25,7 +26,7 @@ async function replaceParentAfterOpen(params: {
     if (String(args[0]) === params.targetPath) {
       closeSpy = vi.spyOn(handle, "close");
       await fs.rename(params.parentPath, params.movedParentPath);
-      await fs.mkdir(params.parentPath);
+      await fs.symlink(params.symlinkTargetPath, params.parentPath, "dir");
     }
     return handle;
   });
@@ -51,11 +52,15 @@ describe("guarded fallback write cleanup", () => {
     const parentPath = path.join(base, "nested");
     const movedParentPath = path.join(base, "nested-real");
     const targetPath = path.join(parentPath, "created.txt");
+    const outside = await tempRoot("fs-safe-pinned-post-guard-outside-");
+    const outsideFile = path.join(outside, "created.txt");
     await fs.mkdir(parentPath);
+    await fs.writeFile(outsideFile, "outside");
     const assertClosed = await replaceParentAfterOpen({
       targetPath,
       parentPath,
       movedParentPath,
+      symlinkTargetPath: outside,
     });
 
     await expect(
@@ -71,6 +76,7 @@ describe("guarded fallback write cleanup", () => {
     ).rejects.toBeTruthy();
 
     assertClosed();
+    await expect(fs.readFile(outsideFile, "utf8")).resolves.toBe("outside");
   });
 
   it.runIf(process.platform !== "win32")("closes root no-overwrite handles when post guards fail", async () => {
@@ -79,17 +85,22 @@ describe("guarded fallback write cleanup", () => {
     const base = await tempRoot("fs-safe-root-post-guard-");
     const parentPath = path.join(base, "nested");
     const movedParentPath = path.join(base, "nested-real");
+    const outside = await tempRoot("fs-safe-root-post-guard-outside-");
+    const outsideFile = path.join(outside, "created.txt");
     await fs.mkdir(parentPath);
+    await fs.writeFile(outsideFile, "outside");
     const targetPath = path.join(await fs.realpath(parentPath), "created.txt");
     const assertClosed = await replaceParentAfterOpen({
       targetPath,
       parentPath,
       movedParentPath,
+      symlinkTargetPath: outside,
     });
     const scoped = await openRoot(base);
 
     await expect(scoped.create("nested/created.txt", "payload")).rejects.toBeTruthy();
 
     assertClosed();
+    await expect(fs.readFile(outsideFile, "utf8")).resolves.toBe("outside");
   });
 });

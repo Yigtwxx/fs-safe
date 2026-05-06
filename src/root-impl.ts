@@ -1606,7 +1606,6 @@ async function writeMissingFileFallback(
     await fs.mkdir(path.dirname(resolved), { recursive: true });
   }
   const parentGuard = await createAsyncDirectoryGuard(path.dirname(resolved));
-
   let created = false;
   try {
     const { handle, writtenStat } = await withAsyncDirectoryGuards(
@@ -1628,6 +1627,7 @@ async function writeMissingFileFallback(
       },
       {
         onPostGuardFailure: async ({ handle }) => {
+          created = false;
           await handle.close().catch(() => undefined);
         },
       },
