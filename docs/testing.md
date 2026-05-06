@@ -159,6 +159,16 @@ Run only the security boundary corpus while iterating on root/path/archive/temp 
 pnpm test:security
 ```
 
+Run the static primitive guard after changing low-level filesystem helpers:
+
+```sh
+pnpm lint:fs-boundary
+```
+
+It catches the specific raw fallback patterns that previously led to
+check-then-use bugs, such as direct copy-to-destination fallback and sync temp
+workspace reads that bypass pinned file descriptors.
+
 `pnpm check` also runs `pnpm lint:file-size`. New source and test files should stay under 500 lines. Existing larger files have explicit budgets in `scripts/check-file-size.mjs`; do not increase those budgets as part of unrelated work.
 
 ## See also

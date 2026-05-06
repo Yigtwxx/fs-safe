@@ -68,7 +68,12 @@ If `beforeRename` throws, the rename is skipped and the temp file is removed —
 
 ### `EPERM` and copy fallback
 
-On systems where `rename` fails with `EPERM`/`EEXIST`, pass `copyFallbackOnPermissionError: true` to fall back to copy + unlink. The fallback refuses symlink destinations before copying so it does not write through a replaced destination link.
+On systems where `rename` fails with `EPERM`/`EEXIST`, pass
+`copyFallbackOnPermissionError: true` to fall back to a non-atomic copy
+replacement. The fallback removes the old destination, opens the replacement
+with exclusive/no-follow flags where the platform supports them, and refuses
+known symlink destinations so it does not write through a replaced destination
+link.
 
 ### Sync variant
 
@@ -117,9 +122,8 @@ Rename a path. If the rename fails with `EXDEV` (cross-device) or `EPERM`, fall 
 import { movePathWithCopyFallback } from "@openclaw/fs-safe/atomic";
 
 await movePathWithCopyFallback({
-  source: "/srv/cache/blob.bin",
-  destination: "/srv/persistent/blob.bin",
-  overwrite: true,
+  from: "/srv/cache/blob.bin",
+  to: "/srv/persistent/blob.bin",
 });
 ```
 
