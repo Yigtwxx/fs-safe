@@ -1,11 +1,19 @@
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { Readable } from "node:stream";
+import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { FsSafeError } from "./errors.js";
-import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
-import { writeSiblingTempFile } from "./sibling-temp.js";
-import { resolveSafeRelativePath } from "./path.js";
+import {
+  resolveOpenedFileRealPathForHandle,
+  root,
+  type OpenResult,
+  type ReadResult,
+  type Root,
+  type RootReadOptions,
+} from "./root.js";
+import { isPathInside, resolveSafeRelativePath } from "./path.js";
+import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 
 export type FileStoreOptions = {
   rootDir: string;
@@ -63,19 +71,135 @@ function assertRelativePath(relativePath: string): string {
   return raw.replaceAll("\\", "/");
 }
 
+function assertMaxBytes(size: number, maxBytes?: number): void {
+  if (maxBytes !== undefined && size > maxBytes) {
+    throw new FsSafeError("too-large", `file exceeds maximum size of ${maxBytes} bytes`);
+  }
+}
+
 function resolveStorePath(rootDir: string, relativePath: string): string {
   return resolveSafeRelativePath(rootDir, assertRelativePath(relativePath));
 }
 
-async function ensureParent(filePath: string, mode: number): Promise<void> {
-  const dir = path.dirname(filePath);
-  await fs.mkdir(dir, { recursive: true, mode });
-  await fs.chmod(dir, mode).catch(() => undefined);
+function parentRelativePath(relativePath: string): string {
+  const parent = path.posix.dirname(assertRelativePath(relativePath));
+  return parent === "." ? "" : parent;
 }
 
-function assertMaxBytes(size: number, maxBytes?: number): void {
-  if (maxBytes !== undefined && size > maxBytes) {
-    throw new FsSafeError("too-large", `file exceeds maximum size of ${maxBytes} bytes`);
+async function chmodDirectoryInRootBestEffort(
+  scopedRoot: Root,
+  relativePath: string,
+  mode: number,
+): Promise<void> {
+  if (!relativePath) {
+    return;
+  }
+  const dirPath = await scopedRoot.resolve(relativePath);
+  const directoryFlag = "O_DIRECTORY" in fsConstants ? (fsConstants.O_DIRECTORY as number) : 0;
+  const noFollowFlag =
+    process.platform !== "win32" && "O_NOFOLLOW" in fsConstants
+      ? (fsConstants.O_NOFOLLOW as number)
+      : 0;
+  const handle = await fs.open(dirPath, fsConstants.O_RDONLY | directoryFlag | noFollowFlag);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isDirectory()) {
+      return;
+    }
+    const realPath = await resolveOpenedFileRealPathForHandle(handle, dirPath);
+    if (!isPathInside(scopedRoot.rootWithSep, realPath)) {
+      throw new FsSafeError("outside-workspace", "directory is outside store root");
+    }
+    await handle.chmod(mode).catch(() => undefined);
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+async function ensureParentInRoot(
+  scopedRoot: Root,
+  relativePath: string,
+  mode: number,
+): Promise<void> {
+  const parent = parentRelativePath(relativePath);
+  if (!parent) {
+    return;
+  }
+  await scopedRoot.mkdir(parent);
+  await chmodDirectoryInRootBestEffort(scopedRoot, parent, mode).catch(() => undefined);
+}
+
+async function openWritableStoreRoot(params: {
+  rootDir: string;
+  dirMode: number;
+  maxBytes?: number;
+}): Promise<Root> {
+  await fs.mkdir(params.rootDir, { recursive: true, mode: params.dirMode });
+  await fs.chmod(params.rootDir, params.dirMode).catch(() => undefined);
+  return await root(params.rootDir, { hardlinks: "reject", maxBytes: params.maxBytes });
+}
+
+function createMaxBytesTransform(maxBytes: number | undefined): Transform | undefined {
+  if (maxBytes === undefined) {
+    return undefined;
+  }
+  let total = 0;
+  return new Transform({
+    transform(chunk: Buffer | string, _encoding, callback) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buffer.byteLength;
+      if (total > maxBytes) {
+        callback(new FsSafeError("too-large", `file exceeds maximum size of ${maxBytes} bytes`));
+        return;
+      }
+      callback(null, buffer);
+    },
+  });
+}
+
+async function writeStreamToTempSource(params: {
+  stream: Readable;
+  maxBytes?: number;
+  mode: number;
+}): Promise<{ path: string; cleanup: () => Promise<void> }> {
+  const tempRoot = resolveSecureTempRoot({
+    fallbackPrefix: "fs-safe-file-store",
+    unsafeFallbackLabel: "file store temp dir",
+    warn: () => undefined,
+  });
+  const dir = await fs.mkdtemp(path.join(tempRoot, "fs-safe-file-store-"));
+  const filePath = path.join(dir, "payload");
+  let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
+  let handleClosedByStream = false;
+  try {
+    handle = await fs.open(filePath, "wx", params.mode);
+    const writable = handle.createWriteStream();
+    writable.once("close", () => {
+      handleClosedByStream = true;
+    });
+    const limiter = createMaxBytesTransform(params.maxBytes);
+    if (limiter) {
+      await pipeline(params.stream, limiter, writable);
+    } else {
+      await pipeline(params.stream, writable);
+    }
+    if (!handleClosedByStream) {
+      await handle.close().catch(() => undefined);
+      handleClosedByStream = true;
+    }
+    await fs.chmod(filePath, params.mode).catch(() => undefined);
+    return {
+      path: filePath,
+      cleanup: async () => {
+        await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      },
+    };
+  } catch (err) {
+    if (handle && !handleClosedByStream) {
+      await handle.close().catch(() => undefined);
+    }
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    throw err;
   }
 }
 
@@ -88,26 +212,26 @@ export async function copyIntoRoot(params: {
   mode?: number;
   tempPrefix?: string;
 }): Promise<string> {
-  const destination = resolveStorePath(params.rootDir, params.relativePath);
+  const relativePath = assertRelativePath(params.relativePath);
+  const destination = resolveStorePath(params.rootDir, relativePath);
   const sourceStat = await fs.lstat(params.sourcePath);
   if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
     throw new FsSafeError("not-file", "source path is not a file");
   }
   assertMaxBytes(sourceStat.size, params.maxBytes);
-  await ensureParent(destination, params.dirMode ?? 0o700);
-  const result = await writeSiblingTempFile({
-    dir: path.dirname(destination),
-    dirMode: params.dirMode ?? 0o700,
-    mode: params.mode ?? 0o600,
-    tempPrefix: params.tempPrefix ?? `.${path.basename(destination)}`,
-    writeTemp: async (tempPath) => {
-      await fs.copyFile(params.sourcePath, tempPath);
-    },
-    resolveFinalPath: () => destination,
-    syncTempFile: true,
-    syncParentDir: true,
+  const dirMode = params.dirMode ?? 0o700;
+  const scopedRoot = await openWritableStoreRoot({
+    rootDir: params.rootDir,
+    dirMode,
+    maxBytes: params.maxBytes,
   });
-  return result.filePath;
+  await ensureParentInRoot(scopedRoot, relativePath, dirMode);
+  await scopedRoot.copyIn(relativePath, params.sourcePath, {
+    maxBytes: params.maxBytes,
+    mkdir: false,
+    mode: params.mode ?? 0o600,
+  });
+  return destination;
 }
 
 export function fileStore(options: FileStoreOptions): FileStore {
@@ -125,56 +249,46 @@ export function fileStore(options: FileStoreOptions): FileStore {
     path: (relativePath) => resolveStorePath(rootDir, relativePath),
     root: openRoot,
     write: async (relativePath, data, writeOptions) => {
-      const destination = resolveStorePath(rootDir, relativePath);
+      const safeRelativePath = assertRelativePath(relativePath);
+      const destination = resolveStorePath(rootDir, safeRelativePath);
       const content = Buffer.isBuffer(data) ? data : Buffer.from(data);
       assertMaxBytes(content.byteLength, writeOptions?.maxBytes ?? maxBytes);
-      await ensureParent(destination, writeOptions?.dirMode ?? dirMode);
-      const result = await writeSiblingTempFile({
-        dir: path.dirname(destination),
-        dirMode: writeOptions?.dirMode ?? dirMode,
-        mode: writeOptions?.mode ?? mode,
-        tempPrefix: writeOptions?.tempPrefix ?? `.${path.basename(destination)}`,
-        writeTemp: async (tempPath) => {
-          await fs.writeFile(tempPath, content);
-        },
-        resolveFinalPath: () => destination,
-        syncTempFile: true,
-        syncParentDir: true,
+      const writeDirMode = writeOptions?.dirMode ?? dirMode;
+      const scopedRoot = await openWritableStoreRoot({
+        rootDir,
+        dirMode: writeDirMode,
+        maxBytes: writeOptions?.maxBytes ?? maxBytes,
       });
-      return result.filePath;
+      await ensureParentInRoot(scopedRoot, safeRelativePath, writeDirMode);
+      await scopedRoot.write(safeRelativePath, content, {
+        mkdir: false,
+        mode: writeOptions?.mode ?? mode,
+      });
+      return destination;
     },
     writeStream: async (relativePath, stream, writeOptions) => {
-      const destination = resolveStorePath(rootDir, relativePath);
+      const safeRelativePath = assertRelativePath(relativePath);
+      const destination = resolveStorePath(rootDir, safeRelativePath);
       const limit = writeOptions?.maxBytes ?? maxBytes;
-      await ensureParent(destination, writeOptions?.dirMode ?? dirMode);
-      let total = 0;
-      const result = await writeSiblingTempFile({
-        dir: path.dirname(destination),
-        dirMode: writeOptions?.dirMode ?? dirMode,
+      const staged = await writeStreamToTempSource({
+        stream,
+        maxBytes: limit,
         mode: writeOptions?.mode ?? mode,
-        tempPrefix: writeOptions?.tempPrefix ?? `.${path.basename(destination)}`,
-        writeTemp: async (tempPath) => {
-          const writable = await fs.open(tempPath, "w", writeOptions?.mode ?? mode);
-          try {
-            const out = writable.createWriteStream();
-            stream.on("data", (chunk: Buffer | string) => {
-              total += Buffer.byteLength(chunk);
-              if (limit !== undefined && total > limit) {
-                stream.destroy(
-                  new FsSafeError("too-large", `file exceeds maximum size of ${limit} bytes`),
-                );
-              }
-            });
-            await pipeline(stream, out);
-          } finally {
-            await writable.close().catch(() => undefined);
-          }
-        },
-        resolveFinalPath: () => destination,
-        syncTempFile: true,
-        syncParentDir: true,
       });
-      return result.filePath;
+      try {
+        await copyIntoRoot({
+          rootDir,
+          relativePath: safeRelativePath,
+          sourcePath: staged.path,
+          maxBytes: limit,
+          mode: writeOptions?.mode ?? mode,
+          tempPrefix: writeOptions?.tempPrefix,
+          dirMode: writeOptions?.dirMode ?? dirMode,
+        });
+      } finally {
+        await staged.cleanup();
+      }
+      return destination;
     },
     copyIn: async (relativePath, sourcePath, writeOptions) =>
       await copyIntoRoot({

@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import syncFs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   privateStateStore,
@@ -34,7 +36,7 @@ import { replaceFileAtomic, replaceFileAtomicSync } from "../src/replace-file.js
 import { movePathWithCopyFallback } from "../src/move-path.js";
 import { writeSiblingTempFile } from "../src/sibling-temp.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
-import { fileStore } from "../src/file-store.js";
+import { copyIntoRoot, fileStore } from "../src/file-store.js";
 import { jsonStore } from "../src/json-store.js";
 import {
   createIcaclsResetCommand,
@@ -128,6 +130,9 @@ describe("file store", () => {
     await store.write("media/a.txt", "hello");
     await expect(store.readBytes("media/a.txt")).resolves.toEqual(Buffer.from("hello"));
 
+    await store.writeStream("media/stream.txt", Readable.from(["stream"]));
+    await expect(store.readBytes("media/stream.txt")).resolves.toEqual(Buffer.from("stream"));
+
     const source = path.join(root, "source.bin");
     await fs.writeFile(source, "source", "utf8");
     await store.copyIn("media/b.txt", source);
@@ -145,6 +150,90 @@ describe("file store", () => {
       code: "too-large",
     });
   });
+
+  it.runIf(process.platform !== "win32")("rejects symlink parent writes", async () => {
+    const storeRoot = path.join(root, "store");
+    const outside = path.join(root, "outside");
+    const source = path.join(root, "source.txt");
+    await fs.mkdir(storeRoot);
+    await fs.mkdir(outside);
+    await fs.writeFile(source, "pwned", "utf8");
+    await fs.symlink(outside, path.join(storeRoot, "link"), "dir");
+    const store = fileStore({ rootDir: storeRoot });
+
+    await expect(store.write("link/write.txt", "pwned")).rejects.toBeTruthy();
+    await expect(store.writeStream("link/stream.txt", Readable.from(["pwned"]))).rejects
+      .toBeTruthy();
+    await expect(store.copyIn("link/copy.txt", source)).rejects.toBeTruthy();
+    await expect(
+      copyIntoRoot({
+        rootDir: storeRoot,
+        relativePath: "link/advanced-copy.txt",
+        sourcePath: source,
+      }),
+    ).rejects.toBeTruthy();
+    await expect(fs.readdir(outside)).resolves.toEqual([]);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects symlink parent swaps during a single write operation",
+    async () => {
+      async function expectSwapBlocked(
+        operation: (params: {
+          store: ReturnType<typeof fileStore>;
+          storeRoot: string;
+          source: string;
+        }) => Promise<unknown>,
+      ): Promise<void> {
+        const storeRoot = path.join(root, `store-${randomUUID()}`);
+        const outside = path.join(root, `outside-${randomUUID()}`);
+        const link = path.join(storeRoot, "link");
+        const source = path.join(root, `source-${randomUUID()}.txt`);
+        await fs.mkdir(link, { recursive: true });
+        await fs.mkdir(outside);
+        await fs.writeFile(source, "pwned", "utf8");
+        const canonicalLink = path.join(await fs.realpath(storeRoot), "link");
+        const store = fileStore({ rootDir: storeRoot });
+        const realOpen = fs.open.bind(fs);
+        let swapped = false;
+        const openSpy = vi.spyOn(fs, "open").mockImplementation(
+          (async (
+            target: Parameters<typeof fs.open>[0],
+            flags?: Parameters<typeof fs.open>[1],
+            mode?: Parameters<typeof fs.open>[2],
+          ) => {
+            const targetPath = path.resolve(String(target));
+            if (!swapped && (targetPath === link || targetPath === canonicalLink)) {
+              swapped = true;
+              await fs.rm(link, { recursive: true, force: true });
+              await fs.symlink(outside, link, "dir");
+            }
+            return await realOpen(target, flags, mode);
+          }) as typeof fs.open,
+        );
+        try {
+          await expect(operation({ store, storeRoot, source })).rejects.toBeTruthy();
+          expect(swapped).toBe(true);
+          await expect(fs.readdir(outside)).resolves.toEqual([]);
+        } finally {
+          openSpy.mockRestore();
+        }
+      }
+
+      await expectSwapBlocked(({ store }) => store.write("link/write.txt", "pwned"));
+      await expectSwapBlocked(({ store }) =>
+        store.writeStream("link/stream.txt", Readable.from(["pwned"])),
+      );
+      await expectSwapBlocked(({ store, source }) => store.copyIn("link/copy.txt", source));
+      await expectSwapBlocked(({ storeRoot, source }) =>
+        copyIntoRoot({
+          rootDir: storeRoot,
+          relativePath: "link/advanced-copy.txt",
+          sourcePath: source,
+        }),
+      );
+    },
+  );
 });
 
 describe("json store", () => {
