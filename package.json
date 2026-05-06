@@ -36,6 +36,10 @@
       "types": "./dist/path.d.ts",
       "default": "./dist/path.js"
     },
+    "./output": {
+      "types": "./dist/output.d.ts",
+      "default": "./dist/output.js"
+    },
     "./advanced": {
       "types": "./dist/advanced.d.ts",
       "default": "./dist/advanced.js"
