@@ -24,7 +24,7 @@ Full docs and reference at **[fs-safe.io](https://fs-safe.io)**.
 
 ## Contents
 
-[Why this exists](#why-this-exists) · [Not a sandbox](#not-a-sandbox) · [Install](#install) · [Quick start](#quick-start) · [Reading](#reading) · [Subpaths](#subpaths) · [Failure semantics](#failure-semantics-in-the-name) · [Atomic writes](#atomic-writes) · [Stores](#stores) · [Secure absolute reads](#secure-absolute-file-reads) · [Walking](#directory-walking) · [Archive extraction](#archive-extraction) · [Path scopes](#advanced-path-scopes) · [Errors](#errors) · [Safety model](#safety-model) · [Limitations](#limitations)
+[Why this exists](#why-this-exists) · [Not a sandbox](#not-a-sandbox) · [Install](#install) · [Quick start](#quick-start) · [Reading](#reading) · [Subpaths](#subpaths) · [Failure semantics](#failure-semantics-in-the-name) · [Atomic writes](#atomic-writes) · [External outputs](#external-outputs) · [Stores](#stores) · [Secure absolute reads](#secure-absolute-file-reads) · [Walking](#directory-walking) · [Archive extraction](#archive-extraction) · [Path scopes](#advanced-path-scopes) · [Errors](#errors) · [Safety model](#safety-model) · [Limitations](#limitations)
 
 ## Why this exists
 
@@ -172,6 +172,7 @@ that OpenClaw needs to compose higher-level APIs are grouped under
 | `@openclaw/fs-safe/config` | process-global Python helper configuration |
 | `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants |
+| `@openclaw/fs-safe/output` | `writeExternalFileWithinRoot` for external libraries that need a temp output path |
 | `@openclaw/fs-safe/store` | `fileStore`, `fileStoreSync`, and `jsonStore` |
 | `@openclaw/fs-safe/secret` | strict and try-style secret file read/write helpers |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
@@ -219,6 +220,28 @@ await replaceFileAtomic({
 ```
 
 `replaceFileAtomicSync()` covers the synchronous case with the same options shape. Both accept an injectable `fileSystem` for tests.
+
+## External outputs
+
+Use `writeExternalFileWithinRoot()` when a browser download, renderer, media
+tool, or native library needs an absolute path to write to:
+
+```ts
+import { writeExternalFileWithinRoot } from "@openclaw/fs-safe/output";
+
+await writeExternalFileWithinRoot({
+  rootDir: "/safe/workspace/downloads",
+  path: "reports/today.pdf",
+  write: async (filePath) => {
+    await download.saveAs(filePath);
+  },
+});
+```
+
+The callback receives a private temp file path, not the final destination. After
+the callback returns, fs-safe finalizes the staged file with `Root.copyIn()`,
+creating missing parents by default and rejecting traversal, symlink parent
+escapes, hardlinked final targets, and size-limit violations.
 
 ## Stores
 

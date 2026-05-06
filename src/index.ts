@@ -32,3 +32,8 @@ export {
   type FsSafePythonConfig,
   type FsSafePythonMode,
 } from "./pinned-python-config.js";
+export {
+  writeExternalFileWithinRoot,
+  type ExternalFileWriteOptions,
+  type ExternalFileWriteResult,
+} from "./output.js";
