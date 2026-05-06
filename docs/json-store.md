@@ -137,7 +137,7 @@ const counter = jsonStore<{ count: number }>({
 
 When `lock` is falsy, `read` / `write` / `update` are unlocked. The `update` shape is still useful — it gives you a single function for the read-modify-write pattern — but it offers no concurrency guarantees if other processes also write to the file.
 
-The default `managerKey` namespaces the in-process `SidecarLockManager` per absolute file path, so two `jsonStore` calls on the same file share lock state automatically.
+The default `managerKey` namespaces the in-process `FileLockManager` per absolute file path, so two `jsonStore` calls on the same file share lock state automatically.
 
 ## Common patterns
 

@@ -241,8 +241,9 @@ const opened = await media.open("inbound/photo.jpg");
 await media.pruneExpired({ ttlMs: 10 * 60 * 1000, recursive: true });
 ```
 
-`tempWorkspace()` also exposes `writeText()`, `writeJson()`, and `copyIn()` for
-single-file scratch workflows without hand-rolled path joins.
+`tempWorkspace()` exposes `write()`, `writeText()`, `writeJson()`, `copyIn()`, and `read()` for
+single-file scratch workflows without hand-rolled path joins, plus a `store: FileStore` view of
+the workspace dir for the richer cases (`writeStream`, `readJsonIfExists`, `store.json<T>(rel)`).
 
 `tempFile()` is the smaller one-file temp helper. It is intentionally an
 advanced primitive: use `tempWorkspace()` for the stable temp surface and reach
