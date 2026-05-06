@@ -21,7 +21,7 @@ import {
 import { createJsonStore, type JsonFileStoreOptions, type JsonStore } from "./json-document-store.js";
 import { isPathInside, resolveSafeRelativePath } from "./path.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
-import { openRootFileSync } from "./root-file.js";
+import { matchRootFileOpenFailure, openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -129,10 +129,38 @@ function assertMaxBytes(size: number, maxBytes?: number): void {
 }
 
 function isNotFound(error: unknown): boolean {
+  if (!error) {
+    return false;
+  }
   return error instanceof FsSafeError
     ? error.code === "not-found"
     : (error as NodeJS.ErrnoException).code === "ENOENT" ||
         (error as NodeJS.ErrnoException).code === "ENOTDIR";
+}
+
+function handleSyncStoreReadOpenFailure(opened: RootFileOpenFailure): null {
+  return matchRootFileOpenFailure<null>(opened, {
+    path: (failure) => {
+      if (isNotFound(failure.error)) {
+        return null;
+      }
+      throw new FsSafeError("path-mismatch", "store target changed during read", {
+        cause: failure.error instanceof Error ? failure.error : undefined,
+      });
+    },
+    validation: (failure) => {
+      // Validation failures mean the path existed but violated store policy
+      // (directory, hardlink, symlink race). Do not report them as missing.
+      throw new FsSafeError("path-mismatch", "store target failed read validation", {
+        cause: failure.error instanceof Error ? failure.error : undefined,
+      });
+    },
+    fallback: (failure) => {
+      throw new FsSafeError("path-mismatch", "store target changed during read", {
+        cause: failure.error instanceof Error ? failure.error : undefined,
+      });
+    },
+  });
 }
 
 async function copyIntoRoot(params: {
@@ -521,12 +549,7 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
         rejectHardlinks: privateMode,
       });
       if (!opened.ok) {
-        if (isNotFound(opened.error)) {
-          return null;
-        }
-        throw new FsSafeError("path-mismatch", "store target changed during read", {
-          cause: opened.error instanceof Error ? opened.error : undefined,
-        });
+        return handleSyncStoreReadOpenFailure(opened);
       }
       try {
         assertMaxBytes(opened.stat.size, readOptions?.maxBytes ?? maxBytes);

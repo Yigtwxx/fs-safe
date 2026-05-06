@@ -10,6 +10,7 @@
 - Route archive ZIP staging, temp workspace sync reads, secret-file commits, and atomic move/replace fallbacks through shared pinned-read or guarded-write primitives without applying private-directory modes to public paths.
 - Close guarded fallback write handles without following path names if post-write directory verification fails, avoiding descriptor leaks and unsafe cleanup in symlink-swap races.
 - Preserve empty-directory pruning and broken-symlink trash moves across guarded fallback paths.
+- Preserve sync file-store read policy errors for directory and hardlink validation failures.
 
 ### Tests
 
