@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { FsSafeError } from "./errors.js";
 import { replaceFileAtomic } from "./replace-file.js";
 
 export type JsonDurableQueueEntryPaths = {
@@ -23,6 +24,21 @@ function getErrnoCode(error: unknown): string | null {
   return error && typeof error === "object" && "code" in error
     ? String((error as { code?: unknown }).code)
     : null;
+}
+
+function assertSafeQueueEntryId(id: string): void {
+  if (
+    !id ||
+    id === "." ||
+    id === ".." ||
+    id.startsWith(".") ||
+    id.includes("/") ||
+    id.includes("\\") ||
+    id.includes("\0") ||
+    !/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(id)
+  ) {
+    throw new FsSafeError("invalid-path", "queue entry id must be a safe path segment");
+  }
 }
 
 export async function unlinkBestEffort(filePath: string): Promise<void> {
@@ -62,6 +78,7 @@ export function resolveJsonDurableQueueEntryPaths(
   queueDir: string,
   id: string,
 ): JsonDurableQueueEntryPaths {
+  assertSafeQueueEntryId(id);
   return {
     jsonPath: path.join(queueDir, `${id}.json`),
     deliveredPath: path.join(queueDir, `${id}.delivered`),
@@ -193,6 +210,7 @@ export async function moveJsonDurableQueueEntryToFailed(params: {
   failedDir: string;
   id: string;
 }): Promise<void> {
+  assertSafeQueueEntryId(params.id);
   await fs.promises.mkdir(params.failedDir, { recursive: true, mode: 0o700 });
   await fs.promises.rename(
     path.join(params.queueDir, `${params.id}.json`),
