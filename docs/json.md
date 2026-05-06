@@ -155,4 +155,4 @@ const state = await readJsonIfExists<State>("./state.json");
 - [Atomic writes](atomic.md) — lower-level sibling-temp replacement helpers.
 - [Secret files](secret-file.md) — JSON-or-text writes with mode 0600 in mode 0700 dirs.
 - [Private file-store mode](private-file-store.md) — root-bounded JSON+text state stores.
-- [Sidecar lock](sidecar-lock.md) — cross-process coordination.
+- [File lock](sidecar-lock.md) — cross-process coordination.

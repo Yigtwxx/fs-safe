@@ -117,5 +117,5 @@ Better, gate it from the caller — `withTimeout(p, 0, ...)` returns the promise
 ## See also
 
 - [Archive extraction](archive.md) — `extractArchive` already takes `timeoutMs`.
-- [Sidecar lock](sidecar-lock.md) — `retry.maxAttempts` × `retry.maxDelayMs` is a different form of bounded waiting.
+- [File lock](sidecar-lock.md) — retry policy is a different form of bounded waiting.
 - [`AbortSignal.timeout`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/timeout_static) — standard-library cancellation when you need to *abort*, not just *give up*.

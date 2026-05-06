@@ -41,13 +41,6 @@ export {
   type PathAliasPolicy,
 } from "./path-policy.js";
 export {
-  openPinnedFileSync,
-  type PinnedOpenSyncAllowedType,
-  type PinnedOpenSyncFailureReason,
-  type PinnedOpenSyncFs,
-  type PinnedOpenSyncResult,
-} from "./pinned-open.js";
-export {
   openRootFile,
   openRootFileSync,
   canUseRootFileOpen,
@@ -89,7 +82,6 @@ export {
   assertNoSymlinkParentsSync,
   type AssertNoSymlinkParentsOptions,
 } from "./symlink-parents.js";
-export { createSidecarLockManager, withSidecarLock } from "./sidecar-lock.js";
 export { movePathToTrash, type MovePathToTrashOptions } from "./trash.js";
 export { withTimeout } from "./timing.js";
 export { resolveHomeRelativePath } from "./home-dir.js";

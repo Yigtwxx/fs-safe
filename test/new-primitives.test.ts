@@ -25,7 +25,7 @@ import { pathScope } from "../src/root-paths.js";
 import { replaceFileAtomic, replaceFileAtomicSync } from "../src/replace-file.js";
 import { movePathWithCopyFallback } from "../src/move-path.js";
 import { writeSiblingTempFile } from "../src/sibling-temp.js";
-import { createSidecarLockManager } from "../src/sidecar-lock.js";
+import { acquireFileLock } from "../src/file-lock.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { jsonStore } from "../src/json-store.js";
 import {
@@ -338,15 +338,14 @@ describe("private file store mode", () => {
   });
 });
 
-describe("sidecar locks", () => {
+describe("file locks", () => {
   it("supports await using cleanup", async () => {
-    const manager = createSidecarLockManager(`test-${Date.now()}-${Math.random()}`);
     const targetPath = path.join(root, "locked.txt");
     let lockPath = "";
 
     {
-      await using lock = await manager.acquire({
-        targetPath,
+      await using lock = await acquireFileLock(targetPath, {
+        managerKey: `test-${Date.now()}-${Math.random()}`,
         staleMs: 60_000,
         payload: () => ({ owner: "test" }),
       });

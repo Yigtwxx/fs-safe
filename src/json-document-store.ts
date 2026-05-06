@@ -1,9 +1,10 @@
-import { createSidecarLockManager, type SidecarLockRetryOptions } from "./sidecar-lock.js";
+import type { FileLockRetryOptions } from "./file-lock.js";
+import { createSidecarLockManager } from "./sidecar-lock.js";
 
 export type JsonStoreLockOptions = {
   staleMs?: number;
   timeoutMs?: number;
-  retry?: SidecarLockRetryOptions;
+  retry?: FileLockRetryOptions;
   managerKey?: string;
 };
 

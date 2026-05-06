@@ -61,7 +61,7 @@ await fs.remove("notes/archive/today.txt");
 | [`extractArchive`](archive.md) | ZIP/TAR extraction with size, count, link, and traversal limits. |
 | [Secret files](secret-file.md) | Mode-0600 credentials with size and TOCTOU defense. |
 | [Permissions](permissions.md) | POSIX mode and Windows ACL inspection/remediation helpers. |
-| [`createSidecarLockManager`](sidecar-lock.md) | Cross-process file lock with retry and stale-lock recovery. |
+| [`acquireFileLock`](sidecar-lock.md) | Cross-process file lock with retry and stale-lock recovery. |
 | [`FsSafeError`](errors.md) | Closed code union (with `policy` / `operational` category) you can branch on. |
 | [`pathScope()`](path-scope.md) | Lower-level absolute-path boundary helper; lives behind `@openclaw/fs-safe/advanced`. |
 

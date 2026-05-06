@@ -273,4 +273,4 @@ it("processes a fixture", async () => {
 
 - [Atomic writes](atomic.md) — `replaceDirectoryAtomic` for whole-directory swaps.
 - [`root()`](root.md) — `fs.copyIn(rel, sourceAbs)` for moving files from a temp into a `Root`.
-- [Sidecar lock](sidecar-lock.md) — when many processes share a temp tree.
+- [File lock](sidecar-lock.md) — when many processes share a temp tree.

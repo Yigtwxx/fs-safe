@@ -171,4 +171,4 @@ See [Errors](errors.md) for the full list.
 
 - [Writing](writing.md) — companion verbs for produce-side I/O.
 - [JSON files](json.md) — standalone strict/lenient JSON helpers.
-- [Pinned open](pinned-open.md) — low-level synchronous pinned file open.
+- [Secure file reads](secure-file.md) — pinned absolute file reads with permission checks.

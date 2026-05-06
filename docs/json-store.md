@@ -4,7 +4,7 @@
 convenience wrapper for `fileStore(...).json(...)`: a small read-modify-write
 handle around a single JSON file. It bakes in atomic writes, explicit fallback
 reads, and optional cross-process locking via
-[`createSidecarLockManager`](sidecar-lock.md).
+[`acquireFileLock`](sidecar-lock.md).
 
 ```ts
 import { jsonStore } from "@openclaw/fs-safe/store";
@@ -52,7 +52,7 @@ type JsonStoreOptions<T> = {
 type JsonStoreLockOptions = {
   staleMs?: number;     // default 30_000
   timeoutMs?: number;   // default 30_000
-  retry?: SidecarLockRetryOptions;
+  retry?: FileLockRetryOptions;
   managerKey?: string;  // default `fs-safe.json-store:<filePath>`
 };
 
@@ -187,7 +187,7 @@ if (current.version !== CURRENT_VERSION) {
 | `jsonStore` | Raw helpers |
 |---|---|
 | Read-modify-write in one call (`update`). | Compose `readJsonIfExists` + `writeJson` yourself. |
-| Optional cross-process lock with one flag. | Manage `withSidecarLock` yourself. |
+| Optional cross-process lock with one flag. | Manage `withFileLock` yourself. |
 | Explicit `readOr` / `updateOr` fallbacks. | Caller handles `null` and clones. |
 | Mode/dirMode locked per store. | Per-call. |
 
@@ -196,5 +196,5 @@ if (current.version !== CURRENT_VERSION) {
 ## See also
 
 - [JSON files](json.md) — the standalone helpers `jsonStore` is built on.
-- [Sidecar lock](sidecar-lock.md) — the cross-process lock used when `lock: true`.
+- [File lock](sidecar-lock.md) — the cross-process lock used when `lock: true`.
 - [File store](file-store.md) — the multi-file equivalent of this surface.

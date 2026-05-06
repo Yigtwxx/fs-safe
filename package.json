@@ -58,6 +58,10 @@
       "types": "./dist/secure-file.d.ts",
       "default": "./dist/secure-file.js"
     },
+    "./file-lock": {
+      "types": "./dist/file-lock.d.ts",
+      "default": "./dist/file-lock.js"
+    },
     "./walk": {
       "types": "./dist/walk.d.ts",
       "default": "./dist/walk.js"
