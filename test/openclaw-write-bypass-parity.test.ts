@@ -1,6 +1,8 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
+import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { root as openRoot } from "../src/index.js";
 import {
   ESCAPING_DIRECTORY_PAYLOADS,
@@ -89,6 +91,25 @@ describe("OpenClaw write/move/delete bypass parity", () => {
       await expect(action()).rejects.toBeTruthy();
     }
     await expectNoOutsideWrite(layout);
+  });
+
+  it.runIf(process.platform !== "win32")("rejects file store symlink parent writes", async () => {
+    const layout = await makeTempLayout("fs-safe-file-store-symlink-parent");
+    const source = path.join(layout.root, "source.txt");
+    await fsp.writeFile(source, "source");
+    await fsp.symlink(layout.outside, path.join(layout.root, "link"), "dir");
+    const store = fileStore({ rootDir: layout.root });
+    const syncStore = fileStoreSync({ rootDir: layout.root });
+
+    await expect(store.write("link/write.txt", "pwned")).rejects.toBeTruthy();
+    await expect(store.writeStream("link/stream.txt", Readable.from(["pwned"]))).rejects
+      .toBeTruthy();
+    await expect(store.copyIn("link/copy.txt", source)).rejects.toBeTruthy();
+    expect(() => syncStore.write("link/sync-write.txt", "pwned")).toThrow();
+    expect(() => syncStore.writeText("link/sync-text.txt", "pwned")).toThrow();
+    expect(() => syncStore.writeJson("link/sync-json.json", { pwned: true })).toThrow();
+    await expectNoOutsideWrite(layout);
+    await expect(fsp.readdir(layout.outside)).resolves.toEqual(["secret.txt"]);
   });
 
   it("rejects final symlink leaf write/append/openWritable/copy targets without clobbering their target", async () => {

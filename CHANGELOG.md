@@ -6,6 +6,7 @@
 
 - Preserve the caller's destination path spelling during staged archive merges so symlink-rebind checks catch alias races on macOS.
 - Reject archive writes that gain a hardlink alias during post-write verification and clean up the destination file.
+- Reject `fileStore()` and `fileStoreSync()` writes through symlinked parent directories so store commits cannot escape the configured root.
 
 ## 0.1.0 - 2026-05-06
 
