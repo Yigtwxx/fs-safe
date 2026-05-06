@@ -84,6 +84,8 @@ export async function pruneExpiredStoreEntries(params: {
         }
         if (shouldDescend && (await pruneDir(fullPath, relativePath, depth + 1))) {
           await assertRootGuard();
+          // Keep empty-dir pruning on the same root-bounded remove path as files;
+          // the Root fallback handles empty directories without recursive delete.
           await scopedRoot.remove(relativePath).catch(() => undefined);
         }
         continue;

@@ -30,11 +30,14 @@ function isSameOrChildPath(candidate: string, parent: string): boolean {
 }
 
 function resolveAllowedTrashRoots(allowedRoots?: Iterable<string>): string[] {
-  const roots = [...(allowedRoots ?? [os.homedir(), os.tmpdir()])].map((root) => {
+  const roots = [...(allowedRoots ?? [os.homedir(), os.tmpdir()])].flatMap((root) => {
+    const lexicalRoot = path.resolve(root);
     try {
-      return path.resolve(fs.realpathSync.native(root));
+      // Keep both spellings: broken symlink targets cannot be realpathed and
+      // may only compare equal to the caller's lexical allowed root.
+      return [path.resolve(fs.realpathSync.native(root)), lexicalRoot];
     } catch {
-      return path.resolve(root);
+      return [lexicalRoot];
     }
   });
   return [...new Set(roots)];
@@ -43,27 +46,39 @@ function resolveAllowedTrashRoots(allowedRoots?: Iterable<string>): string[] {
 type TrashTargetGuard = {
   path: string;
   realPath: string;
+  realPathResolved: boolean;
   stat: fs.Stats;
 };
+
+function resolveTrashTargetPath(targetPath: string): { path: string; resolved: boolean } {
+  try {
+    return { path: path.resolve(fs.realpathSync.native(targetPath)), resolved: true };
+  } catch {
+    // Broken symlinks are valid trash targets. Fall back to the lexical path,
+    // then rely on lstat identity so the move renames the symlink itself.
+    return { path: path.resolve(targetPath), resolved: false };
+  }
+}
 
 function assertAllowedTrashTarget(
   targetPath: string,
   allowedRoots?: Iterable<string>,
 ): TrashTargetGuard {
-  let resolvedTargetPath = path.resolve(targetPath);
-  const stat = fs.lstatSync(resolvedTargetPath);
-  try {
-    resolvedTargetPath = path.resolve(fs.realpathSync.native(targetPath));
-  } catch {
-    // The subsequent move will surface missing or inaccessible targets.
-  }
+  const stat = fs.lstatSync(path.resolve(targetPath));
+  const resolvedTarget = resolveTrashTargetPath(targetPath);
+  const resolvedTargetPath = resolvedTarget.path;
   const isAllowed = resolveAllowedTrashRoots(allowedRoots).some(
     (root) => resolvedTargetPath !== root && isSameOrChildPath(resolvedTargetPath, root),
   );
   if (!isAllowed) {
     throw new Error(`Refusing to trash path outside allowed roots: ${targetPath}`);
   }
-  return { path: path.resolve(targetPath), realPath: resolvedTargetPath, stat };
+  return {
+    path: path.resolve(targetPath),
+    realPath: resolvedTargetPath,
+    realPathResolved: resolvedTarget.resolved,
+    stat,
+  };
 }
 
 function assertTrashTargetGuard(guard: TrashTargetGuard): void {
@@ -71,8 +86,11 @@ function assertTrashTargetGuard(guard: TrashTargetGuard): void {
   if (!sameFileIdentity(stat, guard.stat)) {
     throw new Error(`Refusing to trash path after it changed: ${guard.path}`);
   }
-  const realPath = path.resolve(fs.realpathSync.native(guard.path));
-  if (realPath !== guard.realPath) {
+  const current = resolveTrashTargetPath(guard.path);
+  if (guard.realPathResolved && (!current.resolved || current.path !== guard.realPath)) {
+    throw new Error(`Refusing to trash path after it changed: ${guard.path}`);
+  }
+  if (!guard.realPathResolved && current.resolved) {
     throw new Error(`Refusing to trash path after it changed: ${guard.path}`);
   }
 }

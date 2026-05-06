@@ -1379,7 +1379,7 @@ async function removePathFallback(resolved: { resolved: string }): Promise<void>
   const guard = await createAsyncDirectoryGuard(path.dirname(resolved.resolved));
   await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("remove", resolved.resolved);
   await assertAsyncDirectoryGuard(guard);
-  await fs.rm(resolved.resolved);
+  await ((await fs.lstat(resolved.resolved)).isDirectory() ? fs.rmdir(resolved.resolved) : fs.rm(resolved.resolved));
   await assertAsyncDirectoryGuard(guard).catch(() => undefined);
 }
 

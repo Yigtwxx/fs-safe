@@ -72,4 +72,21 @@ describe("platform fallback coverage", () => {
       code: "ENOENT",
     });
   });
+
+  it("prunes empty directories through the Windows remove fallback", async () => {
+    await importRootForPlatform("win32");
+    const { fileStore } = await import("../src/file-store.js");
+    const rootDir = await tempRoot("fs-safe-win-prune-");
+    const store = fileStore({ rootDir });
+    const stalePath = path.join(rootDir, "old", "stale.txt");
+    await fs.mkdir(path.dirname(stalePath), { recursive: true });
+    await fs.writeFile(stalePath, "stale", "utf8");
+    await fs.utimes(stalePath, new Date(0), new Date(0));
+
+    await store.pruneExpired({ ttlMs: 1, recursive: true, pruneEmptyDirs: true });
+
+    // Root.remove's Node fallback must use rmdir for empty directories; fs.rm
+    // without recursive rejects dirs and would silently leave pruneEmptyDirs work.
+    await expect(fs.stat(path.join(rootDir, "old"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
 });
