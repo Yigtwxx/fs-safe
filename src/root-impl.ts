@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { isPinnedPathHelperSpawnError, runPinnedPathHelper } from "./pinned-path.js";
@@ -24,6 +25,7 @@ import {
   helperStat,
   runPinnedHelper,
 } from "./pinned-helper.js";
+import { pathStatFromStats } from "./path-stat.js";
 import { resolveRootPath } from "./root-path.js";
 import {
   assertValidRootRelativePath,
@@ -1395,27 +1397,19 @@ async function resolvePinnedRootPathInRoot(
 }
 
 async function removePathFallback(resolved: { resolved: string }): Promise<void> {
+  const guard = await createAsyncDirectoryGuard(path.dirname(resolved.resolved));
+  await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("remove", resolved.resolved);
+  await assertAsyncDirectoryGuard(guard);
   await fs.rm(resolved.resolved);
+  await assertAsyncDirectoryGuard(guard).catch(() => undefined);
 }
 
-async function mkdirPathFallback(resolved: { resolved: string }): Promise<void> {
+async function mkdirPathFallback(resolved: { rootReal: string; resolved: string }): Promise<void> {
+  const guard = await createNearestExistingDirectoryGuard(resolved.rootReal, resolved.resolved);
+  await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", resolved.resolved);
+  await assertAsyncDirectoryGuard(guard);
   await fs.mkdir(resolved.resolved, { recursive: true });
-}
-
-function pathStatFromStats(stat: Stats): PathStat {
-  return {
-    dev: Number(stat.dev),
-    gid: Number(stat.gid),
-    ino: Number(stat.ino),
-    isDirectory: stat.isDirectory(),
-    isFile: stat.isFile(),
-    isSymbolicLink: stat.isSymbolicLink(),
-    mode: stat.mode,
-    mtimeMs: stat.mtimeMs,
-    nlink: stat.nlink,
-    size: stat.size,
-    uid: stat.uid,
-  };
+  await assertAsyncDirectoryGuard(guard);
 }
 
 async function statPathFallback(root: RootContext, relativePath: string): Promise<PathStat> {
@@ -1524,6 +1518,11 @@ async function movePathFallback(
     }
   }
 
+  const sourceParentGuard = await createAsyncDirectoryGuard(path.dirname(source.resolved));
+  const targetParentGuard = await createNearestExistingDirectoryGuard(target.rootReal, path.dirname(target.resolved));
+  await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("move", target.resolved);
+  await assertAsyncDirectoryGuard(sourceParentGuard);
+  await assertAsyncDirectoryGuard(targetParentGuard);
   try {
     await fs.rename(source.resolved, target.resolved);
   } catch (error) {
@@ -1539,6 +1538,7 @@ async function movePathFallback(
     }
     throw error;
   }
+  await assertAsyncDirectoryGuard(targetParentGuard).catch(() => undefined);
 }
 
 async function writeFileFallback(
