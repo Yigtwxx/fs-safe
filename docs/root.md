@@ -27,7 +27,7 @@ type RootDefaults = {
 };
 ```
 
-`root()` resolves the directory through the real filesystem. A symlinked input becomes the canonical path; a non-existent root throws `FsSafeError` with code `not-found`.
+`root()` resolves the directory through the real filesystem. A symlinked input becomes the canonical path; a non-existent root throws `FsSafeError` with code `not-found`, and malformed or non-directory roots throw `invalid-path`.
 
 `defaults` apply to every method on the returned handle. Per-call options on individual methods override the defaults for that call only.
 
@@ -127,6 +127,7 @@ Every method throws `FsSafeError` with a `code`. Branch on `err.code`, not messa
 
 | Code | When it fires |
 |---|---|
+| `invalid-path` | The input path is malformed, including embedded NUL bytes. |
 | `outside-workspace` | The input resolves outside the root, or contains a `..` segment that would escape it. |
 | `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). |
 | `not-file` | A read or copy targeted a non-regular file (directory, FIFO, socket, …). |

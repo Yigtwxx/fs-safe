@@ -15,6 +15,7 @@ import { canFallbackFromPythonError, getFsSafePythonConfig } from "./pinned-pyth
 import { expandHomePrefix } from "./home-dir.js";
 import { assertNoPathAliasEscape, PATH_ALIAS_POLICIES } from "./path-policy.js";
 import {
+  assertNoNulPathInput,
   hasNodeErrorCode,
   isNotFoundPathError,
   isPathInside,
@@ -154,6 +155,10 @@ function openResult(params: {
 
 const ensureTrailingSep = (value: string) => (value.endsWith(path.sep) ? value : value + path.sep);
 
+function assertValidRootRelativePath(relativePath: string): void {
+  assertNoNulPathInput(relativePath, "relative path contains a NUL byte");
+}
+
 let cachedHomePath: { raw: string; real: string } | undefined;
 
 async function expandRelativePathWithHome(relativePath: string): Promise<string> {
@@ -272,10 +277,18 @@ async function openVerifiedLocalFile(
 }
 
 async function resolveRootContext(rootDir: string): Promise<RootContext> {
+  assertNoNulPathInput(rootDir, "root dir contains a NUL byte");
   let rootReal: string;
   try {
     rootReal = await fs.realpath(rootDir);
+    const rootStat = await fs.stat(rootReal);
+    if (!rootStat.isDirectory()) {
+      throw new FsSafeError("invalid-path", "root dir is not a directory");
+    }
   } catch (err) {
+    if (err instanceof FsSafeError) {
+      throw err;
+    }
     if (isNotFoundPathError(err)) {
       throw new FsSafeError("not-found", "root dir not found");
     }
@@ -292,6 +305,7 @@ async function resolvePathInRoot(
   root: RootContext,
   relativePath: string,
 ): Promise<{ rootReal: string; rootWithSep: string; resolved: string }> {
+  assertValidRootRelativePath(relativePath);
   const expanded = await expandRelativePathWithHome(relativePath);
   const resolved = path.resolve(root.rootWithSep, expanded);
   if (!isPathInside(root.rootWithSep, resolved)) {
@@ -484,10 +498,12 @@ class RootHandle implements Root {
   }
 
   async remove(relativePath: string): Promise<void> {
+    assertValidRootRelativePath(relativePath);
     await removePathInRoot(this.context, relativePath);
   }
 
   async mkdir(relativePath: string): Promise<void> {
+    assertValidRootRelativePath(relativePath);
     await mkdirPathInRoot(this.context, { relativePath });
   }
 
@@ -549,6 +565,7 @@ class RootHandle implements Root {
     sourcePath: string,
     options: RootCopyOptions = {},
   ): Promise<void> {
+    assertValidRootRelativePath(relativePath);
     await copyFileInRoot(this.context, {
       sourcePath,
       relativePath,
@@ -572,6 +589,7 @@ class RootHandle implements Root {
   }
 
   async stat(relativePath: string): Promise<PathStat> {
+    assertValidRootRelativePath(relativePath);
     try {
       return await helperStat(this.rootReal, relativePath);
     } catch (error) {
@@ -588,6 +606,7 @@ class RootHandle implements Root {
     relativePath: string,
     options: { withFileTypes?: boolean } = {},
   ): Promise<string[] | DirEntry[]> {
+    assertValidRootRelativePath(relativePath);
     try {
       return options.withFileTypes === true
         ? await helperReaddir(this.rootReal, relativePath, true)
@@ -605,6 +624,8 @@ class RootHandle implements Root {
     toRelative: string,
     options: { overwrite?: boolean } = {},
   ): Promise<void> {
+    assertValidRootRelativePath(fromRelative);
+    assertValidRootRelativePath(toRelative);
     try {
       await runPinnedHelper<void>("rename", this.rootReal, {
         from: fromRelative,
@@ -733,6 +754,7 @@ export async function readLocalFileSafely(params: {
 }
 
 export async function openLocalFileSafely(params: { filePath: string }): Promise<OpenResult> {
+  assertNoNulPathInput(params.filePath, "file path contains a NUL byte");
   return await openVerifiedLocalFile(params.filePath);
 }
 
@@ -991,6 +1013,9 @@ async function openWritableFileInRoot(
     if (isSymlinkOpenError(err)) {
       throw new FsSafeError("symlink", "symlink open blocked", { cause: err });
     }
+    if (hasNodeErrorCode(err, "EISDIR")) {
+      throw new FsSafeError("not-file", "not a file", { cause: err });
+    }
     throw err;
   }
 
@@ -1223,6 +1248,8 @@ async function copyFileInRoot(
     sourceHardlinks?: HardlinkPolicy;
   },
 ): Promise<void> {
+  assertValidRootRelativePath(params.relativePath);
+  assertNoNulPathInput(params.sourcePath, "source path contains a NUL byte");
   const source = await openVerifiedLocalFile(params.sourcePath, {
     hardlinks: params.sourceHardlinks,
   });

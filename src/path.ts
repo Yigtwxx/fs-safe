@@ -30,6 +30,12 @@ export function hasNodeErrorCode(value: unknown, code: string): boolean {
   return isNodeError(value) && value.code === code;
 }
 
+export function assertNoNulPathInput(filePath: string, message = "path contains a NUL byte"): void {
+  if (filePath.includes("\0")) {
+    throw new FsSafeError("invalid-path", message);
+  }
+}
+
 export function isNotFoundPathError(value: unknown): boolean {
   return isNodeError(value) && typeof value.code === "string" && NOT_FOUND_CODES.has(value.code);
 }
@@ -118,9 +124,7 @@ export function splitSafeRelativePath(relativePath: string): string[] {
   if (relativePath.length === 0 || relativePath === ".") {
     return [];
   }
-  if (relativePath.includes("\0")) {
-    throw new FsSafeError("invalid-path", "relative path contains a NUL byte");
-  }
+  assertNoNulPathInput(relativePath, "relative path contains a NUL byte");
   if (relativePath.includes("\\")) {
     throw new FsSafeError("invalid-path", "relative path must use forward slashes");
   }

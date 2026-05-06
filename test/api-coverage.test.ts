@@ -37,6 +37,7 @@ import {
 import { resolveLocalPathFromRootsSync } from "../src/local-roots.js";
 import { movePathWithCopyFallback } from "../src/move-path.js";
 import {
+  assertNoNulPathInput,
   hasNodeErrorCode,
   isNotFoundPathError,
   isPathInside,
@@ -207,7 +208,7 @@ describe("root handle coverage", () => {
     await opened[Symbol.asyncDispose]();
 
     await fs.mkdir(path.join(rootDir, "dir"));
-    await expect(scoped.openWritable("dir")).rejects.toMatchObject({ code: "EISDIR" });
+    await expect(scoped.openWritable("dir")).rejects.toMatchObject({ code: "not-file" });
     await expect(scoped.openWritable("inside-hardlink.txt")).rejects.toMatchObject({
       code: "path-alias",
     });
@@ -250,6 +251,7 @@ describe("path helpers", () => {
     expect(isPathInsideWithRealpath(root, path.join(root, "missing"))).toBe(false);
     expect(safeStatSync(file)?.isFile()).toBe(true);
     expect(safeStatSync(path.join(root, "missing"))).toBeNull();
+    expect(() => assertNoNulPathInput("a\0b")).toThrow("NUL");
     expect(splitSafeRelativePath("./a//b")).toEqual(["a", "b"]);
     for (const bad of ["../x", "/x", "C:\\x", "a\\b", "a\0b"]) {
       expect(() => splitSafeRelativePath(bad)).toThrow();

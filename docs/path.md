@@ -10,6 +10,7 @@ import {
   resolveSafeBaseDir,
   safeRealpathSync,
   safeStatSync,
+  assertNoNulPathInput,
   isNotFoundPathError,
   isSymlinkOpenError,
   hasNodeErrorCode,
@@ -76,6 +77,10 @@ Synchronous `stat` that returns `null` instead of throwing on missing paths. Ret
 const stat = safeStatSync("/srv/uploads/photo.jpg");
 if (!stat?.isFile()) return notFound();
 ```
+
+### `assertNoNulPathInput(filePath, message?)`
+
+Throws `FsSafeError` with code `invalid-path` when a path string contains an embedded NUL byte. Use it before calling Node `fs` APIs directly; Node's native error can include raw path text in the message.
 
 ## Error inspection
 

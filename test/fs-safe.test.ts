@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { configureFsSafePython, FsSafeError, root as openRoot } from "../src/index.js";
+import { openLocalFileSafely, readLocalFileSafely } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
 const tempDirs: string[] = [];
@@ -47,6 +48,17 @@ describe("@openclaw/fs-safe", () => {
     await root.remove("nested/renamed.txt");
     await expect(root.stat("nested/renamed.txt")).rejects.toMatchObject({
       code: "not-found",
+    });
+  });
+
+  it("rejects non-directory roots before creating a capability", async () => {
+    const rootPath = await tempRoot("fs-safe-root-file-");
+    const filePath = path.join(rootPath, "file.txt");
+    await writeFile(filePath, "not a directory");
+
+    await expect(openRoot(filePath)).rejects.toMatchObject({
+      code: "invalid-path",
+      message: "root dir is not a directory",
     });
   });
 
@@ -144,6 +156,61 @@ describe("@openclaw/fs-safe", () => {
     await expect(root.write("../write", "")).rejects.toMatchObject({
       code: "outside-workspace",
     });
+  });
+
+  it("rejects NUL bytes with FsSafeError before reaching Node fs", async () => {
+    const root = await openRoot(await tempRoot("fs-safe-nul-"));
+
+    for (const operation of [
+      () => root.resolve("x\0y"),
+      () => root.open("x\0y"),
+      () => root.openWritable("x\0y"),
+      () => root.read("x\0y"),
+      () => root.readBytes("x\0y"),
+      () => root.readText("x\0y"),
+      () => root.readJson("x\0y"),
+      () => root.write("x\0y", "data"),
+      () => root.append("x\0y", "data"),
+      () => root.copyIn("x\0y", path.join(root.rootDir, "source.txt")),
+      () => root.exists("x\0y"),
+      () => root.stat("x\0y"),
+      () => root.list("x\0y"),
+      () => root.move("x\0y", "dest.txt"),
+      () => root.move("source.txt", "x\0y"),
+      () => root.remove("x\0y"),
+      () => root.mkdir("x\0y"),
+    ]) {
+      await expect(operation()).rejects.toMatchObject({
+        code: "invalid-path",
+        message: "relative path contains a NUL byte",
+      });
+    }
+
+    await expect(root.copyIn("dest.txt", `${root.rootDir}/source\0.txt`)).rejects.toMatchObject({
+      code: "invalid-path",
+      message: "source path contains a NUL byte",
+    });
+  });
+
+  it("rejects NUL bytes on public root and local-file entry points", async () => {
+    const rootPath = await tempRoot("fs-safe-public-nul-");
+    const filePath = path.join(rootPath, "file.txt");
+    await writeFile(filePath, "ok");
+
+    for (const operation of [
+      () => openRoot(`${rootPath}\0bad`),
+      () => openLocalFileSafely({ filePath: `${filePath}\0bad` }),
+      () => readLocalFileSafely({ filePath: `${filePath}\0bad` }),
+    ]) {
+      let thrown: unknown;
+      try {
+        await operation();
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({ code: "invalid-path" });
+      expect(String(thrown)).not.toContain(rootPath);
+    }
   });
 
   it("rejects reader callbacks for absolute paths outside the root", async () => {
