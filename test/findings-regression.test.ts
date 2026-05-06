@@ -15,7 +15,7 @@ import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import { replaceFileAtomic } from "../src/replace-file.js";
 import { writeViaSiblingTempPath } from "../src/sibling-temp.js";
 import { sanitizeTempFileName, tempFile } from "../src/temp-target.js";
-import { tempWorkspaceSync } from "../src/private-temp-workspace.js";
+import { tempWorkspace, tempWorkspaceSync } from "../src/private-temp-workspace.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { movePathToTrash } from "../src/trash.js";
 
@@ -388,6 +388,19 @@ describe("security finding regressions", () => {
     } finally {
       await target.cleanup();
     }
+  });
+
+  it("accepts safe temp workspace leaf names with spaces and dot prefixes", async () => {
+    await using workspace = await tempWorkspace({
+      rootDir: await tempRoot("fs-safe-workspace-leaf-"),
+      prefix: "work-",
+    });
+
+    await workspace.writeText("report 2026.txt", "ok");
+    await workspace.writeText(".env", "TOKEN=ok");
+
+    await expect(workspace.read("report 2026.txt")).resolves.toEqual(Buffer.from("ok"));
+    await expect(workspace.read(".env")).resolves.toEqual(Buffer.from("TOKEN=ok"));
   });
 
   it.runIf(process.platform !== "win32")("pins sync temp workspace reads against final symlink swaps", async () => {

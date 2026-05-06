@@ -9,7 +9,6 @@ import {
   type FileStoreSync,
 } from "./file-store.js";
 import { openRootFileSync } from "./root-file.js";
-import { isSafePathSegment } from "./safe-path-segment.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 
 export type TempWorkspaceOptions = {
@@ -62,7 +61,15 @@ function resolveWorkspaceLeaf(dir: string, fileName: string): string {
 
 function assertWorkspaceFileName(fileName: string): string {
   const value = fileName.trim();
-  if (!isSafePathSegment(value)) {
+  if (
+    !value ||
+    value === "." ||
+    value === ".." ||
+    value.includes("\0") ||
+    value.includes("/") ||
+    value.includes("\\") ||
+    path.basename(value) !== value
+  ) {
     throw new Error(`Invalid temp workspace file name: ${JSON.stringify(fileName)}`);
   }
   return value;
