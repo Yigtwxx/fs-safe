@@ -15,15 +15,29 @@ import {
 export async function withAsyncDirectoryGuards<T>(
   guards: readonly AsyncDirectoryGuard[],
   mutate: () => Promise<T>,
-  options: { verifyAfter?: boolean } = {},
+  options: {
+    verifyAfter?: boolean;
+    onPostGuardFailure?: (result: T, error: unknown) => Promise<void> | void;
+  } = {},
 ): Promise<T> {
   for (const guard of guards) {
     await assertAsyncDirectoryGuard(guard);
   }
   const result = await mutate();
   if (options.verifyAfter !== false) {
-    for (const guard of guards) {
-      await assertAsyncDirectoryGuard(guard);
+    try {
+      for (const guard of guards) {
+        await assertAsyncDirectoryGuard(guard);
+      }
+    } catch (error) {
+      if (options.onPostGuardFailure) {
+        try {
+          await options.onPostGuardFailure(result, error);
+        } catch {
+          // Preserve the boundary failure. Cleanup is best-effort.
+        }
+      }
+      throw error;
     }
   }
   return result;

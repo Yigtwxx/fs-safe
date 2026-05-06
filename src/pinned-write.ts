@@ -207,12 +207,20 @@ async function runPinnedWriteFallback(params: {
   }
   const targetPath = path.join(parentPath, params.basename);
   if (params.overwrite === false) {
-    let handle = await withAsyncDirectoryGuards([parentGuard], async () =>
-      await fs.open(
-        targetPath,
-        fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
-        params.mode,
-      )
+    let handle = await withAsyncDirectoryGuards(
+      [parentGuard],
+      async () =>
+        await fs.open(
+          targetPath,
+          fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
+          params.mode,
+        ),
+      {
+        onPostGuardFailure: async (openedHandle) => {
+          await openedHandle.close().catch(() => undefined);
+          await fs.rm(targetPath, { force: true }).catch(() => undefined);
+        },
+      },
     );
     let created = true;
     try {

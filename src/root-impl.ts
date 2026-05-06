@@ -1609,21 +1609,29 @@ async function writeMissingFileFallback(
 
   let created = false;
   try {
-    const { handle, writtenStat } = await withAsyncDirectoryGuards([parentGuard], async () => {
-      const handle = await fs.open(resolved, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600);
-      created = true;
-      try {
-        if (typeof params.data === "string") {
-          await handle.writeFile(params.data, params.encoding ?? "utf8");
-        } else {
-          await handle.writeFile(params.data);
+    const { handle, writtenStat } = await withAsyncDirectoryGuards(
+      [parentGuard],
+      async () => {
+        const handle = await fs.open(resolved, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600);
+        created = true;
+        try {
+          if (typeof params.data === "string") {
+            await handle.writeFile(params.data, params.encoding ?? "utf8");
+          } else {
+            await handle.writeFile(params.data);
+          }
+          return { handle, writtenStat: await handle.stat() };
+        } catch (error) {
+          await handle.close().catch(() => undefined);
+          throw error;
         }
-        return { handle, writtenStat: await handle.stat() };
-      } catch (error) {
-        await handle.close().catch(() => undefined);
-        throw error;
-      }
-    });
+      },
+      {
+        onPostGuardFailure: async ({ handle }) => {
+          await handle.close().catch(() => undefined);
+        },
+      },
+    );
     await handle.close();
     await verifyAtomicWriteResult({
       root,
