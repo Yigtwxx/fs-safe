@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -111,13 +112,13 @@ export async function runPinnedWriteHelper(params: {
   maxBytes?: number;
   input: PinnedWriteInput;
 }): Promise<FileIdentityStat> {
-  if (getFsSafePythonConfig().mode === "off") {
-    return await runPinnedWriteFallback(params);
-  }
   assertSafeBasename(params.basename);
   validatePinnedOperationPayload({
     relativeParentPath: params.relativeParentPath,
   });
+  if (getFsSafePythonConfig().mode === "off") {
+    return await runPinnedWriteFallback(params);
+  }
   if (params.input.kind === "stream") {
     try {
       assertPinnedPythonOperationAvailable();
@@ -236,35 +237,44 @@ async function runPinnedWriteFallback(params: {
     }
   }
 
-  const tempPath = path.join(parentPath, `.${params.basename}.fallback.tmp`);
+  const tempPath = path.join(parentPath, `.${params.basename}.${randomUUID()}.fallback.tmp`);
+  const tempFlags =
+    fsSync.constants.O_WRONLY |
+    fsSync.constants.O_CREAT |
+    fsSync.constants.O_EXCL |
+    (process.platform !== "win32" && "O_NOFOLLOW" in fsSync.constants
+      ? fsSync.constants.O_NOFOLLOW
+      : 0);
+  let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+  let handleClosedByStream = false;
   try {
+    handle = await fs.open(tempPath, tempFlags, params.mode);
     if (params.input.kind === "buffer") {
       assertWithinMaxBytes(
         byteLength(params.input.data, params.input.encoding),
         params.maxBytes,
       );
       if (typeof params.input.data === "string") {
-        await fs.writeFile(tempPath, params.input.data, {
-          encoding: params.input.encoding ?? "utf8",
-          mode: params.mode,
-        });
+        await handle.writeFile(params.input.data, params.input.encoding ?? "utf8");
       } else {
-        await fs.writeFile(tempPath, params.input.data, { mode: params.mode });
+        await handle.writeFile(params.input.data);
       }
     } else {
-      const handle = await fs.open(tempPath, "w", params.mode);
-      try {
-        await pipelineWithMaxBytes(
-          params.input.stream,
-          handle.createWriteStream(),
-          params.maxBytes,
-        );
-      } finally {
-        await handle.close().catch(() => {});
-      }
+      const writable = handle.createWriteStream();
+      writable.once("close", () => {
+        handleClosedByStream = true;
+      });
+      await pipelineWithMaxBytes(params.input.stream, writable, params.maxBytes);
+    }
+    if (!handleClosedByStream) {
+      await handle.close().catch(() => undefined);
+      handle = undefined;
     }
     await fs.rename(tempPath, targetPath);
   } catch (error) {
+    if (handle && !handleClosedByStream) {
+      await handle.close().catch(() => undefined);
+    }
     await fs.rm(tempPath, { force: true }).catch(() => undefined);
     throw error;
   }
