@@ -47,7 +47,7 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { force: true, recursive: true })));
 });
 
-describe("additional bypass parity", () => {
+describe("additional helper boundary bypass attempts", () => {
   it("rejects archive traversal payloads before resolving output paths", async () => {
     const layout = await makeTempLayout("fs-safe-archive-payloads");
 
