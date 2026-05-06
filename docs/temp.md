@@ -177,7 +177,9 @@ const result = await writeSiblingTempFile<string>({
 
 ### `writeViaSiblingTempPath`
 
-A higher-level convenience — write content + rename in one call:
+A higher-level convenience for callback-based producers. The callback writes to
+a private temp path, then the helper copies the result into `targetPath` through
+the root boundary:
 
 ```ts
 import { writeViaSiblingTempPath } from "@openclaw/fs-safe/advanced";
@@ -191,7 +193,9 @@ await writeViaSiblingTempPath({
 });
 ```
 
-If `replaceFileAtomic` does what you need, prefer that — `writeViaSiblingTempPath` is the lower-level building block.
+If `replaceFileAtomic` does what you need, prefer that. Use
+`writeViaSiblingTempPath` when the producer needs a concrete temp pathname but
+the final destination still needs root-boundary checks.
 
 ## Secure temp root
 

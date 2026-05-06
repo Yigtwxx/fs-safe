@@ -60,6 +60,10 @@ await writeJsonDurableQueueEntry({
 const pending = await loadPendingJsonDurableQueueEntries({ queueDir, tempPrefix: "queue" });
 ```
 
+`id` must be a single safe path segment: non-empty, not dot-prefixed, and made
+from letters, numbers, `_`, `-`, and `.`. Slashes, backslashes, NUL bytes, `.`,
+and `..` are rejected.
+
 Use `ackJsonDurableQueueEntry()` after durable processing succeeds and
 `moveJsonDurableQueueEntryToFailed()` when the caller wants to quarantine an
 entry for inspection.
