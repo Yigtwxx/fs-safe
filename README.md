@@ -1,5 +1,11 @@
 # 🛡️ @openclaw/fs-safe
 
+[![npm](https://img.shields.io/npm/v/@openclaw/fs-safe.svg?color=10b981&label=npm)](https://www.npmjs.com/package/@openclaw/fs-safe)
+[![ci](https://github.com/openclaw/fs-safe/actions/workflows/ci.yml/badge.svg)](https://github.com/openclaw/fs-safe/actions/workflows/ci.yml)
+[![node](https://img.shields.io/node/v/@openclaw/fs-safe.svg?color=10b981)](https://nodejs.org)
+[![license](https://img.shields.io/npm/l/@openclaw/fs-safe.svg?color=10b981)](LICENSE)
+[![docs](https://img.shields.io/badge/docs-fs--safe.io-10b981)](https://fs-safe.io)
+
 Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.
 
 Think Go's `os.Root` / `OpenInRoot` or Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std), but for Node. Hand `root()` a trusted directory and you get back a handle whose every method resolves relative paths against it and refuses to escape — through `..`, symlink swaps, hardlink aliases, or TOCTOU rename races between check and use.
@@ -14,6 +20,12 @@ await fs.write("../escape.txt", "x");            // throws FsSafeError("outside-
 
 That's the whole pitch. `root()` is the product; the rest of the package — JSON stores, atomic writes, secret files, archive extraction, temp workspaces — is supporting cast for the same boundary.
 
+Full docs and reference at **[fs-safe.io](https://fs-safe.io)**.
+
+## Contents
+
+[Why this exists](#why-this-exists) · [Not a sandbox](#not-a-sandbox) · [Install](#install) · [Quick start](#quick-start) · [Reading](#reading) · [Subpaths](#subpaths) · [Failure semantics](#failure-semantics-in-the-name) · [Atomic writes](#atomic-writes) · [Stores](#stores) · [Secure absolute reads](#secure-absolute-file-reads) · [Walking](#directory-walking) · [Archive extraction](#archive-extraction) · [Path scopes](#advanced-path-scopes) · [Errors](#errors) · [Safety model](#safety-model) · [Limitations](#limitations)
+
 ## Why this exists
 
 Most Node code that has to touch caller-controlled paths reaches for:
@@ -25,6 +37,13 @@ path.resolve(root, input).startsWith(root)
 That validates a *string*. It does not pin the file you opened, defend against a symlink retarget between check and use, reject hardlinked aliases of out-of-tree inodes, or verify that a write landed where you intended after a rename. The pieces to do those things exist scattered across the ecosystem — [`write-file-atomic`](https://www.npmjs.com/package/write-file-atomic) for atomic writes, `tar` / `jszip` for archive extraction, various `safefs`-style convenience wrappers — but none of them give you one root handle with traversal-resistant semantics across every operation.
 
 The same idea has landed in other languages. Go [added `os.Root` and `OpenInRoot`](https://go.dev/blog/osroot); Rust has had [`cap-std`](https://github.com/bytecodealliance/cap-std) for years. Node's `fs` is path-string-oriented and exposes flags like `O_NOFOLLOW` but not an ergonomic "operate inside this root" API. `fs-safe` fills that gap.
+
+| | Root boundary | Atomic writes | Symlink/hardlink defense | TOCTOU resistance | Archive extraction |
+|---|---|---|---|---|---|
+| `path.resolve().startsWith()` | string check only | – | – | – | – |
+| [`write-file-atomic`](https://www.npmjs.com/package/write-file-atomic) | – | ✓ | – | – | – |
+| Go [`os.Root`](https://go.dev/blog/osroot) / Rust [`cap-std`](https://github.com/bytecodealliance/cap-std) | ✓ | platform | ✓ | ✓ | – |
+| **`@openclaw/fs-safe`** | **✓** | **✓** | **✓** | **✓ (POSIX fd-relative)** | **✓ (ZIP/TAR)** |
 
 ## Not a sandbox
 
