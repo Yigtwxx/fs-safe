@@ -1,6 +1,8 @@
 import crypto, { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
+import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { sanitizeUntrustedFileName } from "./filename.js";
 import { root } from "./root.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
@@ -61,40 +63,13 @@ function assertFinalPathIsSibling(dir: string, filePath: string): void {
   }
 }
 
-type DirectoryGuard = {
-  dir: string;
-  realPath: string;
-  dev: number | bigint;
-  ino: number | bigint;
-};
-
-async function createDirectoryGuard(dir: string): Promise<DirectoryGuard> {
-  const stat = await fs.lstat(dir);
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new Error(`Directory changed during sibling-temp write: ${dir}`);
-  }
-  return { dir, realPath: await fs.realpath(dir), dev: stat.dev, ino: stat.ino };
-}
-
-async function assertDirectoryGuard(guard: DirectoryGuard): Promise<void> {
-  const stat = await fs.lstat(guard.dir);
-  if (
-    stat.isSymbolicLink() ||
-    !stat.isDirectory() ||
-    stat.dev !== guard.dev ||
-    stat.ino !== guard.ino ||
-    (await fs.realpath(guard.dir)) !== guard.realPath
-  ) {
-    throw new Error(`Directory changed during sibling-temp write: ${guard.dir}`);
-  }
-}
-
 export async function writeSiblingTempFile<T>(
   options: WriteSiblingTempFileOptions<T>,
 ): Promise<WriteSiblingTempFileResult<T>> {
   const dir = path.resolve(options.dir);
   await fs.mkdir(dir, { recursive: true, mode: options.dirMode ?? 0o700 });
   await fs.chmod(dir, options.dirMode ?? 0o700).catch(() => undefined);
+  const dirGuard = await createAsyncDirectoryGuard(dir);
   const tempPath = buildTempPath(dir, options.tempPrefix);
   const unregisterTempPath = registerTempPathForExit(tempPath);
   let tempExists = false;
@@ -110,7 +85,9 @@ export async function writeSiblingTempFile<T>(
     const filePath = path.resolve(options.resolveFinalPath(result));
     assertFinalPathIsSibling(dir, filePath);
     await serializePathWrite(filePath, async () => {
-      await fs.rename(tempPath, filePath);
+      await withAsyncDirectoryGuards([dirGuard], async () => {
+        await fs.rename(tempPath, filePath);
+      });
       tempExists = false;
       unregisterTempPath();
       if (options.mode !== undefined) {
@@ -166,7 +143,7 @@ export async function writeViaSiblingTempPath(params: {
   ) {
     throw new Error("Target path is outside the allowed root");
   }
-  const rootGuard = await createDirectoryGuard(rootDir);
+  const rootGuard = await createAsyncDirectoryGuard(rootDir);
   const tempDir = await fs.mkdtemp(
     path.join(
       resolveSecureTempRoot({
@@ -186,10 +163,10 @@ export async function writeViaSiblingTempPath(params: {
   try {
     await getFsSafeTestHooks()?.beforeSiblingTempWrite?.(tempPath);
     await params.writeTemp(tempPath);
-    await assertDirectoryGuard(rootGuard);
+    await assertAsyncDirectoryGuard(rootGuard);
     const targetRoot = await root(rootDir);
     await targetRoot.copyIn(relativeTargetPath, tempPath, { mkdir: false });
-    await assertDirectoryGuard(rootGuard);
+    await assertAsyncDirectoryGuard(rootGuard);
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
     unregisterTempPath();

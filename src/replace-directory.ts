@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { guardedRename, guardedRm } from "./guarded-mutation.js";
 
 export type ReplaceDirectoryAtomicOptions = {
   stagedDir: string;
@@ -21,7 +22,7 @@ export async function replaceDirectoryAtomic(
 
   await fs.mkdir(parentDir, { recursive: true });
   try {
-    await fs.rename(targetDir, backupDir);
+    await guardedRename({ from: targetDir, to: backupDir });
     backupCreated = true;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -30,16 +31,16 @@ export async function replaceDirectoryAtomic(
   }
 
   try {
-    await fs.rename(stagedDir, targetDir);
+    await guardedRename({ from: stagedDir, to: targetDir });
   } catch (err) {
     if (backupCreated) {
-      await fs.rename(backupDir, targetDir).catch(() => undefined);
+      await guardedRename({ from: backupDir, to: targetDir }).catch(() => undefined);
       backupCreated = false;
     }
     throw err;
   }
 
   if (backupCreated) {
-    await fs.rm(backupDir, { recursive: true, force: true });
+    await guardedRm({ target: backupDir, recursive: true, force: true, verifyAfter: false });
   }
 }

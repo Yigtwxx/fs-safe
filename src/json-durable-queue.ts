@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { FsSafeError } from "./errors.js";
 import { replaceFileAtomic } from "./replace-file.js";
+import { assertSafePathSegment } from "./safe-path-segment.js";
 
 export type JsonDurableQueueEntryPaths = {
   jsonPath: string;
@@ -27,18 +27,7 @@ function getErrnoCode(error: unknown): string | null {
 }
 
 function assertSafeQueueEntryId(id: string): void {
-  if (
-    !id ||
-    id === "." ||
-    id === ".." ||
-    id.startsWith(".") ||
-    id.includes("/") ||
-    id.includes("\\") ||
-    id.includes("\0") ||
-    !/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(id)
-  ) {
-    throw new FsSafeError("invalid-path", "queue entry id must be a safe path segment");
-  }
+  assertSafePathSegment(id, { label: "queue entry id" });
 }
 
 export async function unlinkBestEffort(filePath: string): Promise<void> {

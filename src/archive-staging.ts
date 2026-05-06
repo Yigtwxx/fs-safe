@@ -1,6 +1,11 @@
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
+import {
+  assertAsyncDirectoryGuard,
+  createAsyncDirectoryGuard,
+  type AsyncDirectoryGuard,
+} from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { resolveOpenedFileRealPathForHandle, root } from "./root.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
@@ -32,34 +37,28 @@ function symlinkTraversalError(originalPath: string): ArchiveSecurityError {
   );
 }
 
-type DirectoryIdentityGuard = {
-  dir: string;
-  realPath: string;
-  dev: number | bigint;
-  ino: number | bigint;
-};
-
-async function createDirectoryIdentityGuard(dir: string): Promise<DirectoryIdentityGuard> {
-  const stat = await fs.lstat(dir);
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new ArchiveSecurityError("destination-symlink", "archive destination is a symlink");
+async function createDirectoryIdentityGuard(dir: string): Promise<AsyncDirectoryGuard> {
+  try {
+    return await createAsyncDirectoryGuard(dir);
+  } catch (err) {
+    if (err instanceof FsSafeError && err.code === "not-file") {
+      throw new ArchiveSecurityError("destination-symlink", "archive destination is a symlink");
+    }
+    throw err;
   }
-  return { dir, realPath: await fs.realpath(dir), dev: stat.dev, ino: stat.ino };
 }
 
-async function assertDirectoryIdentityGuard(guard: DirectoryIdentityGuard): Promise<void> {
-  const stat = await fs.lstat(guard.dir);
-  if (
-    stat.isSymbolicLink() ||
-    !stat.isDirectory() ||
-    stat.dev !== guard.dev ||
-    stat.ino !== guard.ino ||
-    (await fs.realpath(guard.dir)) !== guard.realPath
-  ) {
-    throw new ArchiveSecurityError(
-      "destination-symlink-traversal",
-      "archive destination changed during extraction",
-    );
+async function assertDirectoryIdentityGuard(guard: AsyncDirectoryGuard): Promise<void> {
+  try {
+    await assertAsyncDirectoryGuard(guard);
+  } catch (err) {
+    if (err instanceof FsSafeError) {
+      throw new ArchiveSecurityError(
+        "destination-symlink-traversal",
+        "archive destination changed during extraction",
+      );
+    }
+    throw err;
   }
 }
 

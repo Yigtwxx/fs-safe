@@ -26,6 +26,7 @@ export type ReplaceFileAtomicSyncFileSystem = Pick<
   typeof syncFs,
   | "mkdirSync"
   | "chmodSync"
+  | "readFileSync"
   | "writeFileSync"
   | "renameSync"
   | "copyFileSync"
@@ -76,6 +77,15 @@ function isPermissionRenameError(error: unknown): boolean {
   return code === "EPERM" || code === "EEXIST";
 }
 
+const SUPPORTS_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in syncFs.constants;
+const OPEN_READ_FLAGS =
+  syncFs.constants.O_RDONLY | (SUPPORTS_NOFOLLOW ? syncFs.constants.O_NOFOLLOW : 0);
+const OPEN_WRITE_EXCLUSIVE_FLAGS =
+  syncFs.constants.O_WRONLY |
+  syncFs.constants.O_CREAT |
+  syncFs.constants.O_EXCL |
+  (SUPPORTS_NOFOLLOW ? syncFs.constants.O_NOFOLLOW : 0);
+
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -98,17 +108,7 @@ async function renameWithRetry(params: {
         continue;
       }
       if (params.copyFallbackOnPermissionError && isPermissionRenameError(error)) {
-        const stat = await params.fsModule.lstat(params.dest).catch((lstatError) => {
-          if ((lstatError as NodeJS.ErrnoException).code === "ENOENT") {
-            return null;
-          }
-          throw lstatError;
-        });
-        if (stat?.isSymbolicLink()) {
-          throw new Error(`Refusing copy fallback through symlink destination: ${params.dest}`);
-        }
-        await params.fsModule.copyFile(params.src, params.dest);
-        await params.fsModule.unlink(params.src).catch(() => undefined);
+        await copyFallbackReplace(params.fsModule, params.src, params.dest);
         return { method: "copy-fallback" };
       }
       throw error;
@@ -142,29 +142,103 @@ function renameWithRetrySync(params: {
         continue;
       }
       if (params.copyFallbackOnPermissionError && isPermissionRenameError(error)) {
-        let stat: Stats | null = null;
-        try {
-          stat = params.fsModule.lstatSync(params.dest);
-        } catch (lstatError) {
-          if ((lstatError as NodeJS.ErrnoException).code !== "ENOENT") {
-            throw lstatError;
-          }
-        }
-        if (stat?.isSymbolicLink()) {
-          throw new Error(`Refusing copy fallback through symlink destination: ${params.dest}`);
-        }
-        params.fsModule.copyFileSync(params.src, params.dest);
-        try {
-          params.fsModule.unlinkSync(params.src);
-        } catch {
-          // Best-effort cleanup after fallback replacement.
-        }
+        copyFallbackReplaceSync(params.fsModule, params.src, params.dest);
         return { method: "copy-fallback" };
       }
       throw error;
     }
   }
   throw new Error("Atomic rename retry loop exhausted.");
+}
+
+async function copyFallbackReplace(
+  fsModule: ReplaceFileAtomicFileSystem["promises"],
+  src: string,
+  dest: string,
+): Promise<void> {
+  const sourceStat = await fsModule.lstat(src);
+  if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
+    throw new Error(`Refusing copy fallback from non-file source: ${src}`);
+  }
+  const destStat = await fsModule.lstat(dest).catch((lstatError) => {
+    if ((lstatError as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw lstatError;
+  });
+  if (destStat?.isSymbolicLink()) {
+    throw new Error(`Refusing copy fallback through symlink destination: ${dest}`);
+  }
+  if (destStat) {
+    await fsModule.rm(dest, { force: true });
+  }
+
+  let sourceHandle: Awaited<ReturnType<ReplaceFileAtomicFileSystem["promises"]["open"]>> | null =
+    null;
+  let destHandle: Awaited<ReturnType<ReplaceFileAtomicFileSystem["promises"]["open"]>> | null =
+    null;
+  try {
+    sourceHandle = await fsModule.open(src, OPEN_READ_FLAGS);
+    destHandle = await fsModule.open(dest, OPEN_WRITE_EXCLUSIVE_FLAGS, sourceStat.mode & 0o777);
+    await destHandle.writeFile(await sourceHandle.readFile());
+  } finally {
+    await destHandle?.close().catch(() => undefined);
+    await sourceHandle?.close().catch(() => undefined);
+  }
+  await fsModule.unlink(src).catch(() => undefined);
+}
+
+function copyFallbackReplaceSync(
+  fsModule: ReplaceFileAtomicSyncFileSystem,
+  src: string,
+  dest: string,
+): void {
+  const sourceStat = fsModule.lstatSync(src);
+  if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
+    throw new Error(`Refusing copy fallback from non-file source: ${src}`);
+  }
+  let destStat: Stats | null = null;
+  try {
+    destStat = fsModule.lstatSync(dest);
+  } catch (lstatError) {
+    if ((lstatError as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw lstatError;
+    }
+  }
+  if (destStat?.isSymbolicLink()) {
+    throw new Error(`Refusing copy fallback through symlink destination: ${dest}`);
+  }
+  if (destStat) {
+    fsModule.rmSync(dest, { force: true });
+  }
+
+  let sourceFd: number | undefined;
+  let destFd: number | undefined;
+  try {
+    sourceFd = fsModule.openSync(src, OPEN_READ_FLAGS);
+    destFd = fsModule.openSync(dest, OPEN_WRITE_EXCLUSIVE_FLAGS, sourceStat.mode & 0o777);
+    fsModule.writeFileSync(destFd, fsModule.readFileSync(sourceFd));
+  } finally {
+    if (destFd !== undefined) {
+      try {
+        fsModule.closeSync(destFd);
+      } catch {
+        // Best-effort close after fallback replacement.
+      }
+    }
+    if (sourceFd !== undefined) {
+      try {
+        fsModule.closeSync(sourceFd);
+      } catch {
+        // Best-effort close after fallback replacement.
+      }
+    }
+  }
+  try {
+    fsModule.unlinkSync(src);
+  } catch {
+    // Best-effort cleanup after fallback replacement.
+  }
 }
 
 function validateReplaceFilePath(filePath: string): void {

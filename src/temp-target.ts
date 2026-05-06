@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
+import { sanitizeSafePathSegment } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 
@@ -28,12 +29,9 @@ function sanitizeExtension(extension?: string): string {
 }
 
 export function sanitizeTempFileName(fileName: string): string {
-  const base = path.basename(fileName).replace(/[^a-zA-Z0-9._-]+/g, "-");
-  const normalized = base.replace(/^-+|-+$/g, "");
-  if (normalized === "." || normalized === "..") {
-    return "download.bin";
-  }
-  return normalized || "download.bin";
+  return sanitizeSafePathSegment(path.basename(fileName), "download.bin", {
+    allowDotPrefix: true,
+  });
 }
 
 export function buildRandomTempFilePath(params: {

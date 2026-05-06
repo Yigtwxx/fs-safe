@@ -4,8 +4,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
+import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { canFallbackFromPythonError, getFsSafePythonConfig } from "./pinned-python-config.js";
 import {
   assertPinnedPythonOperationAvailable,
@@ -197,15 +199,20 @@ async function runPinnedWriteFallback(params: {
   const parentPath = params.relativeParentPath
     ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
     : params.rootPath;
+  const parentGuard = await createNearestExistingDirectoryGuard(params.rootPath, parentPath);
   if (params.mkdir) {
-    await fs.mkdir(parentPath, { recursive: true });
+    await withAsyncDirectoryGuards([parentGuard], async () => {
+      await fs.mkdir(parentPath, { recursive: true });
+    });
   }
   const targetPath = path.join(parentPath, params.basename);
   if (params.overwrite === false) {
-    const handle = await fs.open(
-      targetPath,
-      fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
-      params.mode,
+    let handle = await withAsyncDirectoryGuards([parentGuard], async () =>
+      await fs.open(
+        targetPath,
+        fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
+        params.mode,
+      )
     );
     let created = true;
     try {
@@ -270,7 +277,9 @@ async function runPinnedWriteFallback(params: {
       await handle.close().catch(() => undefined);
       handle = undefined;
     }
-    await fs.rename(tempPath, targetPath);
+    await withAsyncDirectoryGuards([parentGuard], async () => {
+      await fs.rename(tempPath, targetPath);
+    });
   } catch (error) {
     if (handle && !handleClosedByStream) {
       await handle.close().catch(() => undefined);

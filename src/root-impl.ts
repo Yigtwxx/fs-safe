@@ -4,11 +4,12 @@ import { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { createBoundedReadStream } from "./bounded-read-stream.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
+import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { isPinnedPathHelperSpawnError, runPinnedPathHelper } from "./pinned-path.js";
 import { runPinnedCopyHelper, runPinnedWriteHelper } from "./pinned-write.js";
 import { canFallbackFromPythonError, getFsSafePythonConfig } from "./pinned-python-config.js";
@@ -741,31 +742,6 @@ function rootWriteQueueKey(root: RootContext, relativePath: string): string {
   return `${root.rootReal}\0${relativePath}`;
 }
 
-function createMaxBytesTransform(maxBytes: number): Transform {
-  let bytes = 0;
-  return new Transform({
-    transform(chunk, _encoding, callback) {
-      const buffer = chunk instanceof Buffer ? chunk : Buffer.from(chunk as Uint8Array);
-      bytes += buffer.byteLength;
-      if (bytes > maxBytes) {
-        callback(
-          new FsSafeError(
-            "too-large",
-            `file exceeds limit of ${maxBytes} bytes (got at least ${bytes})`,
-          ),
-        );
-        return;
-      }
-      callback(null, buffer);
-    },
-  });
-}
-
-function createBoundedReadStream(opened: OpenResult, maxBytes: number | undefined) {
-  const stream = opened.handle.createReadStream();
-  return maxBytes === undefined ? stream : stream.pipe(createMaxBytesTransform(maxBytes));
-}
-
 async function writeTempFileForAtomicReplace(params: {
   tempPath: string;
   data: string | Buffer;
@@ -908,7 +884,10 @@ async function openWritableFileInRoot(
     throw new FsSafeError("path-alias", "path alias escape blocked", { cause: err });
   }
   if (params.mkdir !== false) {
-    await fs.mkdir(path.dirname(resolved), { recursive: true });
+    const parentGuard = await createNearestExistingDirectoryGuard(rootReal, path.dirname(resolved));
+    await withAsyncDirectoryGuards([parentGuard], async () => {
+      await fs.mkdir(path.dirname(resolved), { recursive: true });
+    });
   }
 
   let ioPath = resolved;
@@ -1566,6 +1545,7 @@ async function writeFileFallback(
   const destinationPath = target.realPath;
   const mode = params.mode ?? (target.stat.mode & 0o777);
   await target.handle.close().catch(() => {});
+  const destinationGuard = await createAsyncDirectoryGuard(path.dirname(destinationPath));
   let tempPath: string | null = null;
   let unregisterTempPath: (() => void) | null = null;
   try {
@@ -1577,7 +1557,10 @@ async function writeFileFallback(
       encoding: params.encoding,
       mode: mode || 0o600,
     });
-    await fs.rename(tempPath, destinationPath);
+    const commitTempPath = tempPath;
+    await withAsyncDirectoryGuards([destinationGuard], async () => {
+      await fs.rename(commitTempPath, destinationPath);
+    });
     tempPath = null;
     unregisterTempPath();
     unregisterTempPath = null;
@@ -1622,20 +1605,26 @@ async function writeMissingFileFallback(
   if (params.mkdir !== false) {
     await fs.mkdir(path.dirname(resolved), { recursive: true });
   }
+  const parentGuard = await createAsyncDirectoryGuard(path.dirname(resolved));
 
-  let handle: FileHandle | null = null;
   let created = false;
   try {
-    handle = await fs.open(resolved, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600);
-    created = true;
-    if (typeof params.data === "string") {
-      await handle.writeFile(params.data, params.encoding ?? "utf8");
-    } else {
-      await handle.writeFile(params.data);
-    }
-    const writtenStat = await handle.stat();
+    const { handle, writtenStat } = await withAsyncDirectoryGuards([parentGuard], async () => {
+      const handle = await fs.open(resolved, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600);
+      created = true;
+      try {
+        if (typeof params.data === "string") {
+          await handle.writeFile(params.data, params.encoding ?? "utf8");
+        } else {
+          await handle.writeFile(params.data);
+        }
+        return { handle, writtenStat: await handle.stat() };
+      } catch (error) {
+        await handle.close().catch(() => undefined);
+        throw error;
+      }
+    });
     await handle.close();
-    handle = null;
     await verifyAtomicWriteResult({
       root,
       targetPath: resolved,
@@ -1650,7 +1639,6 @@ async function writeMissingFileFallback(
     }
     throw err;
   } finally {
-    await handle?.close().catch(() => undefined);
     if (created) {
       await fs.rm(resolved, { force: true }).catch(() => undefined);
     }
@@ -1687,6 +1675,7 @@ async function copyFileFallback(
     const mode = params.mode ?? (target.stat.mode & 0o777);
     await target.handle.close().catch(() => {});
     targetClosedByUs = true;
+    const destinationGuard = await createAsyncDirectoryGuard(path.dirname(destinationPath));
 
     tempPath = buildAtomicWriteTempPath(destinationPath);
     unregisterTempPath = registerTempPathForExit(tempPath);
@@ -1706,7 +1695,10 @@ async function copyFileFallback(
       tempClosedByStream = true;
     }
     tempHandle = null;
-    await fs.rename(tempPath, destinationPath);
+    const commitTempPath = tempPath;
+    await withAsyncDirectoryGuards([destinationGuard], async () => {
+      await fs.rename(commitTempPath, destinationPath);
+    });
     tempPath = null;
     unregisterTempPath();
     unregisterTempPath = null;

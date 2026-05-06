@@ -3,6 +3,7 @@ import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Readable } from "node:stream";
+import { createSyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import {
   pruneExpiredStoreEntries,
@@ -406,7 +407,7 @@ function ensurePrivateDirectorySync(rootDir: string, targetDir: string, mode: nu
       // Best-effort on platforms that do not enforce POSIX modes.
     }
   }
-  const guard = { dir: target, realPath: syncFs.realpathSync(target) };
+  const guard = createSyncDirectoryGuard(target);
   assertSyncDirectoryGuard(guard);
   return guard;
 }

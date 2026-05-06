@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { sameFileIdentity } from "./file-identity.js";
+import { guardedRenameSync, guardedRmSync } from "./guarded-mutation.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type MovePathToTrashOptions = {
@@ -131,7 +132,7 @@ function movePathToDestination(target: TrashTargetGuard, dest: string): boolean 
   getFsSafeTestHooks()?.beforeTrashMove?.(target.path, dest);
   assertTrashTargetGuard(target);
   try {
-    fs.renameSync(target.path, dest);
+    guardedRenameSync({ from: target.path, to: dest });
     return true;
   } catch (error) {
     if (getFsErrorCode(error) !== "EXDEV") {
@@ -146,7 +147,7 @@ function movePathToDestination(target: TrashTargetGuard, dest: string): boolean 
     assertTrashTargetGuard(target);
     fs.cpSync(target.path, dest, { recursive: true, force: false, errorOnExist: true });
     assertTrashTargetGuard(target);
-    fs.rmSync(target.path, { recursive: true, force: false });
+    guardedRmSync({ target: target.path, recursive: true, force: false, verifyAfter: false });
     return true;
   } catch (error) {
     if (isTrashDestinationCollision(error)) {
