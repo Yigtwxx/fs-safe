@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
 import { resolveHomeRelativePath } from "./home-dir.js";
 import { openPinnedFileSync } from "./pinned-open.js";
 
@@ -16,7 +17,7 @@ export type SecretFileReadOptions = {
 
 type SecretFileReadOutcome =
   | { ok: true; secret: string }
-  | { ok: false; message: string; error?: unknown };
+  | { ok: false; code: FsSafeErrorCode; message: string; error?: unknown };
 
 function normalizeSecretReadError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
@@ -34,7 +35,7 @@ function readSecretFileOutcomeSync(
   const trimmedPath = filePath.trim();
   const resolvedPath = resolveUserPath(trimmedPath);
   if (!resolvedPath) {
-    return { ok: false, message: `${label} file path is empty.` };
+    return { ok: false, code: "invalid-path", message: `${label} file path is empty.` };
   }
 
   const maxBytes = options.maxBytes ?? DEFAULT_SECRET_FILE_MAX_BYTES;
@@ -46,6 +47,7 @@ function readSecretFileOutcomeSync(
     const normalized = normalizeSecretReadError(error);
     return {
       ok: false,
+      code: (error as NodeJS.ErrnoException).code === "ENOENT" ? "not-found" : "invalid-path",
       error: normalized,
       message: `Failed to inspect ${label} file at ${resolvedPath}: ${String(normalized)}`,
     };
@@ -54,18 +56,21 @@ function readSecretFileOutcomeSync(
   if (options.rejectSymlink && previewStat.isSymbolicLink()) {
     return {
       ok: false,
+      code: "symlink",
       message: `${label} file at ${resolvedPath} must not be a symlink.`,
     };
   }
   if (!previewStat.isFile()) {
     return {
       ok: false,
+      code: "not-file",
       message: `${label} file at ${resolvedPath} must be a regular file.`,
     };
   }
   if (previewStat.size > maxBytes) {
     return {
       ok: false,
+      code: "too-large",
       message: `${label} file at ${resolvedPath} exceeds ${maxBytes} bytes.`,
     };
   }
@@ -81,6 +86,7 @@ function readSecretFileOutcomeSync(
     );
     return {
       ok: false,
+      code: opened.reason === "path" ? "not-found" : "path-mismatch",
       error,
       message: `Failed to read ${label} file at ${resolvedPath}: ${String(error)}`,
     };
@@ -92,6 +98,7 @@ function readSecretFileOutcomeSync(
     if (!secret) {
       return {
         ok: false,
+        code: "invalid-path",
         message: `${label} file at ${resolvedPath} is empty.`,
       };
     }
@@ -100,6 +107,7 @@ function readSecretFileOutcomeSync(
     const normalized = normalizeSecretReadError(error);
     return {
       ok: false,
+      code: "invalid-path",
       error: normalized,
       message: `Failed to read ${label} file at ${resolvedPath}: ${String(normalized)}`,
     };
@@ -117,7 +125,9 @@ export function readSecretFileSync(
   if (result.ok) {
     return result.secret;
   }
-  throw new Error(result.message, result.error ? { cause: result.error } : undefined);
+  throw new FsSafeError(result.code, result.message, {
+    cause: result.error,
+  });
 }
 
 export function tryReadSecretFileSync(

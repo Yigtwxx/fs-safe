@@ -4,12 +4,12 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import JSZip from "jszip";
 import * as tar from "tar";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractArchive } from "../src/archive.js";
 import { loadZipArchiveWithPreflight, readZipCentralDirectoryEntryCount } from "../src/archive-zip-preflight.js";
 import { createAsyncLock } from "../src/async-lock.js";
 import { writeTextAtomic } from "../src/atomic.js";
-import { copyIntoRoot, fileStore } from "../src/file-store.js";
+import { fileStore, fileStoreSync } from "../src/file-store.js";
 import {
   assertCanonicalPathWithinBase,
   resolveSafeInstallDir,
@@ -35,6 +35,7 @@ import {
   trySafeFileURLToPath,
 } from "../src/local-file-access.js";
 import { resolveLocalPathFromRootsSync } from "../src/local-roots.js";
+import { movePathWithCopyFallback } from "../src/move-path.js";
 import {
   hasNodeErrorCode,
   isNotFoundPathError,
@@ -49,13 +50,6 @@ import {
   splitSafeRelativePath,
 } from "../src/path.js";
 import { assertNoHardlinkedFinalPath, assertNoPathAliasEscape } from "../src/path-policy.js";
-import {
-  privateStateStore,
-  readPrivateJsonSync,
-  readPrivateTextSync,
-  writePrivateJsonAtomicSync,
-  writePrivateTextAtomicSync,
-} from "../src/private-file-store.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath, resolveRootPathSync } from "../src/root-path.js";
 import {
   ensureDirectoryWithinRoot,
@@ -490,6 +484,59 @@ describe("ZIP preflight", () => {
       JSZip,
     );
   });
+
+  it("handles non-Buffer zip views and malformed central directory metadata", async () => {
+    const emptyZip = new JSZip();
+    const emptyBuffer = await emptyZip.generateAsync({ type: "nodebuffer" });
+    expect(readZipCentralDirectoryEntryCount(new Uint8Array(emptyBuffer))).toBe(0);
+
+    const zip = new JSZip();
+    zip.file("commented.txt", "ok");
+    zip.comment = "hello";
+    const commented = await zip.generateAsync({ type: "nodebuffer" });
+    expect(readZipCentralDirectoryEntryCount(commented)).toBe(1);
+
+    const malformed = Buffer.from(commented);
+    const eocdOffset = malformed.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    expect(eocdOffset).toBeGreaterThanOrEqual(0);
+    malformed.writeUInt32LE(0xffffffff, eocdOffset + 12);
+    malformed.writeUInt32LE(0xffffffff, eocdOffset + 16);
+    expect(readZipCentralDirectoryEntryCount(malformed)).toBe(1);
+  });
+});
+
+describe("move fallback helper", () => {
+  it("renames on the same filesystem and falls back to copy/remove on EXDEV", async () => {
+    const root = await tempRoot("fs-safe-move-extra-");
+    const from = path.join(root, "from.txt");
+    const renamed = path.join(root, "renamed.txt");
+    await fs.writeFile(from, "rename", "utf8");
+    await movePathWithCopyFallback({ from, to: renamed });
+    await expect(fs.readFile(renamed, "utf8")).resolves.toBe("rename");
+    await expect(fs.stat(from)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const crossDeviceFrom = path.join(root, "cross-device.txt");
+    const crossDeviceTo = path.join(root, "copied.txt");
+    await fs.writeFile(crossDeviceFrom, "copy", "utf8");
+    const originalRename = fs.rename.bind(fs);
+    const renameSpy = vi.spyOn(fs, "rename").mockImplementation(async (source, dest) => {
+      if (source === crossDeviceFrom && dest === crossDeviceTo) {
+        const error = new Error("cross device") as NodeJS.ErrnoException;
+        error.code = "EXDEV";
+        throw error;
+      }
+      return await originalRename(source, dest);
+    });
+
+    try {
+      await movePathWithCopyFallback({ from: crossDeviceFrom, to: crossDeviceTo });
+    } finally {
+      renameSpy.mockRestore();
+    }
+
+    await expect(fs.readFile(crossDeviceTo, "utf8")).resolves.toBe("copy");
+    await expect(fs.stat(crossDeviceFrom)).rejects.toMatchObject({ code: "ENOENT" });
+  });
 });
 
 describe("archive extraction", () => {
@@ -574,8 +621,7 @@ describe("JSON and regular-file helpers", () => {
   it("covers json store fallback, unlocked writes, locked writes, and updates", async () => {
     const root = await tempRoot("fs-safe-json-store-extra-");
     const fallback = { count: 1 };
-    const store = jsonStore({
-      filePath: path.join(root, "state.json"),
+    const store = fileStore({ rootDir: root, private: true }).json<{ count: number }>("state.json", {
       lock: {
         managerKey: `coverage-json-store-${Date.now()}-${Math.random()}`,
         staleMs: 60_000,
@@ -632,14 +678,16 @@ describe("temporary workspace and symlink parent helpers", () => {
     await fs.writeFile(source, "copy", "utf8");
 
     const workspace = await tempWorkspace({ rootDir: root, prefix: "bad prefix!" });
-    expect(() => workspace.file("../bad")).toThrow("Invalid temp workspace");
-    const privateFile = await workspace.writePrivate("private.bin", Buffer.from("private"));
+    expect(() => workspace.path("../bad")).toThrow("Invalid temp workspace");
+    const privateFile = await workspace.write("private.bin", Buffer.from("private"));
+    await workspace.store.writeText("store.txt", "stored");
     const textFile = await workspace.writeText("text.txt", "text");
     const jsonFile = await workspace.writeJson("data.json", { ok: true }, {
       trailingNewline: false,
     });
     await expect(workspace.copyIn("copy.txt", source)).resolves.toBe(workspace.path("copy.txt"));
     await expect(workspace.read("text.txt")).resolves.toEqual(Buffer.from("text"));
+    await expect(workspace.store.readText("store.txt")).resolves.toBe("stored");
     expect(path.basename(privateFile)).toBe("private.bin");
     expect(path.basename(textFile)).toBe("text.txt");
     await expect(fs.readFile(jsonFile, "utf8")).resolves.toBe('{\n  "ok": true\n}');
@@ -654,10 +702,12 @@ describe("temporary workspace and symlink parent helpers", () => {
 
     const syncWorkspace = tempWorkspaceSync({ rootDir: root, prefix: ".." });
     try {
-      expect(() => syncWorkspace.file("bad/name")).toThrow("Invalid temp workspace");
-      expect(syncWorkspace.writePrivate("private.bin", Buffer.from("private"))).toContain(
+      expect(() => syncWorkspace.path("bad/name")).toThrow("Invalid temp workspace");
+      expect(syncWorkspace.write("private.bin", Buffer.from("private"))).toContain(
         "private.bin",
       );
+      expect(syncWorkspace.store.writeText("store.txt", "stored")).toContain("store.txt");
+      expect(syncWorkspace.store.readTextIfExists("store.txt")).toBe("stored");
       expect(syncWorkspace.writeText("text.txt", "text")).toContain("text.txt");
       expect(syncWorkspace.writeJson("data.json", { ok: true }, { trailingNewline: false }))
         .toContain("data.json");
@@ -741,12 +791,17 @@ describe("file stores and private stores", () => {
     const sourceRoot = await tempRoot("fs-safe-store-source-");
     const source = path.join(sourceRoot, "source.txt");
     await fs.writeFile(source, "copy", "utf8");
-    const store = fileStore({ rootDir: root, maxBytes: 16 });
+    const store = fileStore({ rootDir: root, maxBytes: 64 });
 
     expect(store.path("a/b.txt")).toBe(path.join(root, "a", "b.txt"));
     await expect(store.write("a/b.txt", "data")).resolves.toBe(path.join(root, "a", "b.txt"));
     await expect(store.readBytes("a/b.txt")).resolves.toEqual(Buffer.from("data"));
-    await expect(store.write("too-large.txt", Buffer.alloc(17))).rejects.toMatchObject({
+    await expect(store.readText("a/b.txt")).resolves.toBe("data");
+    await expect(store.writeJson("state.json", { ok: true })).resolves.toBe(
+      path.join(root, "state.json"),
+    );
+    await expect(store.readJson("state.json")).resolves.toEqual({ ok: true });
+    await expect(store.write("too-large.txt", Buffer.alloc(65))).rejects.toMatchObject({
       code: "too-large",
     });
     await store.writeStream("stream.txt", Readable.from(["hello"]));
@@ -755,7 +810,7 @@ describe("file stores and private stores", () => {
       maxBytes: 4,
     })).rejects.toMatchObject({ code: "too-large" });
     await expect(store.copyIn("copied.txt", source)).resolves.toBe(path.join(root, "copied.txt"));
-    await expect(copyIntoRoot({ rootDir: root, relativePath: "bad.txt", sourcePath: sourceRoot }))
+    await expect(store.copyIn("bad.txt", sourceRoot))
       .rejects
       .toMatchObject({ code: "not-file" });
     await expect(store.exists("copied.txt")).resolves.toBe(true);
@@ -771,35 +826,29 @@ describe("file stores and private stores", () => {
     await expect(fs.stat(old)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("covers private store sync and async helpers", async () => {
+  it("covers private file store mode", async () => {
     const root = await tempRoot("fs-safe-private-store-");
-    const store = privateStateStore({ rootDir: root });
+    const store = fileStore({ rootDir: root, private: true });
 
     await store.writeText("nested/value.txt", "secret");
     await expect(store.readText("nested/value.txt")).resolves.toBe("secret");
     await store.writeJson("nested/value.json", { ok: true }, { trailingNewline: true });
     await expect(store.readJson("nested/value.json")).resolves.toEqual({ ok: true });
+    await expect(store.exists("nested/value.json")).resolves.toBe(true);
+    await expect(store.readBytes("nested/value.txt")).resolves.toEqual(Buffer.from("secret"));
     expect(store.path("nested/value.txt")).toBe(path.join(root, "nested", "value.txt"));
-    expect(() => store.path("../escape.txt")).toThrow("stay under");
-    await expect(store.readText("missing.txt")).resolves.toBeNull();
+    expect(() => store.path("../escape.txt")).toThrow("relative path");
+    await expect(store.readTextIfExists("missing.txt")).resolves.toBeNull();
+    await expect(store.readJsonIfExists("missing.json")).resolves.toBeNull();
+    await store.remove("nested/value.json");
+    await expect(store.exists("nested/value.json")).resolves.toBe(false);
 
-    const syncText = path.join(root, "sync", "value.txt");
-    writePrivateTextAtomicSync({ rootDir: root, filePath: syncText, content: "sync" });
-    expect(readPrivateTextSync({ rootDir: root, filePath: syncText })).toBe("sync");
-    const syncJson = path.join(root, "sync", "value.json");
-    writePrivateJsonAtomicSync({
-      rootDir: root,
-      filePath: syncJson,
-      value: { ok: true },
-      trailingNewline: true,
-    });
-    expect(readPrivateJsonSync({ rootDir: root, filePath: syncJson })).toEqual({ ok: true });
-    expect(readPrivateTextSync({ rootDir: root, filePath: path.join(root, "missing.txt") })).toBe(
-      null,
-    );
-    expect(() => readPrivateTextSync({ rootDir: root, filePath: path.dirname(root) })).toThrow(
-      "stay under",
-    );
+    const syncStore = fileStoreSync({ rootDir: root, private: true });
+    const syncText = syncStore.writeText("sync/value.txt", "sync");
+    expect(await fs.readFile(syncText, "utf8")).toBe("sync");
+    const syncJson = syncStore.writeJson("sync/value.json", { ok: true }, { trailingNewline: true });
+    expect(JSON.parse(await fs.readFile(syncJson, "utf8"))).toEqual({ ok: true });
+    expect(() => syncStore.writeText("../escape.txt", "nope")).toThrow("relative path");
   });
 });
 

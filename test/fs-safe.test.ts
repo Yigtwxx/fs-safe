@@ -1,9 +1,9 @@
 import { appendFileSync } from "node:fs";
-import { mkdtemp, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { FsSafeError, root as openRoot } from "../src/index.js";
+import { configureFsSafePython, FsSafeError, root as openRoot } from "../src/index.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
 const tempDirs: string[] = [];
@@ -15,6 +15,7 @@ async function tempRoot(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+  configureFsSafePython({ mode: "auto", pythonPath: undefined });
   __setFsSafeTestHooksForTest(undefined);
   const { rm } = await import("node:fs/promises");
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
@@ -47,6 +48,25 @@ describe("@openclaw/fs-safe", () => {
     await expect(root.stat("nested/renamed.txt")).rejects.toMatchObject({
       code: "not-found",
     });
+  });
+
+  it("can disable the Python helper and keep root operations available", async () => {
+    configureFsSafePython({ mode: "off" });
+    const rootPath = await tempRoot("fs-safe-python-off-");
+    const sourceRoot = await tempRoot("fs-safe-python-off-source-");
+    const sourcePath = path.join(sourceRoot, "source.txt");
+    const root = await openRoot(rootPath);
+    await writeFile(sourcePath, "copied");
+
+    await root.mkdir("nested");
+    await root.write("nested/file.txt", "hello");
+    await root.copyIn("nested/copied.txt", sourcePath, { maxBytes: 16 });
+    await expect(root.stat("nested/file.txt")).resolves.toMatchObject({ isFile: true });
+    await expect(root.list("nested")).resolves.toEqual(["copied.txt", "file.txt"]);
+    await root.move("nested/file.txt", "nested/moved.txt");
+    await expect(root.readText("nested/moved.txt")).resolves.toBe("hello");
+    await root.remove("nested/copied.txt");
+    await expect(root.exists("nested/copied.txt")).resolves.toBe(false);
   });
 
   it("applies per-root defaults", async () => {
@@ -204,13 +224,7 @@ describe("@openclaw/fs-safe", () => {
         if (filePath !== sourcePath) {
           return;
         }
-        const createReadStream = handle.createReadStream.bind(handle);
-        Object.defineProperty(handle, "createReadStream", {
-          value: (...args: Parameters<typeof handle.createReadStream>) => {
-            appendFileSync(sourcePath, "567890");
-            return createReadStream(...args);
-          },
-        });
+        appendFileSync(sourcePath, "567890");
       },
     });
 
@@ -219,6 +233,46 @@ describe("@openclaw/fs-safe", () => {
     });
     await expect(root.exists("copied.txt")).resolves.toBe(false);
     await expect(readdir(rootPath)).resolves.toEqual([]);
+  });
+
+  it("rejects pinned copy when the source path is swapped after identity capture", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const { runPinnedCopyHelper } = await import("../src/pinned-write.js");
+    const rootPath = await tempRoot("fs-safe-copy-source-swap-root-");
+    const sourceRoot = await tempRoot("fs-safe-copy-source-swap-source-");
+    const sourcePath = path.join(sourceRoot, "source.txt");
+    const replacementPath = path.join(sourceRoot, "replacement.txt");
+    await writeFile(sourcePath, "original");
+    await writeFile(replacementPath, "replacement");
+    const sourceIdentity = await stat(sourcePath);
+    await rm(sourcePath);
+    await rename(replacementPath, sourcePath);
+
+    configureFsSafePython({ mode: "require" });
+    try {
+      await runPinnedCopyHelper({
+        rootPath,
+        relativeParentPath: "",
+        basename: "copied.txt",
+        mkdir: true,
+        mode: 0o600,
+        overwrite: true,
+        maxBytes: 1024,
+        sourcePath,
+        sourceIdentity: { dev: sourceIdentity.dev, ino: sourceIdentity.ino },
+      });
+      throw new Error("expected pinned copy source swap to fail");
+    } catch (error) {
+      if (error instanceof FsSafeError && error.code === "helper-unavailable") {
+        return;
+      }
+      expect(error).toMatchObject({ code: "path-mismatch" });
+    }
+    await expect(stat(path.join(rootPath, "copied.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("removes symlink leaves without following them", async () => {

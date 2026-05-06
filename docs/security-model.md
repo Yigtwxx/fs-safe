@@ -1,6 +1,8 @@
 # Security model
 
-`fs-safe` is a library-level guardrail. It assumes the calling process already has whatever filesystem permissions it needs and aims to stop trivial path tricks from broadening that authority. It is not a sandbox and does not replace operating-system isolation.
+`fs-safe` is a library-level guardrail: a capability-style root handle for Node.js code that handles untrusted relative paths. It assumes the calling process already has whatever filesystem permissions it needs and aims to stop trivial path tricks from broadening that authority. It is not a sandbox and does not replace operating-system isolation.
+
+The same shape exists in other languages: Go's [`os.Root` / `OpenInRoot`](https://go.dev/blog/osroot) and Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std) both expose a root handle whose operations refuse to escape it. `fs-safe` is the Node-side equivalent: a single `root()` capability that carries the boundary across every read, write, move, and remove, instead of leaving each call site to redo `path.resolve(...).startsWith(...)` and hope.
 
 ## Threat model
 
@@ -18,6 +20,7 @@ It does **not** defend against:
 
 - a process running with permissions to write anywhere on the filesystem and choosing to ignore the library
 - another process with the same UID racing to mutate the same directory between two separate `fs-safe` calls — the boundary is per-call, not per-session
+- traversal across filesystem boundaries, bind mounts, device files, `/proc`-style virtual filesystems, or any other path your process can normally access from inside the root
 - container escape, TOCTOU between fork and exec of helpers, or kernel-level vulnerabilities
 - semantic content checks: file types, archive payload schemas, signature verification
 
@@ -51,6 +54,8 @@ When `hardlinks: "reject"` is set, reads stat the target and refuse if `nlink > 
 
 `replaceFileAtomic` writes to a sibling temp file in the destination directory, optionally `fsync`s it, optionally `fsync`s the parent directory after rename, and atomically renames over the destination. On failure mid-write, the destination is either the old contents (rename never happened) or the new contents (rename succeeded). There is no half-written intermediate state visible at the destination path.
 
+Within one process, async writes to the same target are queued so their temp-write/rename phases do not overlap. Cross-process writers still need an external protocol such as the sidecar lock helpers.
+
 ### Archive extraction
 
 `extractArchive` first stages into a private temp directory (mode 0700) outside the destination, validates each entry path against `..` and absolute prefixes, refuses link-type entries by default, enforces entry count and byte budgets, and only then merges the staged tree into the destination through the same boundary checks used by direct writes.
@@ -63,17 +68,23 @@ The library does not modify or constrain the global Node.js `fs` namespace, and 
 
 ## Platform notes
 
-- **POSIX (Linux, macOS):** Best-defended path. Uses `O_NOFOLLOW`, `openat`-style helpers via a small Python helper for fd-relative `unlinkat` / `mkdirat` / `renameat`, with a Node fallback when the helper cannot spawn. fd identity checks are reliable.
+- **POSIX (Linux, macOS):** Best-defended path. Uses `O_NOFOLLOW`, fd identity checks, and one persistent Python helper process for fd-relative `unlinkat` / `mkdirat` / `renameat` / parent-fd write operations. Configure `FS_SAFE_PYTHON_MODE=require` when helper startup must fail closed, or `off` when you need a no-Python runtime. See [Python helper policy](python-helper.md).
 - **Windows:** Falls back to the safest Node-level behavior available. `O_NOFOLLOW` is not honored. Some fd-relative POSIX hardening is unavailable. The library does the path canonicalization, identity, and atomic-rename checks it can.
 
 The library does not advertise different security guarantees per platform — it advertises the same surface and relies on the strongest mechanism the platform offers.
 
 ## Limitations to keep in mind
 
-- **Hardlink rejection** depends on platform-supplied link counts and is best-effort; do not use it as an authorization mechanism for capability decisions.
-- **`fs.fchown` / mode bits** are not enforced beyond what `replaceFileAtomic` and the secret-file helpers do — if you need stronger mode enforcement, set umask and inspect mode after writes.
-- **Archive extraction** rejects unsafe entries by default but does not interpret payload semantics. A "malicious safe" archive (valid paths, dangerous content) is your application layer's problem.
-- **Helper spawn failures** are reported via `helper-failed` / `helper-unavailable` codes. The library falls back to Node-only paths when the Python helper is unavailable; that fallback retains atomicity guarantees but loses some fd-relative race resistance.
+| Limitation | What it means |
+|---|---|
+| Not ambient authority removal | Code that can import `node:fs` can still bypass the handle. Keep caller-controlled path operations behind `root()` by convention, review, and tests. |
+| Absolute paths are escape hatches | APIs that accept or return absolute paths exist for audit, ingest, and advanced composition. Prefer root-relative names in normal application flow. |
+| Not a mount/device boundary | `root()` keeps path traversal inside the directory tree; it does not make device files, bind mounts, or virtual filesystems safe to expose. |
+| Per-call, not per-session | Another process with the same privileges can still mutate the tree between two separate calls. Use one verb method for the operation you need to make race-resistant. |
+| Hardlink rejection is best-effort | Link-count checks depend on platform metadata. Treat `hardlinks: "reject"` as a tripwire, not an authorization primitive. |
+| Mode bits are not a full policy engine | `replaceFileAtomic` and secret-file helpers set requested modes, but you should still set umask and inspect modes when policy requires it. |
+| Archive extraction is path safety, not content safety | Unsafe entry paths and links are rejected; malicious payload contents remain your application layer's problem. |
+| Helper failures degrade fd-relative hardening | `helper-unavailable` falls back in `auto` mode and fails closed in `require` mode. Atomicity and identity checks remain, but parent-directory swaps between validation and mutation are less tightly pinned without the helper. |
 
 ## Recommended deployment shape
 

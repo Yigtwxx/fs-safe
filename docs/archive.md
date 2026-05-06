@@ -2,6 +2,17 @@
 
 `@openclaw/fs-safe/archive` extracts ZIP and TAR archives behind one API, with traversal checks, blocked-link-type rejection, and entry-count and byte budgets. Extraction stages into a private directory and merges through the same safe-open boundary used by direct writes — a symlinked entry can't trick the merge into following an out-of-tree path.
 
+Archive extraction uses optional runtime dependencies: `jszip` for ZIP and `tar`
+for TAR. Installs that omit optional dependencies can still import this subpath,
+inspect archive kinds, and use pure path/limit helpers, but extraction or ZIP
+loading fails with a clear message until the matching optional dependency is
+installed.
+
+Some package managers and CI installs skip optional dependencies
+(`--no-optional`, `--omit=optional`, or equivalent). If an archive helper throws
+that an optional archive dependency is not installed, install `jszip` and/or
+`tar` explicitly in the consuming package.
+
 ```ts
 import { extractArchive, resolveArchiveKind } from "@openclaw/fs-safe/archive";
 ```

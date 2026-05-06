@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { sanitizeUntrustedFileName } from "./filename.js";
 import { root } from "./root.js";
+import { registerTempPathForExit } from "./temp-cleanup.js";
+import { serializePathWrite } from "./write-queue.js";
 
 export type WriteSiblingTempFileOptions<T> = {
   dir: string;
@@ -64,6 +66,7 @@ export async function writeSiblingTempFile<T>(
   await fs.mkdir(dir, { recursive: true, mode: options.dirMode ?? 0o700 });
   await fs.chmod(dir, options.dirMode ?? 0o700).catch(() => undefined);
   const tempPath = buildTempPath(dir, options.tempPrefix);
+  const unregisterTempPath = registerTempPathForExit(tempPath);
   let tempExists = false;
   try {
     tempExists = true;
@@ -76,19 +79,23 @@ export async function writeSiblingTempFile<T>(
     }
     const filePath = path.resolve(options.resolveFinalPath(result));
     assertFinalPathIsSibling(dir, filePath);
-    await fs.rename(tempPath, filePath);
-    tempExists = false;
-    if (options.mode !== undefined) {
-      await fs.chmod(filePath, options.mode).catch(() => undefined);
-    }
-    if (options.syncParentDir) {
-      await syncDirectoryBestEffort(dir);
-    }
+    await serializePathWrite(filePath, async () => {
+      await fs.rename(tempPath, filePath);
+      tempExists = false;
+      unregisterTempPath();
+      if (options.mode !== undefined) {
+        await fs.chmod(filePath, options.mode).catch(() => undefined);
+      }
+      if (options.syncParentDir) {
+        await syncDirectoryBestEffort(dir);
+      }
+    });
     return { filePath, result };
   } finally {
     if (tempExists) {
       await fs.rm(tempPath, { force: true }).catch(() => undefined);
     }
+    unregisterTempPath();
   }
 }
 
@@ -134,11 +141,13 @@ export async function writeViaSiblingTempPath(params: {
     fallbackFileName: params.fallbackFileName ?? "output.bin",
     tempPrefix: params.tempPrefix ?? ".fs-safe-output-",
   });
+  const unregisterTempPath = registerTempPathForExit(tempPath);
   try {
     await params.writeTemp(tempPath);
     const targetRoot = await root(rootDir);
     await targetRoot.copyIn(relativeTargetPath, tempPath, { mkdir: false });
   } finally {
     await fs.rm(tempPath, { force: true }).catch(() => {});
+    unregisterTempPath();
   }
 }

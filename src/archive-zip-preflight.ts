@@ -1,4 +1,3 @@
-import JSZip from "jszip";
 import {
   ARCHIVE_LIMIT_ERROR_CODE,
   ArchiveLimitError,
@@ -6,6 +5,14 @@ import {
   resolveExtractLimits,
   type ArchiveExtractLimits,
 } from "./archive-limits.js";
+
+export type ZipArchiveWithFiles = {
+  files: Record<string, unknown>;
+};
+
+type JsZipConstructor = {
+  loadAsync(buffer: Buffer | Uint8Array): Promise<ZipArchiveWithFiles>;
+};
 
 const ZIP_EOCD_SIGNATURE = 0x06054b50;
 const ZIP64_EOCD_SIGNATURE = 0x06064b50;
@@ -193,7 +200,7 @@ export function readZipCentralDirectoryEntryCount(buffer: Buffer | Uint8Array): 
 export async function loadZipArchiveWithPreflight(
   buffer: Buffer | Uint8Array,
   limits?: ArchiveExtractLimits,
-): Promise<JSZip> {
+): Promise<ZipArchiveWithFiles> {
   const resolvedLimits = resolveExtractLimits(limits);
   if (buffer.byteLength > resolvedLimits.maxArchiveBytes) {
     throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT);
@@ -202,5 +209,31 @@ export async function loadZipArchiveWithPreflight(
   if (entryCount !== null) {
     assertArchiveEntryCountWithinLimit(entryCount, resolvedLimits);
   }
+  const JSZip = await importOptionalJsZip();
   return await JSZip.loadAsync(buffer);
+}
+
+async function importOptionalJsZip(): Promise<JsZipConstructor> {
+  try {
+    const module = await import("jszip");
+    const candidate: unknown =
+      typeof module === "function" ? module : (module as { default?: unknown }).default;
+    if (
+      (typeof candidate !== "object" && typeof candidate !== "function") ||
+      candidate === null ||
+      typeof (candidate as { loadAsync?: unknown }).loadAsync !== "function"
+    ) {
+      throw new Error('Optional archive dependency "jszip" does not expose loadAsync().');
+    }
+    return candidate as JsZipConstructor;
+  } catch (err) {
+    throw missingOptionalArchiveDependencyError("jszip", err);
+  }
+}
+
+function missingOptionalArchiveDependencyError(packageName: "jszip", cause: unknown): Error {
+  return new Error(
+    `Optional archive dependency "${packageName}" is not installed. Install it to use ZIP archive helpers from @openclaw/fs-safe/archive.`,
+    { cause },
+  );
 }

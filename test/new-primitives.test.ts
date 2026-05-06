@@ -6,14 +6,6 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  privateStateStore,
-  readPrivateJson,
-  readPrivateJsonSync,
-  readPrivateText,
-  readPrivateTextSync,
-  writePrivateJsonAtomicSync,
-} from "../src/private-file-store.js";
-import {
   appendRegularFile,
   appendRegularFileSync,
   readRegularFile,
@@ -35,13 +27,21 @@ import { pathScope } from "../src/root-paths.js";
 import { replaceFileAtomic, replaceFileAtomicSync } from "../src/replace-file.js";
 import { movePathWithCopyFallback } from "../src/move-path.js";
 import { writeSiblingTempFile } from "../src/sibling-temp.js";
-import { createSidecarLockManager } from "../src/sidecar-lock.js";
-import { copyIntoRoot, fileStore } from "../src/file-store.js";
+import { acquireFileLock, createFileLockManager, withFileLock } from "../src/file-lock.js";
+import { copyIntoRoot, fileStore, fileStoreSync } from "../src/file-store.js";
 import { jsonStore } from "../src/json-store.js";
 import {
   createIcaclsResetCommand,
+  formatIcaclsResetCommand,
+  formatPermissionDetail,
+  formatPermissionRemediation,
+  formatWindowsAclSummary,
+  inspectPathPermissions,
   inspectWindowsAcl,
+  modeBits,
   parseIcaclsOutput,
+  resolveWindowsUserPrincipal,
+  summarizeWindowsAcl,
 } from "../src/permissions.js";
 import { readSecureFile } from "../src/secure-file.js";
 import { walkDirectory, walkDirectorySync } from "../src/walk.js";
@@ -62,7 +62,7 @@ describe("private temp workspaces", () => {
     let workspaceDir = "";
     const content = await withTempWorkspace({ rootDir: root, prefix: "work-" }, async (tmp) => {
       workspaceDir = tmp.dir;
-      const filePath = await tmp.writePrivate("input.txt", "hello");
+      const filePath = await tmp.write("input.txt", "hello");
       expect(await fs.readFile(filePath, "utf8")).toBe("hello");
       return await tmp.read("input.txt");
     });
@@ -74,7 +74,7 @@ describe("private temp workspaces", () => {
   it("rejects path-like file names", async () => {
     const tmp = await tempWorkspace({ rootDir: root, prefix: "work-" });
     try {
-      await expect(tmp.writePrivate("../escape.txt", "nope")).rejects.toThrow(/Invalid/);
+      await expect(tmp.write("../escape.txt", "nope")).rejects.toThrow(/Invalid/);
     } finally {
       await tmp.cleanup();
     }
@@ -84,7 +84,7 @@ describe("private temp workspaces", () => {
     let workspaceDir = "";
     const result = withTempWorkspaceSync({ rootDir: root, prefix: "sync-" }, (tmp) => {
       workspaceDir = tmp.dir;
-      const filePath = tmp.writePrivate("input.txt", "hello");
+      const filePath = tmp.write("input.txt", "hello");
       expect(tmp.read("input.txt").toString("utf8")).toBe("hello");
       return filePath;
     });
@@ -93,7 +93,7 @@ describe("private temp workspaces", () => {
 
     const tmp = tempWorkspaceSync({ rootDir: root, prefix: "sync-" });
     try {
-      expect(tmp.writePrivate("again.txt", "ok")).toContain("again.txt");
+      expect(tmp.write("again.txt", "ok")).toContain("again.txt");
     } finally {
       tmp.cleanup();
     }
@@ -104,9 +104,11 @@ describe("private temp workspaces", () => {
     {
       await using tmp = await tempWorkspace({ rootDir: root, prefix: "compact-" });
       workspaceDir = tmp.dir;
-      const filePath = await tmp.writePrivate("input.txt", "hello");
-      expect(filePath).toBe(tmp.file("input.txt"));
+      const filePath = await tmp.write("input.txt", "hello");
+      expect(filePath).toBe(tmp.path("input.txt"));
       expect(tmp.path("input.txt")).toBe(filePath);
+      await tmp.store.json<{ ok: boolean }>("state.json").write({ ok: true });
+      await expect(tmp.store.readJson("state.json")).resolves.toEqual({ ok: true });
     }
 
     await expect(fs.stat(workspaceDir)).rejects.toMatchObject({ code: "ENOENT" });
@@ -129,6 +131,9 @@ describe("file store", () => {
     const store = fileStore({ rootDir: root, maxBytes: 1024 });
     await store.write("media/a.txt", "hello");
     await expect(store.readBytes("media/a.txt")).resolves.toEqual(Buffer.from("hello"));
+    await expect(store.readText("media/a.txt")).resolves.toBe("hello");
+    await store.writeJson("media/state.json", { ok: true });
+    await expect(store.readJson("media/state.json")).resolves.toEqual({ ok: true });
 
     await store.writeStream("media/stream.txt", Readable.from(["stream"]));
     await expect(store.readBytes("media/stream.txt")).resolves.toEqual(Buffer.from("stream"));
@@ -172,6 +177,11 @@ describe("file store", () => {
         sourcePath: source,
       }),
     ).rejects.toBeTruthy();
+
+    const syncStore = fileStoreSync({ rootDir: storeRoot });
+    expect(() => syncStore.write("link/sync-write.txt", "pwned")).toThrow();
+    expect(() => syncStore.writeText("link/sync-text.txt", "pwned")).toThrow();
+    expect(() => syncStore.writeJson("link/sync-json.txt", { pwned: true })).toThrow();
     await expect(fs.readdir(outside)).resolves.toEqual([]);
   });
 
@@ -239,14 +249,15 @@ describe("file store", () => {
 describe("json store", () => {
   it("reads fallback, writes atomically, and updates under a lock", async () => {
     const filePath = path.join(root, "state", "store.json");
-    const store = jsonStore({
-      filePath,
+    const store = fileStore({ rootDir: path.dirname(filePath), private: true }).json<{
+      count: number;
+    }>(path.basename(filePath), {
       lock: true,
     });
 
     await expect(store.read()).resolves.toBeUndefined();
     await expect(store.readOr({ count: 10 })).resolves.toEqual({ count: 10 });
-    await expect(store.readRequired()).rejects.toMatchObject({ name: "JsonFileReadError" });
+    await expect(store.readRequired()).rejects.toMatchObject({ code: "not-found" });
     await store.updateOr({ count: 0 }, (current) => ({ count: current.count + 1 }));
     await expect(store.read()).resolves.toEqual({ count: 1 });
     await expect(store.readRequired()).resolves.toEqual({ count: 1 });
@@ -307,6 +318,81 @@ describe("secure file reads", () => {
     });
   });
 
+  it("covers symlink, directory, size, and trusted-dir secure read branches", async () => {
+    const target = path.join(root, "target.txt");
+    const link = path.join(root, "link.txt");
+    const trusted = path.join(root, "trusted");
+    const outsideTrusted = path.join(root, "outside-trusted");
+    await fs.writeFile(target, "secret", { mode: 0o600 });
+    await fs.symlink(target, link);
+    await fs.mkdir(trusted);
+    await fs.mkdir(outsideTrusted);
+
+    await expect(readSecureFile({ filePath: "relative.txt" })).rejects.toMatchObject({
+      code: "invalid-path",
+    });
+    await expect(readSecureFile({ filePath: root })).rejects.toMatchObject({ code: "not-file" });
+    await expect(
+      readSecureFile({
+        filePath: link,
+        trust: { allowSymlink: true, trustedDirs: [outsideTrusted] },
+        permissions: { allowInsecure: true },
+      }),
+    ).rejects.toMatchObject({ code: "outside-workspace" });
+
+    const result = await readSecureFile({
+      filePath: link,
+      trust: { allowSymlink: true, trustedDirs: [root] },
+      permissions: { allowInsecure: true },
+      io: { maxBytes: 100, timeoutMs: 1000 },
+    });
+    expect(result.buffer.toString("utf8")).toBe("secret");
+
+    await expect(
+      readSecureFile({
+        filePath: target,
+        permissions: { allowInsecure: true },
+        io: { maxBytes: 2 },
+      }),
+    ).rejects.toMatchObject({ code: "too-large" });
+  });
+
+  it("uses Windows ACL permission checks for secure reads when requested", async () => {
+    const filePath = path.join(root, "windows-secret.txt");
+    await fs.writeFile(filePath, "secret", { mode: 0o600 });
+    const exec = vi.fn().mockResolvedValue({
+      stdout: "*S-1-5-18:(F)\n",
+      stderr: "",
+    });
+
+    const result = await readSecureFile({
+      filePath,
+      inject: { platform: "win32", exec },
+      permissions: { allowReadableByOthers: true },
+    });
+    expect(result.buffer.toString("utf8")).toBe("secret");
+    expect(result.permissions?.source).toBe("windows-acl");
+
+    const unsafeExec = vi.fn().mockResolvedValue({
+      stdout: "Everyone:(R)\n",
+      stderr: "",
+    });
+    await expect(
+      readSecureFile({
+        filePath,
+        inject: { platform: "win32", exec: unsafeExec },
+      }),
+    ).rejects.toMatchObject({ code: "insecure-permissions" });
+
+    const failedExec = vi.fn().mockRejectedValue(new Error("icacls failed"));
+    await expect(
+      readSecureFile({
+        filePath,
+        inject: { platform: "win32", exec: failedExec },
+      }),
+    ).rejects.toMatchObject({ code: "permission-unverified" });
+  });
+
   it("parses icacls output into ACL entries", () => {
     const entries = parseIcaclsOutput(
       String.raw`C:\Users\me\secret.txt *S-1-5-18:(F)
@@ -354,6 +440,81 @@ describe("secure file reads", () => {
     });
     expect(command?.command).toBe("C:\\Windows\\System32\\icacls.exe");
   });
+
+  it("covers permission formatting and ACL classification helpers", async () => {
+    const missing = await inspectPathPermissions(path.join(root, "missing.txt"));
+    expect(missing.ok).toBe(false);
+
+    const target = path.join(root, "acl-target.txt");
+    const link = path.join(root, "acl-link.txt");
+    await fs.writeFile(target, "ok", { mode: 0o640 });
+    await fs.symlink(target, link);
+    const posix = await inspectPathPermissions(link, { platform: "linux" });
+    expect(posix.isSymlink).toBe(true);
+    expect(formatPermissionDetail(target, posix)).toContain("mode=");
+    expect(
+      formatPermissionRemediation({
+        targetPath: target,
+        perms: posix,
+        isDir: false,
+        posixMode: 0o600,
+      }),
+    ).toBe(`chmod 600 ${target}`);
+
+    const entries = parseIcaclsOutput(
+      [
+        `"C:\\Secrets\\token.txt" DOMAIN\\me:(F)`,
+        "Everyone:(R)",
+        "BUILTIN\\Users:(M)",
+        "*S-1-5-21-123:(R)",
+        "Denied:(DENY)(F)",
+        "Successfully processed 1 files; Failed processing 0 files",
+      ].join("\n"),
+      String.raw`C:\Secrets\token.txt`,
+    );
+    const summary = summarizeWindowsAcl(entries, {
+      USERDOMAIN: "DOMAIN",
+      USERNAME: "me",
+      USERSID: "S-1-5-21-999",
+    });
+    expect(summary.trusted.map((entry) => entry.principal)).toContain("DOMAIN\\me");
+    expect(summary.untrustedWorld.some((entry) => entry.principal === "Everyone")).toBe(true);
+    expect(summary.untrustedGroup.some((entry) => entry.principal === "*S-1-5-21-123")).toBe(true);
+    expect(formatWindowsAclSummary({ ok: true, entries, ...summary })).toContain("Everyone");
+    expect(formatWindowsAclSummary({ ok: false, entries: [], trusted: [], untrustedWorld: [], untrustedGroup: [] }))
+      .toBe("unknown");
+    expect(resolveWindowsUserPrincipal({ USERDOMAIN: "DOMAIN", USERNAME: "me" })).toBe(
+      "DOMAIN\\me",
+    );
+    expect(resolveWindowsUserPrincipal({}, () => ({ username: "fallback" }))).toBe("fallback");
+    expect(createIcaclsResetCommand(target, { isDir: true, userInfo: () => ({}) })).toBeNull();
+    expect(
+      formatIcaclsResetCommand(String.raw`C:\Secrets\token.txt`, {
+        isDir: true,
+        env: { SystemRoot: "D:\\Windows", USERNAME: "me" },
+      }),
+    ).toContain('"me:(OI)(CI)F"');
+    expect(modeBits(0o100777)).toBe(0o777);
+  });
+
+  it("resolves the current user SID when ACL output only contains an unknown SID", async () => {
+    const target = String.raw`C:\Secrets\token.txt`;
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: `${target} *S-1-5-21-42:(F)\nEveryone:(R)\n`,
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: '"USER","SID"\n"DOMAIN\\me","S-1-5-21-42"\n',
+        stderr: "",
+      });
+
+    const result = await inspectWindowsAcl(target, { exec, env: { SystemRoot: "C:\\Windows" } });
+    expect(result.ok).toBe(true);
+    expect(result.trusted.some((entry) => entry.principal === "*S-1-5-21-42")).toBe(true);
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("directory walking", () => {
@@ -394,9 +555,9 @@ describe("directory walking", () => {
   });
 });
 
-describe("private state store", () => {
+describe("private file store mode", () => {
   it("writes JSON under the store root", async () => {
-    const store = privateStateStore({ rootDir: root });
+    const store = fileStore({ rootDir: root, private: true });
     await store.writeJson("nested/state.json", { ok: true }, { trailingNewline: true });
     expect(await fs.readFile(path.join(root, "nested", "state.json"), "utf8")).toBe(
       '{\n  "ok": true\n}\n',
@@ -405,53 +566,38 @@ describe("private state store", () => {
   });
 
   it("rejects paths outside the store root", async () => {
-    const store = privateStateStore({ rootDir: root });
-    await expect(store.writeText("../escape.txt", "nope")).rejects.toThrow(/stay under/);
-    await expect(store.readText("../escape.txt")).rejects.toThrow(/stay under/);
+    const store = fileStore({ rootDir: root, private: true });
+    await expect(store.writeText("../escape.txt", "nope")).rejects.toThrow(/relative path/);
+    await expect(store.readTextIfExists("../escape.txt")).rejects.toThrow(/outside workspace root/);
   });
 
   it("supports sync JSON writes", async () => {
-    const filePath = path.join(root, "sync.json");
-    writePrivateJsonAtomicSync({ rootDir: root, filePath, value: { ok: true } });
+    const filePath = fileStoreSync({ rootDir: root, private: true }).writeJson("sync.json", {
+      ok: true,
+    });
     expect(JSON.parse(await fs.readFile(filePath, "utf8"))).toEqual({ ok: true });
   });
 
-  it("reads private text and JSON by absolute path", async () => {
-    const textPath = path.join(root, "state.txt");
-    const jsonPath = path.join(root, "state.json");
-    await fs.writeFile(textPath, "hello", "utf8");
-    await fs.writeFile(jsonPath, '{"ok":true}', "utf8");
+  it("has explicit lenient read helpers", async () => {
+    const store = fileStore({ rootDir: root, private: true });
+    await store.writeText("state.txt", "hello");
+    await store.writeJson("state.json", { ok: true });
 
-    await expect(readPrivateText({ rootDir: root, filePath: textPath })).resolves.toBe("hello");
-    await expect(readPrivateJson({ rootDir: root, filePath: jsonPath })).resolves.toEqual({
-      ok: true,
-    });
-    await expect(readPrivateText({ rootDir: root, filePath: path.join(root, "missing") }))
-      .resolves
-      .toBeNull();
-  });
-
-  it("reads private text and JSON synchronously", async () => {
-    const textPath = path.join(root, "sync-state.txt");
-    const jsonPath = path.join(root, "sync-state.json");
-    await fs.writeFile(textPath, "hello", "utf8");
-    await fs.writeFile(jsonPath, '{"ok":true}', "utf8");
-
-    expect(readPrivateTextSync({ rootDir: root, filePath: textPath })).toBe("hello");
-    expect(readPrivateJsonSync({ rootDir: root, filePath: jsonPath })).toEqual({ ok: true });
-    expect(readPrivateTextSync({ rootDir: root, filePath: path.join(root, "missing") })).toBeNull();
+    await expect(store.readTextIfExists("state.txt")).resolves.toBe("hello");
+    await expect(store.readJsonIfExists("state.json")).resolves.toEqual({ ok: true });
+    await expect(store.readTextIfExists("missing.txt")).resolves.toBeNull();
+    await expect(store.readJsonIfExists("missing.json")).resolves.toBeNull();
   });
 });
 
-describe("sidecar locks", () => {
+describe("file locks", () => {
   it("supports await using cleanup", async () => {
-    const manager = createSidecarLockManager(`test-${Date.now()}-${Math.random()}`);
     const targetPath = path.join(root, "locked.txt");
     let lockPath = "";
 
     {
-      await using lock = await manager.acquire({
-        targetPath,
+      await using lock = await acquireFileLock(targetPath, {
+        managerKey: `test-${Date.now()}-${Math.random()}`,
         staleMs: 60_000,
         payload: () => ({ owner: "test" }),
       });
@@ -460,6 +606,46 @@ describe("sidecar locks", () => {
     }
 
     await expect(fs.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("supports manager lifecycle and top-level withFileLock", async () => {
+    const targetPath = path.join(root, "managed-lock.txt");
+    const manager = createFileLockManager(`manager-${Date.now()}-${Math.random()}`);
+
+    const lock = await manager.acquire(targetPath, {
+      staleMs: 60_000,
+      allowReentrant: true,
+      metadata: { suite: "new-primitives" },
+      payload: () => ({ owner: "manager" }),
+    });
+    const reentrant = await manager.acquire(targetPath, {
+      staleMs: 60_000,
+      allowReentrant: true,
+      payload: () => ({ owner: "manager" }),
+    });
+    expect(manager.heldEntries()).toHaveLength(1);
+    expect(manager.heldEntries()[0]?.metadata).toEqual({ suite: "new-primitives" });
+    await reentrant.release();
+    await lock.release();
+    expect(manager.heldEntries()).toEqual([]);
+
+    await expect(
+      manager.withLock(
+        targetPath,
+        { staleMs: 60_000, payload: () => ({ owner: "manager" }) },
+        async () => "ok",
+      ),
+    ).resolves.toBe("ok");
+
+    await expect(
+      withFileLock(
+        path.join(root, "top-level-lock.txt"),
+        { staleMs: 60_000, payload: () => ({ owner: "top-level" }) },
+        async () => "locked",
+      ),
+    ).resolves.toBe("locked");
+    manager.reset();
+    await manager.drain();
   });
 });
 

@@ -1,6 +1,6 @@
 # root()
 
-`root()` is the primary entry point. It takes a trusted directory and returns a `Root` handle whose methods accept relative paths and refuse to escape the directory.
+`root()` is the primary entry point. It takes a trusted directory and returns a capability-style `Root` handle whose methods accept relative paths and refuse to escape the directory.
 
 ```ts
 import { root } from "@openclaw/fs-safe";
@@ -91,6 +91,26 @@ fs.resolve(rel)                  // absolute path inside the root, after canonic
 ```
 
 These do not pin a later operation. They are safe to expose to UIs and decision points; for the actual read or write, use the verb methods so the operation pins identity at the point of use.
+
+## Python helper mode
+
+On POSIX, mutation and inspection methods that need fd-relative directory
+operations go through one persistent Python helper process. This avoids a
+spawn-per-call cost while still using `openat`/`renameat`/`unlinkat`-style
+operations that Node's `fs` API does not expose ergonomically.
+
+```ts
+import { configureFsSafePython } from "@openclaw/fs-safe/config";
+
+configureFsSafePython({ mode: "off" });     // Node-only fallback path
+configureFsSafePython({ mode: "require" }); // fail if fd-relative helper unavailable
+```
+
+`auto` is the default. Configure the mode before creating roots. Without the
+helper, root methods still run, but same-UID races that swap parent directories
+between validation and mutation are harder to close completely. Use `require`
+when that downgrade should be treated as a deployment failure. See
+[Python helper policy](python-helper.md) for deployment guidance.
 
 ### Properties
 

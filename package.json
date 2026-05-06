@@ -1,17 +1,18 @@
 {
   "name": "@openclaw/fs-safe",
-  "version": "0.0.0",
-  "description": "Race-resistant root-bounded filesystem primitives for Node.js.",
+  "version": "0.1.0",
+  "description": "Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/openclaw/fs-safe.git"
+    "url": "git+https://github.com/openclaw/fs-safe.git"
   },
   "files": [
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
     "README.md",
+    "CHANGELOG.md",
     "SECURITY.md",
     "LICENSE"
   ],
@@ -25,6 +26,10 @@
     "./root": {
       "types": "./dist/root.d.ts",
       "default": "./dist/root.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "default": "./dist/config.js"
     },
     "./path": {
       "types": "./dist/path.d.ts",
@@ -53,6 +58,10 @@
     "./secure-file": {
       "types": "./dist/secure-file.d.ts",
       "default": "./dist/secure-file.js"
+    },
+    "./file-lock": {
+      "types": "./dist/file-lock.d.ts",
+      "default": "./dist/file-lock.js"
     },
     "./walk": {
       "types": "./dist/walk.d.ts",
@@ -86,13 +95,13 @@
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",
     "build": "tsc -p tsconfig.json",
-    "prepack": "pnpm build",
+    "prepack": "node scripts/prepack-build.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "check": "pnpm build && pnpm test",
     "docs:site": "node scripts/build-docs-site.mjs"
   },
-  "dependencies": {
+  "optionalDependencies": {
     "jszip": "^3.10.1",
     "tar": "7.5.13"
   },

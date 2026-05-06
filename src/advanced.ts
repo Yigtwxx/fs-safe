@@ -15,7 +15,6 @@ export {
 export { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 export { sanitizeUntrustedFileName } from "./filename.js";
 export { pathExists, pathExistsSync } from "./fs.js";
-export { copyIntoRoot } from "./file-store.js";
 export {
   resolveLocalPathFromRootsSync,
   readLocalFileFromRoots,
@@ -41,13 +40,6 @@ export {
   PATH_ALIAS_POLICIES,
   type PathAliasPolicy,
 } from "./path-policy.js";
-export {
-  openPinnedFileSync,
-  type PinnedOpenSyncAllowedType,
-  type PinnedOpenSyncFailureReason,
-  type PinnedOpenSyncFs,
-  type PinnedOpenSyncResult,
-} from "./pinned-open.js";
 export {
   openRootFile,
   openRootFileSync,
@@ -90,7 +82,6 @@ export {
   assertNoSymlinkParentsSync,
   type AssertNoSymlinkParentsOptions,
 } from "./symlink-parents.js";
-export { createSidecarLockManager, withSidecarLock } from "./sidecar-lock.js";
 export { movePathToTrash, type MovePathToTrashOptions } from "./trash.js";
 export { withTimeout } from "./timing.js";
 export { resolveHomeRelativePath } from "./home-dir.js";
@@ -131,16 +122,3 @@ export {
   type WindowsAclEntry,
   type WindowsAclSummary,
 } from "./permissions.js";
-export {
-  privateStateStore,
-  readPrivateJson,
-  readPrivateJsonSync,
-  readPrivateText,
-  readPrivateTextSync,
-  writePrivateJsonAtomic,
-  writePrivateJsonAtomicSync,
-  writePrivateTextAtomic,
-  writePrivateTextAtomicSync,
-  type PrivateStateStore,
-  type PrivateStateStoreOptions,
-} from "./private-file-store.js";

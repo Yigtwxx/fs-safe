@@ -1,14 +1,34 @@
 # @openclaw/fs-safe
 
-Race-resistant root-bounded filesystem primitives for Node.js.
+Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.
 
-Use this when trusted application code has to touch caller-controlled paths inside a directory it owns. The package gives you one `root()` boundary that survives symlink swaps, `..` traversal, hardlink aliases, and TOCTOU rename races between check and use.
+Think Go's `os.Root` / `OpenInRoot` or Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std), but for Node. Hand `root()` a trusted directory and you get back a handle whose every method resolves relative paths against it and refuses to escape — through `..`, symlink swaps, hardlink aliases, or TOCTOU rename races between check and use.
 
-## Why
+```ts
+import { root } from "@openclaw/fs-safe";
 
-`path.resolve(root, input).startsWith(root)` validates a string. It does not pin the file you opened, defend against a symlink retarget between check and use, reject hardlinked aliases, or verify that a write landed where you intended after a rename. `fs-safe` does those things, packaged so every call site picks up the same defense without re-implementing it.
+const fs = await root("/safe/workspace");
+await fs.write("notes/today.txt", "hello\n");   // ok
+await fs.write("../escape.txt", "x");            // throws FsSafeError("outside-workspace")
+```
 
-This is a library-level guardrail, not OS-level isolation. It does not replace containers, seccomp, or filesystem permissions — it is for code that already runs with the privileges of its workspace and wants to stop trivial path tricks from escaping it.
+That's the whole pitch. `root()` is the product; the rest of the package — JSON stores, atomic writes, secret files, archive extraction, temp workspaces — is supporting cast for the same boundary.
+
+## Why this exists
+
+Most Node code that has to touch caller-controlled paths reaches for:
+
+```ts
+path.resolve(root, input).startsWith(root)
+```
+
+That validates a *string*. It does not pin the file you opened, defend against a symlink retarget between check and use, reject hardlinked aliases of out-of-tree inodes, or verify that a write landed where you intended after a rename. The pieces to do those things exist scattered across the ecosystem — [`write-file-atomic`](https://www.npmjs.com/package/write-file-atomic) for atomic writes, `tar` / `jszip` for archive extraction, various `safefs`-style convenience wrappers — but none of them give you one root handle with traversal-resistant semantics across every operation.
+
+The same idea has landed in other languages. Go [added `os.Root` and `OpenInRoot`](https://go.dev/blog/osroot); Rust has had [`cap-std`](https://github.com/bytecodealliance/cap-std) for years. Node's `fs` is path-string-oriented and exposes flags like `O_NOFOLLOW` but not an ergonomic "operate inside this root" API. `fs-safe` fills that gap.
+
+## Not a sandbox
+
+This is a **library-level guardrail**, not OS-level isolation. It does not replace containers, seccomp, AppArmor, or filesystem permissions. It is for code that already runs with the privileges of its workspace and wants to stop trivial path tricks from escaping it. If your threat model is a hostile process, you need OS isolation; if your threat model is "an agent, plugin, upload handler, or CLI will eventually be tricked into writing somewhere it shouldn't," `fs-safe` catches that.
 
 ## Install
 
@@ -16,7 +36,29 @@ This is a library-level guardrail, not OS-level isolation. It does not replace c
 pnpm add @openclaw/fs-safe
 ```
 
-Node 20.11 or newer. Core root/path/json/temp helpers avoid framework dependencies; archive helpers use `jszip` and `tar` for ZIP/TAR support.
+Node 20.11 or newer. Core root/path/json/temp helpers avoid framework dependencies. Archive helpers use optional `jszip` and `tar` dependencies for ZIP/TAR support; installs that omit optional dependencies can still use every non-archive subpath.
+
+On POSIX, `root()` uses one process-global persistent Python helper for the
+fd-relative operations Node does not expose ergonomically (`renameat`,
+`unlinkat`, recursive `mkdirat`-style walks, and parent-fd writes). Configure it
+before first use when you need a strict environment policy:
+
+```ts
+import { configureFsSafePython } from "@openclaw/fs-safe";
+
+configureFsSafePython({ mode: "auto" });    // default: use helper, fall back if unavailable
+configureFsSafePython({ mode: "off" });     // never spawn Python; use Node fallbacks
+configureFsSafePython({ mode: "require" }); // fail closed if helper cannot start
+```
+
+Equivalent env vars: `FS_SAFE_PYTHON_MODE=auto|off|require` and
+`FS_SAFE_PYTHON=/path/to/python3`. Without Python, `fs-safe` keeps lexical and
+canonical root checks, no-follow opens, atomic temp+rename writes, and
+post-write identity verification. What you lose is the strongest POSIX
+fd-relative protection against a same-process-user racer swapping parent
+directories between validation and mutation. Windows already uses the Node
+fallback path. See the [Python helper policy](docs/python-helper.md) for
+deployment guidance.
 
 ## Quick start
 
@@ -108,17 +150,19 @@ that OpenClaw needs to compose higher-level APIs are grouped under
 | Subpath | Contents |
 |---|---|
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types |
+| `@openclaw/fs-safe/config` | process-global Python helper configuration |
 | `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants |
-| `@openclaw/fs-safe/store` | `fileStore`, `jsonStore`, and `privateStateStore` |
+| `@openclaw/fs-safe/store` | `fileStore`, `fileStoreSync`, and `jsonStore` |
 | `@openclaw/fs-safe/secret` | strict and try-style secret file read/write helpers |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `withTempWorkspace`, `resolveSecureTempRoot` |
 | `@openclaw/fs-safe/secure-file` | fd-pinned absolute file reads with owner, mode, ACL, trusted-dir, size, and timeout checks |
+| `@openclaw/fs-safe/file-lock` | `acquireFileLock`, `withFileLock`, `createFileLockManager`, and related lock types |
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection plus remediation formatting helpers |
 | `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
 | `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, `ArchiveLimitError`, preflight helpers |
-| `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, pinned open, sidecar locks, install paths, filename sanitizing, temp-file targets, sibling-temp writes, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
+| `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, root-file open, install paths, filename sanitizing, temp-file targets, sibling-temp writes, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode` |
 | `@openclaw/fs-safe/types` | shared types: `DirEntry`, `PathStat`, … |
 | `@openclaw/fs-safe/test-hooks` | hooks the test suite uses to inject races; only active under `NODE_ENV=test` |
@@ -154,34 +198,32 @@ await replaceFileAtomic({
 
 ## Stores
 
-Use `jsonStore()` for small state files that need explicit fallback reads, atomic writes,
-and optional sidecar locking around read-modify-write updates:
+Use `fileStore().json()` for small state files that need explicit fallback
+reads, atomic writes, and optional sidecar locking around read-modify-write
+updates:
 
 ```ts
-import { jsonStore } from "@openclaw/fs-safe/store";
+import { fileStore } from "@openclaw/fs-safe/store";
 
-const store = jsonStore({
-  filePath: "/safe/workspace/state/settings.json",
-  lock: true,
-});
+const files = fileStore({ rootDir: "/safe/workspace/state", private: true });
+const store = files.json("settings.json", { lock: true });
 
 await store.updateOr({ enabled: false }, (current) => ({ ...current, enabled: true }));
 ```
+
+`jsonStore({ filePath })` is the absolute-path convenience wrapper for the same
+primitive.
 
 Use `update()` when missing state is part of your model; use `updateOr()` for
 the common merge-into-defaults case. Standalone helpers use options bags
 because they do not carry a bound root and often need multiple authority, path,
 and policy knobs.
 
-Use `privateStateStore()` when the state is a directory of private text or JSON
-files rather than one known JSON file: credentials, auth profiles, tokens, and
-per-agent private state. It always writes files at `0o600` under directories at
-`0o700`, returns `null` for missing reads, and intentionally keeps the method
-set small.
-
 Use `fileStore()` for cache/blob/media-style directories where callers
 need safe relative paths, size limits, atomic replacement, stream writes, and
-TTL cleanup behind one root:
+TTL cleanup behind one root. Pass `private: true` for credentials, auth
+profiles, tokens, and per-agent private state; private mode keeps the same
+store shape while routing writes through the secret-file atomic path.
 
 ```ts
 import { fileStore } from "@openclaw/fs-safe/store";
@@ -193,6 +235,8 @@ const media = fileStore({
 });
 
 await media.write("inbound/photo.jpg", bytes);
+await media.writeJson("state/photo.json", { id: "photo" });
+const cached = await media.readJsonIfExists("state/photo.json");
 const opened = await media.open("inbound/photo.jpg");
 await media.pruneExpired({ ttlMs: 10 * 60 * 1000, recursive: true });
 ```
@@ -332,7 +376,7 @@ Current `FsSafeErrorCode` values are `already-exists`, `hardlink`, `helper-faile
 - root-bounded APIs resolve paths against a configured root and reject canonical escapes
 - reads open with `O_NOFOLLOW` where available, then verify fd identity matches the path identity before returning the buffer or handle
 - writes use pinned parent-directory helpers and atomic replacement on POSIX, with verified post-write identity
-- `remove` and `mkdir` use fd-relative syscalls on POSIX through a small Python helper, with a Node fallback when the helper cannot spawn
+- `remove`, `mkdir`, `move`, `stat`, `list`, and parent-fd writes use one persistent fd-relative Python helper on POSIX, with Node fallbacks when the helper is disabled or unavailable
 - archive extraction stages into a private directory and merges through the same boundary checks used by direct writes
 
 ## Limitations

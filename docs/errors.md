@@ -56,8 +56,8 @@ type FsSafeErrorCode =
 |---|---|---|
 | `already-exists` | `create()`, `createJson()`, `move({ overwrite: false })`. | Target file or directory already at the destination. |
 | `hardlink` | Read or copy with `hardlinks: "reject"` saw `nlink > 1`. | File is hardlinked — possibly an alias of an out-of-tree inode. |
-| `helper-failed` | Internal POSIX helper (Python-based fd-relative ops, sidecar lock acquire) failed. | Inspect `cause` for the underlying error. |
-| `helper-unavailable` | Helper could not be spawned at all. | Python missing in PATH; restricted sandbox. Library falls back to Node-only path where possible. |
+| `helper-failed` | Internal POSIX helper failed after startup. | Inspect `cause`; retrying may be unsafe if the operation may have partially completed. |
+| `helper-unavailable` | Persistent Python helper was disabled or could not be spawned. | `FS_SAFE_PYTHON_MODE=off`, Python missing in PATH, restricted sandbox. `auto` falls back where possible; `require` fails closed. |
 | `insecure-permissions` | A secure file or path permission check found a mode/ACL that allows broader access than requested. | File or directory is group/world writable/readable; Windows ACL grants broad read. |
 | `invalid-path` | Input was empty, contained NUL, was an unparseable URL, or otherwise unusable. | Caller didn't validate input; input was a network path on Windows. |
 | `not-empty` | `remove()` on a non-empty directory. | Use `replaceDirectoryAtomic` or remove children first. |

@@ -27,8 +27,14 @@ const cache = fileStore({
   mode: 0o600,        // file mode for writes (default 0o600)
   dirMode: 0o700,     // mode for parent directories created on demand (default 0o700)
   maxBytes: 64 * 1024 * 1024, // optional: refuse writes/reads larger than this
+  private: true,      // use secret-file atomic writes for private state
 });
 ```
+
+Use `private: true` for credentials, auth profiles, tokens, and other private
+state. Private mode keeps the same `FileStore` shape but routes writes through
+the secret-file atomic path, refusing symlink parent components and re-asserting
+mode after rename.
 
 Returns a `FileStore`:
 
@@ -43,6 +49,13 @@ type FileStore = {
   open(rel, options?): Promise<OpenResult>;
   read(rel, options?): Promise<ReadResult>;
   readBytes(rel, options?): Promise<Buffer>;
+  readText(rel, options?): Promise<string>;
+  readTextIfExists(rel, options?): Promise<string | null>;
+  readJson<T = unknown>(rel, options?): Promise<T>;
+  readJsonIfExists<T = unknown>(rel, options?): Promise<T | null>;
+  writeText(rel, data: string | Uint8Array, options?): Promise<string>;
+  writeJson(rel, data: unknown, options?): Promise<string>;
+  json<T = unknown>(rel, options?): JsonStore<T>;
   remove(rel): Promise<void>;
   exists(rel): Promise<boolean>;
   pruneExpired(options: FileStorePruneOptions): Promise<void>;
@@ -64,6 +77,24 @@ const path = await cache.write("entries/2026/05/05.json", JSON.stringify(entry))
 ```
 
 Buffer or string. Returns the final absolute path. Throws `too-large` if `data.byteLength` exceeds `maxBytes`.
+
+### `writeText(rel, data, options?)` / `writeJson(rel, data, options?)`
+
+Convenience wrappers over `write`. `writeJson` pretty-prints with a trailing newline by default and accepts `{ trailingNewline: false }` when the exact bytes matter.
+
+### `json<T>(rel, options?)`
+
+Returns a typed single-file JSON state helper for a file under this store. It
+inherits the store's root, mode, max-size, and private-write policy, then adds
+`readOr`, `readRequired`, `update`, `updateOr`, and optional sidecar locking:
+
+```ts
+const state = cache.json<State>("state/settings.json", { lock: true });
+await state.updateOr(defaultState, (current) => ({ ...current, enabled: true }));
+```
+
+Use this when one JSON file owns one piece of state. `jsonStore({ filePath })`
+is the absolute-path convenience wrapper for the same primitive.
 
 ### `writeStream(rel, stream, options?)`
 
@@ -97,7 +128,7 @@ type FileStoreWriteOptions = {
 
 ## Reads
 
-`open`, `read`, `readBytes` delegate to a fresh `Root` with `hardlinks: "reject"` and the store's `maxBytes`. Same return shapes as `Root`.
+`open`, `read`, `readBytes`, `readText`, and `readJson` delegate to a fresh `Root` with `hardlinks: "reject"` and the store's `maxBytes`. Same return shapes as `Root`.
 
 ## `remove(rel)` / `exists(rel)`
 
@@ -128,37 +159,18 @@ type FileStorePruneOptions = {
 
 Symlinks are skipped. The walk is best-effort — failures on individual entries don't abort the whole prune. Compares against `mtimeMs`.
 
-## Standalone: `copyIntoRoot`
-
-The same one-shot copy primitive used by `FileStore.copyIn`, available from the advanced surface for callers that don't want to instantiate a store:
-
-```ts
-import { copyIntoRoot } from "@openclaw/fs-safe/advanced";
-
-await copyIntoRoot({
-  rootDir: "/var/cache/app",
-  relativePath: "ingest/upload.bin",
-  sourcePath: "/tmp/upload.bin",
-  mode: 0o600,
-  dirMode: 0o700,
-  maxBytes: 32 * 1024 * 1024,
-  tempPrefix: ".upload.bin", // optional
-});
-```
-
-Returns the final absolute path. Throws `not-file` if the source is a symlink or non-regular file; throws `too-large` if it exceeds `maxBytes`.
-
 ## Difference from `Root`
 
 | `FileStore` | `Root` |
 |---|---|
 | Object-style with mode+dirMode baked in. | Method-style boundary; mode is per-call or per-default. |
 | `writeStream` with built-in byte budget. | Manual via `openWritable()`. |
-| `copyIn` returns the final path. | `copyIn` returns void. |
+| `writeText` / `writeJson` return the final absolute path. | `Root.write` / `writeJson` return void. |
+| `copyIn` returns the final absolute path. | `Root.copyIn` returns void. |
 | `pruneExpired` walks by `mtime`. | No prune helper. |
 | Reads delegate via `Root` internally. | The boundary itself. |
 
-If you need richer ops (move, list, append, JSON), call `store.root()` to get a `Root` and use that.
+If you need richer ops (move, list, append, mkdir), call `store.root()` to get a `Root` and use that.
 
 ## Common patterns
 
@@ -198,4 +210,4 @@ await root.move(`pending/${id}`, `done/${id}`);
 - [`root()`](root.md) — the boundary `FileStore` is built on; reach for it when you need move/list/append.
 - [JSON store](json-store.md) — the JSON-state-file equivalent of this surface.
 - [Atomic writes](atomic.md) — `writeSiblingTempFile` is what every write goes through.
-- [Temp workspaces](temp.md) — `TempWorkspace.copyIn` uses `copyIntoRoot`.
+- [Temp workspaces](temp.md) — private scratch directories backed by `FileStore`.

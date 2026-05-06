@@ -64,26 +64,61 @@ Use the main entry for the common surface, or the focused subpaths when you want
 |---|---|
 | `@openclaw/fs-safe` | Small common surface: `root`, root types, and errors. |
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types. |
+| `@openclaw/fs-safe/config` | Process-global Python helper configuration. |
 | `@openclaw/fs-safe/path` | `isPathInside`, `safeRealpathSync`, `isWithinDir`, error helpers. |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants. |
-| `@openclaw/fs-safe/store` | `fileStore()`, `jsonStore<T>()`, and `privateStateStore()`. |
+| `@openclaw/fs-safe/store` | `fileStore()`, `fileStoreSync()`, and `jsonStore<T>()`. |
 | `@openclaw/fs-safe/secret` | Secret file read/write helpers. |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `writeTextAtomic`, `replaceDirectoryAtomic`, `movePathWithCopyFallback`. |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `withTempWorkspace`, sync variants, `resolveSecureTempRoot`. |
 | `@openclaw/fs-safe/secure-file` | `readSecureFile` for pinned absolute file reads with permissions checks. |
+| `@openclaw/fs-safe/file-lock` | `acquireFileLock`, `withFileLock`, `createFileLockManager`, and related lock types. |
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection/remediation helpers. |
 | `@openclaw/fs-safe/walk` | `walkDirectory`, `walkDirectorySync`, related types. Budget-bounded, not root-bounded. |
 | `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, limits, preflight helpers. |
-| `@openclaw/fs-safe/advanced` | Lower-level composition helpers: path scopes, pinned open, root-file open, install paths, local-root readers, temp-file targets, sibling-temp writes, sidecar locks, regular-file helpers, `pathExists`, `withTimeout`, and related advanced types. This surface is less stable than the focused public subpaths. |
+| `@openclaw/fs-safe/advanced` | Lower-level composition helpers: path scopes, root-file open, install paths, local-root readers, temp-file targets, sibling-temp writes, regular-file helpers, `pathExists`, `withTimeout`, and related advanced types. This surface is less stable than the focused public subpaths. |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode`. |
 | `@openclaw/fs-safe/types` | Shared types: `DirEntry`, `PathStat`, `BasePathOptions`, … |
 | `@openclaw/fs-safe/test-hooks` | Test-only hooks for injecting races. Active under `NODE_ENV=test`. |
 
 ## Runtime dependencies
 
-`@openclaw/fs-safe` depends on `jszip` and `tar` for [archive extraction](archive.md). Both are loaded lazily — if your code never touches the archive subpath, the runtime cost is negligible.
+`@openclaw/fs-safe` lists `jszip` and `tar` as optional dependencies for [archive extraction](archive.md). They are loaded lazily and only required when ZIP/TAR helpers run. Installs that omit optional dependencies can still import and use every non-archive subpath; archive calls fail with a clear missing-optional-dependency message.
 
 There are no peer dependencies and no native build step.
+
+## Python helper policy
+
+On POSIX, `root()` uses one persistent Python helper process for the
+fd-relative operations Node does not expose cleanly. The default is `auto`: use
+the helper when it starts, fall back to Node-only behavior when it is disabled
+or unavailable.
+
+```ts
+import { configureFsSafePython } from "@openclaw/fs-safe/config";
+
+configureFsSafePython({ mode: "auto" });    // default
+configureFsSafePython({ mode: "off" });     // never spawn Python
+configureFsSafePython({ mode: "require" }); // fail closed if unavailable
+```
+
+Environment variables are read at runtime:
+
+```bash
+FS_SAFE_PYTHON_MODE=off      # auto | off | require
+FS_SAFE_PYTHON=/usr/bin/python3
+```
+
+OpenClaw compatibility aliases are also accepted:
+`OPENCLAW_FS_SAFE_PYTHON_MODE`, `OPENCLAW_FS_SAFE_PYTHON`,
+`OPENCLAW_PINNED_PYTHON`, and `OPENCLAW_PINNED_WRITE_PYTHON`.
+
+Disabling Python keeps the public API working, but downgrades POSIX mutation
+hardening from fd-relative syscalls to Node path operations guarded by lexical
+and canonical checks plus identity verification. Use `require` for
+security-sensitive deployments where that downgrade should be a startup/runtime
+failure instead of a fallback. The full tradeoff is documented in
+[Python helper policy](python-helper.md).
 
 ## Verify the install
 

@@ -5,7 +5,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import * as tar from "tar";
 import {
   resolveArchiveOutputPath,
   stripArchivePath,
@@ -71,6 +70,7 @@ export { createTarEntryPreflightChecker, type TarEntryInfo } from "./archive-tar
 export {
   loadZipArchiveWithPreflight,
   readZipCentralDirectoryEntryCount,
+  type ZipArchiveWithFiles,
 } from "./archive-zip-preflight.js";
 
 const SUPPORTS_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in fsConstants;
@@ -111,6 +111,17 @@ type ZipEntry = {
 };
 
 type ZipExtractBudget = ReturnType<typeof createByteBudgetTracker>;
+type TarModule = {
+  x(options: {
+    file: string;
+    cwd: string;
+    strip: number;
+    gzip?: boolean;
+    preservePaths: false;
+    strict: true;
+    onReadEntry(this: unknown, entry: unknown): void;
+  }): Promise<unknown>;
+};
 
 const ZIP_UNIX_FILE_TYPE_MASK = 0o170000;
 const ZIP_UNIX_SYMLINK_TYPE = 0o120000;
@@ -304,6 +315,7 @@ export async function extractArchive(params: {
   if (kind === "tar") {
     await withTimeout(
       (async () => {
+        const tar = await importOptionalTar();
         const limits = resolveExtractLimits(params.limits);
         const stat = await fs.stat(params.archivePath);
         if (stat.size > limits.maxArchiveBytes) {
@@ -365,5 +377,20 @@ export async function extractArchive(params: {
     }),
     params.timeoutMs,
     label,
+  );
+}
+
+async function importOptionalTar(): Promise<TarModule> {
+  try {
+    return await import("tar");
+  } catch (err) {
+    throw missingOptionalArchiveDependencyError("tar", err);
+  }
+}
+
+function missingOptionalArchiveDependencyError(packageName: "tar", cause: unknown): Error {
+  return new Error(
+    `Optional archive dependency "${packageName}" is not installed. Install it to use TAR archive helpers from @openclaw/fs-safe/archive.`,
+    { cause },
   );
 }

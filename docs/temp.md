@@ -23,9 +23,9 @@ The compact factory. Returns:
 ```ts
 type TempWorkspace = {
   dir: string;
-  file(fileName: string): string;
+  store: FileStore;
   path(fileName: string): string;
-  writePrivate(fileName: string, data: string | Uint8Array): Promise<string>;
+  write(fileName: string, data: string | Uint8Array): Promise<string>;
   writeText(fileName: string, data: string): Promise<string>;
   writeJson(fileName: string, data: unknown, options?: { trailingNewline?: boolean }): Promise<string>;
   copyIn(fileName: string, sourcePath: string): Promise<string>;
@@ -39,13 +39,27 @@ type TempWorkspace = {
 import { tempWorkspace } from "@openclaw/fs-safe/temp";
 
 await using workspace = await tempWorkspace({ rootDir: "/tmp/my-app", prefix: "build-" });
-const inputPath = await workspace.writePrivate("input.txt", "data");
+const inputPath = await workspace.write("input.txt", "data");
 await runBuild(workspace.dir, inputPath);
 ```
 
-`writePrivate` writes at `mode` (default `0o600`); `writeText` and `writeJson` are convenience wrappers for the common scratch-file shapes; `copyIn` ingests an absolute source path through the same atomic-rename machinery as `Root.copyIn`. `read` is a small accessor that reads back any file you wrote into the workspace.
+`write` writes at `mode` (default `0o600`); `writeText` and `writeJson` are convenience wrappers for the common scratch-file shapes; `copyIn` ingests an absolute source path through the same atomic-rename machinery as `Root.copyIn`. `read` is a small accessor that reads back any file you wrote into the workspace.
 
-The sync variant `tempWorkspaceSync` exposes the same surface with sync return types.
+`store` is a `fileStore({ rootDir: workspace.dir, private: true })` handle. Use
+it when you want the richer store surface, including `writeStream`, `exists`,
+`remove`, `readJsonIfExists`, or `store.json<T>(rel)`:
+
+```ts
+await using workspace = await tempWorkspace({ rootDir: "/tmp/my-app", prefix: "build-" });
+const state = workspace.store.json<State>("state.json");
+await state.write({ ready: true });
+```
+
+The workspace owns cleanup; the store is only a view over the workspace
+directory.
+
+The sync variant `tempWorkspaceSync` exposes the same surface with sync return
+types and a `FileStoreSync` at `workspace.store`.
 
 ### `withTempWorkspace`
 
@@ -55,7 +69,7 @@ The recommended shape. Auto-cleanup on every exit path:
 import { withTempWorkspace } from "@openclaw/fs-safe/temp";
 
 const result = await withTempWorkspace({ rootDir: "/tmp/my-app", prefix: "build-" }, async (workspace) => {
-  await workspace.writePrivate("input.txt", "data");
+  await workspace.write("input.txt", "data");
   return await runBuild(workspace.dir);
 });
 ```
@@ -86,7 +100,7 @@ type TempWorkspaceOptions = {
   rootDir: string;          // parent directory for workspaces
   prefix: string;           // dir prefix (sanitized)
   dirMode?: number;         // dir mode; default 0o700
-  mode?: number;            // writePrivate file mode; default 0o600
+  mode?: number;            // file write mode; default 0o600
 };
 ```
 
@@ -95,6 +109,9 @@ type TempWorkspaceOptions = {
 When you don't need the stable workspace abstraction, the lower-level temp-file
 and sibling-temp helpers live behind `@openclaw/fs-safe/advanced`. They are
 composition primitives for stores and atomic writers, not the primary API.
+`tempWorkspace()` carries the stable lifetime contract for application code;
+`tempFile()` is a one-shot building block whose options may move as store and
+archive internals evolve.
 
 ### `tempFile`
 
@@ -256,4 +273,4 @@ it("processes a fixture", async () => {
 
 - [Atomic writes](atomic.md) — `replaceDirectoryAtomic` for whole-directory swaps.
 - [`root()`](root.md) — `fs.copyIn(rel, sourceAbs)` for moving files from a temp into a `Root`.
-- [Sidecar lock](sidecar-lock.md) — when many processes share a temp tree.
+- [File lock](sidecar-lock.md) — when many processes share a temp tree.

@@ -26,3 +26,9 @@ export {
   type WritableOpenMode,
   type WritableOpenResult,
 } from "./root.js";
+export {
+  configureFsSafePython,
+  getFsSafePythonConfig,
+  type FsSafePythonConfig,
+  type FsSafePythonMode,
+} from "./pinned-python-config.js";

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
+import { registerTempPathForExit } from "./temp-cleanup.js";
 
 export type TempFile = {
   dir: string;
@@ -83,10 +84,15 @@ export async function tempFile(params: {
   const rootDir = resolveTempRoot(params.rootDir);
   const prefix = `${sanitizePrefix(params.prefix)}-`;
   const dir = await mkdtemp(path.join(rootDir, prefix));
+  const unregisterTempDir = registerTempPathForExit(dir, { recursive: true });
   const file = (fileName?: string) =>
     path.join(dir, sanitizeTempFileName(fileName ?? params.fileName ?? "download.bin"));
   const cleanup = async () => {
-    await cleanupTempDir(dir, params.onCleanupError);
+    try {
+      await cleanupTempDir(dir, params.onCleanupError);
+    } finally {
+      unregisterTempDir();
+    }
   };
   return {
     dir,

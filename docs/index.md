@@ -1,18 +1,20 @@
 ---
 title: Overview
 permalink: /
-description: "Race-resistant root-bounded filesystem primitives for Node.js. One root() boundary that survives symlink swaps, traversal, hardlink aliases, and TOCTOU rename races between check and use."
+description: "Capability-style filesystem roots for Node.js apps that handle untrusted relative paths."
 ---
 
 # fs-safe
 
-Trusted Node.js code that has to touch caller-controlled paths inside a directory it owns gets one boundary it can rely on. `root()` returns a handle that resolves every relative path against a real directory, refuses anything that escapes it, pins the file you opened, and verifies the write landed where you intended.
+Trusted Node.js code that has to touch caller-controlled paths inside a directory it owns gets one boundary it can rely on. `root()` returns a capability-style handle that resolves every relative path against a real directory, refuses anything that escapes it, pins the file you opened, and verifies the write landed where you intended.
+
+Think Go's `os.Root` / `OpenInRoot` or Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std), but for Node. `root()` is the product; everything else in this doc set — JSON stores, atomic writes, secret files, archive extraction, temp workspaces — is supporting cast for the same boundary.
 
 ## Why
 
 `path.resolve(root, input).startsWith(root)` validates a string. It does not pin the file you opened, defend against a symlink retarget between check and use, reject hardlinked aliases, or verify that a write landed where you intended after a rename. `fs-safe` does those things, packaged so every call site picks up the same defense without re-implementing it.
 
-This is a library-level guardrail, not OS-level isolation. It does not replace containers, seccomp, or filesystem permissions — it is for code that already runs with the privileges of its workspace and wants to stop trivial path tricks from escaping it.
+This is a **library-level guardrail**, not OS-level isolation. It does not replace containers, seccomp, AppArmor, or filesystem permissions. It is for code that already runs with the privileges of its workspace and wants to stop trivial path tricks from escaping it. Typical fits: agent runtimes, plugin systems, upload extraction, local workspaces, CLIs — anywhere trusted code touches untrusted relative path names.
 
 ## Hello world
 
@@ -36,7 +38,7 @@ await fs.remove("notes/archive/today.txt");
 ## Pick your path
 
 - **First time?** [Install](install.md), then walk through the [Quickstart](quickstart.md). Five minutes from `pnpm add` to a working root.
-- **Designing a sandboxed feature.** Read the [Security model](security-model.md) before you trust the boundary, and the [Errors](errors.md) reference so you know what to catch.
+- **Designing a workspace feature.** Read the [Security model](security-model.md) before you trust the boundary, the [Python helper policy](python-helper.md) before you pick deployment defaults, and the [Errors](errors.md) reference so you know what to catch.
 - **Replacing ad-hoc atomic writes.** Jump to [Atomic writes](atomic.md) or, for keyed JSON state, [JSON files](json.md).
 - **Extracting an upload.** Start at [Archive extraction](archive.md) — handles ZIP and TAR with traversal, link, count, and byte limits.
 - **Running an agent in a sandbox.** [Private temp workspaces](temp.md) plus [secret files](secret-file.md) cover the common scratch-and-credentials shape.
@@ -47,18 +49,19 @@ await fs.remove("notes/archive/today.txt");
 | Surface | Use it for |
 |---|---|
 | [`root()`](root.md) | One boundary for read/write/move/remove inside a trusted directory. |
+| [Python helper policy](python-helper.md) | Choose `auto`, `off`, or `require` for POSIX fd-relative hardening. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
 | [`writeJson` / `readJson*`](json.md) | JSON state files with strict and lenient read variants. |
 | [`jsonStore`](json-store.md) | Single JSON state file with explicit fallback, atomic writes, and optional locking. |
-| [`fileStore`](file-store.md) | Managed multi-file/blob store with modes, stream writes, copy-in, and pruning. |
-| [`privateStateStore`](private-file-store.md) | Multi-file private text/JSON state at 0600 under 0700 dirs. |
+| [`fileStore`](file-store.md) | Managed multi-file/blob store with modes, stream writes, copy-in, pruning, and private mode. |
+| [Private file-store mode](private-file-store.md) | `fileStore({ private: true })` for private JSON/text state at 0600 under 0700 dirs. |
 | [`tempWorkspace`](temp.md) | 0700 scratch dir with auto-cleanup. |
 | [`readSecureFile`](secure-file.md) | Absolute file reads with fd pinning, permissions, owner, size, and timeout checks. |
 | [`walkDirectory`](walk.md) | Budget-bounded recursive directory scan with symlink policy and filters. |
 | [`extractArchive`](archive.md) | ZIP/TAR extraction with size, count, link, and traversal limits. |
 | [Secret files](secret-file.md) | Mode-0600 credentials with size and TOCTOU defense. |
 | [Permissions](permissions.md) | POSIX mode and Windows ACL inspection/remediation helpers. |
-| [`createSidecarLockManager`](sidecar-lock.md) | Cross-process file lock with retry and stale-lock recovery. |
+| [`acquireFileLock`](sidecar-lock.md) | Cross-process file lock with retry and stale-lock recovery. |
 | [`FsSafeError`](errors.md) | Closed code union (with `policy` / `operational` category) you can branch on. |
 | [`pathScope()`](path-scope.md) | Lower-level absolute-path boundary helper; lives behind `@openclaw/fs-safe/advanced`. |
 

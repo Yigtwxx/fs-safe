@@ -1,5 +1,3 @@
-import { spawn } from "node:child_process";
-import { once } from "node:events";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -7,6 +5,12 @@ import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
+import { canFallbackFromPythonError, getFsSafePythonConfig } from "./pinned-python-config.js";
+import {
+  assertPinnedPythonOperationAvailable,
+  runPinnedPythonOperation,
+  validatePinnedOperationPayload,
+} from "./pinned-python.js";
 
 type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding }
@@ -16,6 +20,18 @@ function byteLength(input: string | Buffer, encoding: BufferEncoding | undefined
   return typeof input === "string"
     ? Buffer.byteLength(input, encoding ?? "utf8")
     : input.byteLength;
+}
+
+function assertSafeBasename(basename: string): void {
+  if (
+    !basename ||
+    basename === "." ||
+    basename === ".." ||
+    basename.includes("/") ||
+    basename.includes("\0")
+  ) {
+    throw new FsSafeError("invalid-path", "invalid target path");
+  }
 }
 
 function assertWithinMaxBytes(bytes: number, maxBytes: number | undefined): void {
@@ -62,161 +78,27 @@ async function pipelineWithMaxBytes(
   await pipeline(stream, destination);
 }
 
-const LOCAL_PINNED_WRITE_PYTHON = [
-  "import errno",
-  "import os",
-  "import secrets",
-  "import stat",
-  "import sys",
-  "",
-  "root_path = sys.argv[1]",
-  "relative_parent = sys.argv[2]",
-  "basename = sys.argv[3]",
-  'mkdir_enabled = sys.argv[4] == "1"',
-  "file_mode = int(sys.argv[5], 8)",
-  'overwrite_enabled = sys.argv[6] == "1"',
-  "max_bytes = int(sys.argv[7])",
-  "",
-  "DIR_FLAGS = os.O_RDONLY",
-  "if hasattr(os, 'O_DIRECTORY'):",
-  "    DIR_FLAGS |= os.O_DIRECTORY",
-  "if hasattr(os, 'O_NOFOLLOW'):",
-  "    DIR_FLAGS |= os.O_NOFOLLOW",
-  "",
-  "WRITE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL",
-  "if hasattr(os, 'O_NOFOLLOW'):",
-  "    WRITE_FLAGS |= os.O_NOFOLLOW",
-  "",
-  "def open_dir(path_value, dir_fd=None):",
-  "    return os.open(path_value, DIR_FLAGS, dir_fd=dir_fd)",
-  "",
-  "def walk_parent(root_fd, rel_parent, mkdir_enabled):",
-  "    current_fd = os.dup(root_fd)",
-  "    try:",
-  "        for segment in [part for part in rel_parent.split('/') if part and part != '.']:",
-  "            if segment == '..':",
-  "                raise OSError(errno.EPERM, 'path traversal is not allowed', segment)",
-  "            try:",
-  "                next_fd = open_dir(segment, dir_fd=current_fd)",
-  "            except FileNotFoundError:",
-  "                if not mkdir_enabled:",
-  "                    raise",
-  "                os.mkdir(segment, 0o777, dir_fd=current_fd)",
-  "                next_fd = open_dir(segment, dir_fd=current_fd)",
-  "            os.close(current_fd)",
-  "            current_fd = next_fd",
-  "        return current_fd",
-  "    except Exception:",
-  "        os.close(current_fd)",
-  "        raise",
-  "",
-  "def create_temp_file(parent_fd, basename, mode):",
-  "    prefix = '.' + basename + '.'",
-  "    for _ in range(128):",
-  "        candidate = prefix + secrets.token_hex(6) + '.tmp'",
-  "        try:",
-  "            fd = os.open(candidate, WRITE_FLAGS, mode, dir_fd=parent_fd)",
-  "            return candidate, fd",
-  "        except FileExistsError:",
-  "            continue",
-  "    raise RuntimeError('failed to allocate pinned temp file')",
-  "",
-  "root_fd = open_dir(root_path)",
-  "parent_fd = None",
-  "temp_fd = None",
-  "temp_name = None",
-  "try:",
-  "    parent_fd = walk_parent(root_fd, relative_parent, mkdir_enabled)",
-  "    temp_name, temp_fd = create_temp_file(parent_fd, basename, file_mode)",
-  "    written_bytes = 0",
-  "    while True:",
-  "        chunk = sys.stdin.buffer.read(65536)",
-  "        if not chunk:",
-  "            break",
-  "        next_size = written_bytes + len(chunk)",
-  "        if max_bytes >= 0 and next_size > max_bytes:",
-  "            raise RuntimeError(f'fs-safe-too-large:{max_bytes}:{next_size}')",
-  "        view = memoryview(chunk)",
-  "        while view:",
-  "            written = os.write(temp_fd, view)",
-  "            if written <= 0:",
-  "                raise OSError(errno.EIO, 'short write')",
-  "            view = view[written:]",
-  "        written_bytes = next_size",
-  "    os.fsync(temp_fd)",
-  "    os.close(temp_fd)",
-  "    temp_fd = None",
-  "    if overwrite_enabled:",
-  "        os.replace(temp_name, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)",
-  "        temp_name = None",
-  "    else:",
-  "        os.link(temp_name, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)",
-  "        os.unlink(temp_name, dir_fd=parent_fd)",
-  "        temp_name = None",
-  "    os.fsync(parent_fd)",
-  "    result_stat = os.stat(basename, dir_fd=parent_fd, follow_symlinks=False)",
-  "    print(f'{result_stat.st_dev}|{result_stat.st_ino}')",
-  "finally:",
-  "    if temp_fd is not None:",
-  "        os.close(temp_fd)",
-  "    if temp_name is not None and parent_fd is not None:",
-  "        try:",
-  "            os.unlink(temp_name, dir_fd=parent_fd)",
-  "        except FileNotFoundError:",
-  "            pass",
-  "    if parent_fd is not None:",
-  "        os.close(parent_fd)",
-  "    os.close(root_fd)",
-].join("\n");
-
-const PINNED_WRITE_PYTHON_CANDIDATES = [
-  process.env.OPENCLAW_PINNED_WRITE_PYTHON,
-  "/usr/bin/python3",
-  "/opt/homebrew/bin/python3",
-  "/usr/local/bin/python3",
-].filter((value): value is string => Boolean(value));
-
-let cachedPinnedWritePython = "";
-
-function canExecute(binPath: string): boolean {
-  try {
-    fsSync.accessSync(binPath, fsSync.constants.X_OK);
-    return true;
-  } catch {
-    return false;
+async function inputToBase64(
+  input: PinnedWriteInput,
+  maxBytes: number | undefined,
+): Promise<string> {
+  if (input.kind === "buffer") {
+    assertWithinMaxBytes(byteLength(input.data, input.encoding), maxBytes);
+    return (
+      typeof input.data === "string"
+        ? Buffer.from(input.data, input.encoding ?? "utf8")
+        : input.data
+    ).toString("base64");
   }
-}
-
-function resolvePinnedWritePython(): string {
-  if (cachedPinnedWritePython) {
-    return cachedPinnedWritePython;
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of input.stream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+    bytes += buffer.byteLength;
+    assertWithinMaxBytes(bytes, maxBytes);
+    chunks.push(buffer);
   }
-  for (const candidate of PINNED_WRITE_PYTHON_CANDIDATES) {
-    if (canExecute(candidate)) {
-      cachedPinnedWritePython = candidate;
-      return cachedPinnedWritePython;
-    }
-  }
-  cachedPinnedWritePython = "python3";
-  return cachedPinnedWritePython;
-}
-
-function parsePinnedIdentity(stdout: string): FileIdentityStat {
-  const line = stdout
-    .trim()
-    .split(/\r?\n/)
-    .map((value) => value.trim())
-    .findLast(Boolean);
-  if (!line) {
-    throw new Error("Pinned write helper returned no identity");
-  }
-  const [devRaw, inoRaw] = line.split("|");
-  const dev = Number.parseInt(devRaw ?? "", 10);
-  const ino = Number.parseInt(inoRaw ?? "", 10);
-  if (!Number.isFinite(dev) || !Number.isFinite(ino)) {
-    throw new Error(`Pinned write helper returned invalid identity: ${line}`);
-  }
-  return { dev, ino };
+  return Buffer.concat(chunks, bytes).toString("base64");
 }
 
 export async function runPinnedWriteHelper(params: {
@@ -229,78 +111,76 @@ export async function runPinnedWriteHelper(params: {
   maxBytes?: number;
   input: PinnedWriteInput;
 }): Promise<FileIdentityStat> {
-  const child = spawn(
-    resolvePinnedWritePython(),
-    [
-      "-c",
-      LOCAL_PINNED_WRITE_PYTHON,
-      params.rootPath,
-      params.relativeParentPath,
-      params.basename,
-      params.mkdir ? "1" : "0",
-      (params.mode || 0o600).toString(8),
-      params.overwrite === false ? "0" : "1",
-      params.maxBytes === undefined ? "-1" : String(params.maxBytes),
-    ],
-    {
-      stdio: ["pipe", "pipe", "pipe"],
-    },
-  );
-
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding?.("utf8");
-  child.stderr.setEncoding?.("utf8");
-  child.stdout.on("data", (chunk: string) => {
-    stdout += chunk;
+  if (getFsSafePythonConfig().mode === "off") {
+    return await runPinnedWriteFallback(params);
+  }
+  assertSafeBasename(params.basename);
+  validatePinnedOperationPayload({
+    relativeParentPath: params.relativeParentPath,
   });
-  child.stderr.on("data", (chunk: string) => {
-    stderr += chunk;
-  });
-
-  const exitPromise = once(child, "close") as Promise<[number | null, NodeJS.Signals | null]>;
-  try {
-    if (!child.stdin) {
-      const identity = await runPinnedWriteFallback(params);
-      await exitPromise.catch(() => {});
-      return identity;
-    }
-
-    if (params.input.kind === "buffer") {
-      const input = params.input;
-      await new Promise<void>((resolve, reject) => {
-        child.stdin.once("error", reject);
-        if (typeof input.data === "string") {
-          child.stdin.end(input.data, input.encoding ?? "utf8", () => resolve());
-          return;
-        }
-        child.stdin.end(input.data, () => resolve());
-      });
-    } else {
-      await pipeline(params.input.stream, child.stdin);
-    }
-
-    const [code, signal] = await exitPromise;
-    if (code !== 0) {
-      const tooLarge = stderr.match(/fs-safe-too-large:(\d+):(\d+)/);
-      if (tooLarge) {
-        const [, limit, got] = tooLarge;
-        throw new FsSafeError(
-          "too-large",
-          `file exceeds limit of ${limit} bytes (got at least ${got})`,
-        );
+  if (params.input.kind === "stream") {
+    try {
+      assertPinnedPythonOperationAvailable();
+    } catch (error) {
+      if (canFallbackFromPythonError(error)) {
+        return await runPinnedWriteFallback(params);
       }
-      throw new Error(
-        stderr.trim() ||
-          `Pinned write helper failed with code ${code ?? "null"} (${signal ?? "?"})`,
-      );
+      throw error;
     }
-    return parsePinnedIdentity(stdout);
+  }
+  const payload = {
+    base64: await inputToBase64(params.input, params.maxBytes),
+    basename: params.basename,
+    maxBytes: params.maxBytes ?? -1,
+    mkdir: params.mkdir,
+    mode: params.mode || 0o600,
+    overwrite: params.overwrite !== false,
+    relativeParentPath: params.relativeParentPath,
+  };
+  try {
+    return await runPinnedPythonOperation<FileIdentityStat>({
+      operation: "write",
+      rootPath: params.rootPath,
+      payload,
+    });
   } catch (error) {
-    child.kill("SIGKILL");
-    await exitPromise.catch(() => {});
+    if (canFallbackFromPythonError(error)) {
+      return await runPinnedWriteFallback(params);
+    }
     throw error;
   }
+}
+
+export async function runPinnedCopyHelper(params: {
+  rootPath: string;
+  relativeParentPath: string;
+  basename: string;
+  mkdir: boolean;
+  mode: number;
+  overwrite?: boolean;
+  maxBytes?: number;
+  sourcePath: string;
+  sourceIdentity: FileIdentityStat;
+}): Promise<FileIdentityStat> {
+  assertSafeBasename(params.basename);
+  validatePinnedOperationPayload({
+    relativeParentPath: params.relativeParentPath,
+  });
+  return await runPinnedPythonOperation<FileIdentityStat>({
+    operation: "copy",
+    rootPath: params.rootPath,
+    payload: {
+      basename: params.basename,
+      maxBytes: params.maxBytes ?? -1,
+      mkdir: params.mkdir,
+      mode: params.mode || 0o600,
+      overwrite: params.overwrite !== false,
+      relativeParentPath: params.relativeParentPath,
+      sourceDev: params.sourceIdentity.dev,
+      sourceIno: params.sourceIdentity.ino,
+      sourcePath: params.sourcePath,
+    },
+  });
 }
 
 async function runPinnedWriteFallback(params: {

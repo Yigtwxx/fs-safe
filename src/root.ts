@@ -10,7 +10,8 @@ import { pipeline } from "node:stream/promises";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { isPinnedPathHelperSpawnError, runPinnedPathHelper } from "./pinned-path.js";
-import { runPinnedWriteHelper } from "./pinned-write.js";
+import { runPinnedCopyHelper, runPinnedWriteHelper } from "./pinned-write.js";
+import { canFallbackFromPythonError, getFsSafePythonConfig } from "./pinned-python-config.js";
 import { expandHomePrefix } from "./home-dir.js";
 import { assertNoPathAliasEscape, PATH_ALIAS_POLICIES } from "./path-policy.js";
 import {
@@ -19,10 +20,16 @@ import {
   isPathInside,
   isSymlinkOpenError,
 } from "./path.js";
-import { helperReaddir, helperStat, runPinnedHelper } from "./pinned-helper.js";
+import {
+  helperReaddir,
+  helperStat,
+  runPinnedHelper,
+} from "./pinned-helper.js";
 import { resolveRootPath } from "./root-path.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
+import { registerTempPathForExit } from "./temp-cleanup.js";
+import { serializePathWrite } from "./write-queue.js";
 
 export type OpenResult = {
   handle: FileHandle;
@@ -565,7 +572,14 @@ class RootHandle implements Root {
   }
 
   async stat(relativePath: string): Promise<PathStat> {
-    return await helperStat(this.rootReal, relativePath);
+    try {
+      return await helperStat(this.rootReal, relativePath);
+    } catch (error) {
+      if (canFallbackFromPythonError(error)) {
+        return await statPathFallback(this.context, relativePath);
+      }
+      throw error;
+    }
   }
 
   async list(relativePath: string, options?: { withFileTypes?: false }): Promise<string[]>;
@@ -574,9 +588,16 @@ class RootHandle implements Root {
     relativePath: string,
     options: { withFileTypes?: boolean } = {},
   ): Promise<string[] | DirEntry[]> {
-    return options.withFileTypes === true
-      ? await helperReaddir(this.rootReal, relativePath, true)
-      : await helperReaddir(this.rootReal, relativePath, false);
+    try {
+      return options.withFileTypes === true
+        ? await helperReaddir(this.rootReal, relativePath, true)
+        : await helperReaddir(this.rootReal, relativePath, false);
+    } catch (error) {
+      if (canFallbackFromPythonError(error)) {
+        return await listPathFallback(this.context, relativePath, options.withFileTypes === true);
+      }
+      throw error;
+    }
   }
 
   async move(
@@ -584,11 +605,23 @@ class RootHandle implements Root {
     toRelative: string,
     options: { overwrite?: boolean } = {},
   ): Promise<void> {
-    await runPinnedHelper<void>("rename", this.rootReal, {
-      from: fromRelative,
-      overwrite: options.overwrite ?? false,
-      to: toRelative,
-    });
+    try {
+      await runPinnedHelper<void>("rename", this.rootReal, {
+        from: fromRelative,
+        overwrite: options.overwrite ?? false,
+        to: toRelative,
+      });
+    } catch (error) {
+      if (canFallbackFromPythonError(error)) {
+        await movePathFallback(this.context, {
+          fromRelative,
+          overwrite: options.overwrite ?? false,
+          toRelative,
+        });
+        return;
+      }
+      throw error;
+    }
   }
 }
 
@@ -743,6 +776,10 @@ function buildAtomicWriteTempPath(targetPath: string): string {
   const dir = path.dirname(targetPath);
   const base = path.basename(targetPath);
   return path.join(dir, `.${base}.${process.pid}.${randomUUID()}.tmp`);
+}
+
+function rootWriteQueueKey(root: RootContext, relativePath: string): string {
+  return `${root.rootReal}\0${relativePath}`;
 }
 
 function createMaxBytesTransform(maxBytes: number): Transform {
@@ -1129,46 +1166,50 @@ async function writeFileInRoot(
   },
 ): Promise<void> {
   if (process.platform === "win32") {
-    await writeFileFallback(root, params);
+    await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
+      await writeFileFallback(root, params);
+    });
     return;
   }
 
   const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath, params.mode);
 
-  let identity;
-  try {
-    identity = await runPinnedWriteHelper({
-      rootPath: pinned.rootReal,
-      relativeParentPath: pinned.relativeParentPath,
-      basename: pinned.basename,
-      mkdir: params.mkdir !== false,
-      mode: params.mode ?? pinned.mode,
-      overwrite: params.overwrite,
-      input: {
-        kind: "buffer",
-        data: params.data,
-        encoding: params.encoding,
-      },
-    });
-  } catch (error) {
-    if (params.overwrite === false && isAlreadyExistsError(error)) {
-      throw new FsSafeError("already-exists", "file already exists", {
-        cause: error instanceof Error ? error : undefined,
+  await serializePathWrite(pinned.targetPath, async () => {
+    let identity;
+    try {
+      identity = await runPinnedWriteHelper({
+        rootPath: pinned.rootReal,
+        relativeParentPath: pinned.relativeParentPath,
+        basename: pinned.basename,
+        mkdir: params.mkdir !== false,
+        mode: params.mode ?? pinned.mode,
+        overwrite: params.overwrite,
+        input: {
+          kind: "buffer",
+          data: params.data,
+          encoding: params.encoding,
+        },
       });
+    } catch (error) {
+      if (params.overwrite === false && isAlreadyExistsError(error)) {
+        throw new FsSafeError("already-exists", "file already exists", {
+          cause: error instanceof Error ? error : undefined,
+        });
+      }
+      throw normalizePinnedWriteError(error);
     }
-    throw normalizePinnedWriteError(error);
-  }
 
-  try {
-    await verifyAtomicWriteResult({
-      root,
-      targetPath: pinned.targetPath,
-      expectedIdentity: identity,
-    });
-  } catch (err) {
-    emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);
-    throw err;
-  }
+    try {
+      await verifyAtomicWriteResult({
+        root,
+        targetPath: pinned.targetPath,
+        expectedIdentity: identity,
+      });
+    } catch (err) {
+      emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);
+      throw err;
+    }
+  });
 }
 
 async function copyFileInRoot(
@@ -1195,37 +1236,49 @@ async function copyFileInRoot(
 
   try {
     if (process.platform === "win32") {
-      await copyFileFallback(root, params, source);
+      await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
+        await copyFileFallback(root, params, source);
+      });
       return;
     }
 
     const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath, params.mode);
-    const sourceStream = createBoundedReadStream(source, params.maxBytes);
-    const identity = await runPinnedWriteHelper({
-      rootPath: pinned.rootReal,
-      relativeParentPath: pinned.relativeParentPath,
-      basename: pinned.basename,
-      mkdir: params.mkdir !== false,
-      mode: pinned.mode,
-      overwrite: true,
-      maxBytes: params.maxBytes,
-      input: {
-        kind: "stream",
-        stream: sourceStream,
-      },
-    }).catch((error) => {
-      throw normalizePinnedWriteError(error);
+    await serializePathWrite(pinned.targetPath, async () => {
+      let identity;
+      try {
+        if (getFsSafePythonConfig().mode === "off") {
+          await copyFileFallback(root, params, source);
+          return;
+        }
+        identity = await runPinnedCopyHelper({
+          rootPath: pinned.rootReal,
+          relativeParentPath: pinned.relativeParentPath,
+          basename: pinned.basename,
+          mkdir: params.mkdir !== false,
+          mode: pinned.mode,
+          overwrite: true,
+          maxBytes: params.maxBytes,
+          sourcePath: source.realPath,
+          sourceIdentity: { dev: source.stat.dev, ino: source.stat.ino },
+        });
+      } catch (error) {
+        if (canFallbackFromPythonError(error)) {
+          await copyFileFallback(root, params, source);
+          return;
+        }
+        throw normalizePinnedWriteError(error);
+      }
+      try {
+        await verifyAtomicWriteResult({
+          root,
+          targetPath: pinned.targetPath,
+          expectedIdentity: identity,
+        });
+      } catch (err) {
+        emitWriteBoundaryWarning(`post-copy verification failed: ${String(err)}`);
+        throw err;
+      }
     });
-    try {
-      await verifyAtomicWriteResult({
-        root,
-        targetPath: pinned.targetPath,
-        expectedIdentity: identity,
-      });
-    } catch (err) {
-      emitWriteBoundaryWarning(`post-copy verification failed: ${String(err)}`);
-      throw err;
-    }
   } finally {
     await source.handle.close().catch(() => {});
   }
@@ -1414,6 +1467,145 @@ async function mkdirPathFallback(resolved: { resolved: string }): Promise<void> 
   await fs.mkdir(resolved.resolved, { recursive: true });
 }
 
+function pathStatFromStats(stat: Stats): PathStat {
+  return {
+    dev: Number(stat.dev),
+    gid: Number(stat.gid),
+    ino: Number(stat.ino),
+    isDirectory: stat.isDirectory(),
+    isFile: stat.isFile(),
+    isSymbolicLink: stat.isSymbolicLink(),
+    mode: stat.mode,
+    mtimeMs: stat.mtimeMs,
+    nlink: stat.nlink,
+    size: stat.size,
+    uid: stat.uid,
+  };
+}
+
+async function statPathFallback(root: RootContext, relativePath: string): Promise<PathStat> {
+  const resolved = await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
+  try {
+    return pathStatFromStats(await fs.lstat(resolved.resolved));
+  } catch (error) {
+    if (isNotFoundPathError(error)) {
+      throw new FsSafeError("not-found", "file not found", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    throw error;
+  }
+}
+
+async function listPathFallback(
+  root: RootContext,
+  relativePath: string,
+  withFileTypes: boolean,
+): Promise<string[] | DirEntry[]> {
+  const resolved = await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
+  try {
+    const names = await fs.readdir(resolved.resolved);
+    const sortedNames = names.toSorted();
+    if (!withFileTypes) {
+      return sortedNames;
+    }
+    const entries: DirEntry[] = [];
+    for (const name of sortedNames) {
+      entries.push({
+        name,
+        ...pathStatFromStats(await fs.lstat(path.join(resolved.resolved, name))),
+      });
+    }
+    return entries;
+  } catch (error) {
+    if (isNotFoundPathError(error)) {
+      throw new FsSafeError("not-found", "directory not found", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    throw error;
+  }
+}
+
+async function movePathFallback(
+  root: RootContext,
+  params: {
+    fromRelative: string;
+    toRelative: string;
+    overwrite: boolean;
+  },
+): Promise<void> {
+  const source = await resolvePathInRoot(root, params.fromRelative);
+  await resolvePinnedRootPathInRoot(root, {
+    relativePath: params.fromRelative,
+    policy: PATH_ALIAS_POLICIES.strict,
+  });
+  const target = await resolvePathInRoot(root, params.toRelative);
+  await resolvePinnedRootPathInRoot(root, {
+    relativePath: params.toRelative,
+    policy: PATH_ALIAS_POLICIES.unlinkTarget,
+  });
+  try {
+    await assertNoPathAliasEscape({
+      absolutePath: target.resolved,
+      rootPath: target.rootReal,
+      boundaryLabel: "root",
+    });
+  } catch (error) {
+    throw new FsSafeError("path-alias", "path alias escape blocked", {
+      cause: error instanceof Error ? error : undefined,
+    });
+  }
+
+  let sourceStat: Stats;
+  try {
+    sourceStat = await fs.lstat(source.resolved);
+  } catch (error) {
+    if (isNotFoundPathError(error)) {
+      throw new FsSafeError("not-found", "file not found", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    throw error;
+  }
+  if (sourceStat.isSymbolicLink()) {
+    throw new FsSafeError("symlink", "symlink not allowed");
+  }
+  if (sourceStat.isFile() && sourceStat.nlink > 1) {
+    throw new FsSafeError("hardlink", "hardlinked path not allowed");
+  }
+
+  if (!params.overwrite) {
+    try {
+      await fs.lstat(target.resolved);
+      throw new FsSafeError("already-exists", "destination exists");
+    } catch (error) {
+      if (error instanceof FsSafeError) {
+        throw error;
+      }
+      if (!isNotFoundPathError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  try {
+    await fs.rename(source.resolved, target.resolved);
+  } catch (error) {
+    if (isNotFoundPathError(error)) {
+      throw new FsSafeError("not-found", "file not found", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    if (hasNodeErrorCode(error, "EEXIST")) {
+      throw new FsSafeError("already-exists", "destination exists", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    throw error;
+  }
+}
+
 async function writeFileFallback(
   root: RootContext,
   params: {
@@ -1440,8 +1632,10 @@ async function writeFileFallback(
   const mode = params.mode ?? (target.stat.mode & 0o777);
   await target.handle.close().catch(() => {});
   let tempPath: string | null = null;
+  let unregisterTempPath: (() => void) | null = null;
   try {
     tempPath = buildAtomicWriteTempPath(destinationPath);
+    unregisterTempPath = registerTempPathForExit(tempPath);
     const writtenStat = await writeTempFileForAtomicReplace({
       tempPath,
       data: params.data,
@@ -1450,6 +1644,8 @@ async function writeFileFallback(
     });
     await fs.rename(tempPath, destinationPath);
     tempPath = null;
+    unregisterTempPath();
+    unregisterTempPath = null;
     try {
       await verifyAtomicWriteResult({
         root,
@@ -1464,6 +1660,7 @@ async function writeFileFallback(
     if (tempPath) {
       await fs.rm(tempPath, { force: true }).catch(() => {});
     }
+    unregisterTempPath?.();
   }
 }
 
@@ -1542,6 +1739,7 @@ async function copyFileFallback(
   let targetClosedByUs = false;
   let tempHandle: FileHandle | null = null;
   let tempPath: string | null = null;
+  let unregisterTempPath: (() => void) | null = null;
   let tempClosedByStream = false;
   try {
     target = await openWritableFileInRoot(root, {
@@ -1556,6 +1754,7 @@ async function copyFileFallback(
     targetClosedByUs = true;
 
     tempPath = buildAtomicWriteTempPath(destinationPath);
+    unregisterTempPath = registerTempPathForExit(tempPath);
     tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, mode || 0o600);
     const sourceStream = createBoundedReadStream(source, params.maxBytes);
     const targetStream = tempHandle.createWriteStream();
@@ -1574,6 +1773,8 @@ async function copyFileFallback(
     tempHandle = null;
     await fs.rename(tempPath, destinationPath);
     tempPath = null;
+    unregisterTempPath();
+    unregisterTempPath = null;
     try {
       await verifyAtomicWriteResult({
         root,
@@ -1590,15 +1791,16 @@ async function copyFileFallback(
     }
     throw err;
   } finally {
-    if (tempPath) {
-      await fs.rm(tempPath, { force: true }).catch(() => {});
-    }
     if (!sourceClosedByStream) {
       await source.handle.close().catch(() => {});
     }
     if (tempHandle && !tempClosedByStream) {
       await tempHandle.close().catch(() => {});
     }
+    if (tempPath) {
+      await fs.rm(tempPath, { force: true }).catch(() => {});
+    }
+    unregisterTempPath?.();
     if (target && !targetClosedByUs) {
       await target.handle.close().catch(() => {});
     }

@@ -51,7 +51,7 @@ if (token) {
 
 ### `readSecretFileSync(filePath, label, options?)`
 
-Strict reader. Throws when the file is missing, too large, empty, unreadable, or rejected by the validation checks. Use when failing loudly is the right call:
+Strict reader. Throws `FsSafeError` when the file is missing, too large, empty, unreadable, or rejected by the validation checks. Use when failing loudly is the right call:
 
 ```ts
 const token = readSecretFileSync("/var/lib/app/auth.token");
@@ -151,4 +151,4 @@ await withTimeout(
 
 - [JSON files](json.md) — `writeJson` accepts `mode: 0o600` for non-secret JSON state.
 - [Atomic writes](atomic.md) — the lower-level `replaceFileAtomic` used by these helpers.
-- [Private state store](private-file-store.md) — root-bounded JSON+text helpers without secret-file mode policy.
+- [Private file-store mode](private-file-store.md) — root-bounded JSON+text stores using secret-file write policy.

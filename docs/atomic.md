@@ -16,6 +16,8 @@ import {
 
 Write `content` to a sibling temp file in the destination directory, optionally `fsync` the temp file, optionally `fsync` the parent directory after rename, then atomically rename over the destination.
 
+Async replacements to the same destination are serialized inside the current process, so two overlapping `replaceFileAtomic()` calls do not interleave their temp-write/rename phases. Use a sidecar lock when multiple processes may write the same target.
+
 ```ts
 import { replaceFileAtomic } from "@openclaw/fs-safe/atomic";
 
@@ -93,6 +95,9 @@ Use it when callers must see a whole staged tree at the target path. For single-
 
 Atomic UTF-8 text write with the same secure defaults as `writeJson`: sibling
 temp file, temp fsync, rename, parent fsync, and final chmod best-effort.
+It delegates to `replaceFileAtomic()` with a smaller call shape. Use it when
+you do not need replacement hooks such as `beforeRename`, `preserveExistingMode`,
+or custom copy-fallback policy.
 
 ```ts
 import { writeTextAtomic } from "@openclaw/fs-safe/atomic";

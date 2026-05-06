@@ -22,9 +22,9 @@ export default defineConfig({
         "src/test-hooks.ts",
       ],
       thresholds: {
-        lines: 82,
+        lines: 85,
         functions: 94,
-        statements: 82,
+        statements: 85,
         branches: 76,
       },
     },
