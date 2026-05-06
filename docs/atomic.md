@@ -114,6 +114,21 @@ await writeTextAtomic("/srv/workspace/rendered.md", rendered, {
 });
 ```
 
+Options:
+
+```ts
+type WriteTextAtomicOptions = {
+  mode?: number;             // file mode (default 0o600)
+  dirMode?: number;          // mode for parent dirs created on demand
+  trailingNewline?: boolean; // append "\n" if missing
+  durable?: boolean;         // default true; false skips temp/parent fsync
+};
+```
+
+`durable: false` keeps the sibling-temp replace/rename behavior but skips the
+temp-file and parent-directory `fsync` calls. Use it only for reconstructible
+metadata where lower latency matters more than crash-durability.
+
 ## `movePathWithCopyFallback`
 
 Rename a path. If the rename fails with `EXDEV` (cross-device), fall back to

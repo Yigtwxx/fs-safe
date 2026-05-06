@@ -3,7 +3,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { readRegularFile, readRegularFileSync } from "./regular-file.js";
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
-import { writeTextAtomic } from "./text-atomic.js";
+import { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
 
 const JSON_FILE_MODE = 0o600;
 const JSON_DIR_MODE = 0o700;
@@ -289,15 +289,21 @@ export function readJsonSync<T = unknown>(filePath: string): T {
   }
 }
 
+export type WriteJsonOptions = Pick<
+  WriteTextAtomicOptions,
+  "dirMode" | "durable" | "mode" | "trailingNewline"
+>;
+
 export async function writeJson(
   filePath: string,
   value: unknown,
-  options?: { mode?: number; trailingNewline?: boolean; dirMode?: number },
+  options?: WriteJsonOptions,
 ) {
   const text = JSON.stringify(value, null, 2);
   await writeTextAtomic(filePath, text, {
     mode: options?.mode,
     dirMode: options?.dirMode,
     trailingNewline: options?.trailingNewline,
+    durable: options?.durable,
   });
 }

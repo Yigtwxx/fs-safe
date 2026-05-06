@@ -28,6 +28,24 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { force: true, recursive: true })));
 });
 
+function mockOpenForSyncCounting(): { readonly syncCalls: number; restore: () => void } {
+  let syncCalls = 0;
+  const openSpy = vi.spyOn(fs, "open").mockImplementation(async () => {
+    return {
+      sync: async () => {
+        syncCalls += 1;
+      },
+      close: async () => undefined,
+    } as Awaited<ReturnType<typeof fs.open>>;
+  });
+  return {
+    get syncCalls() {
+      return syncCalls;
+    },
+    restore: () => openSpy.mockRestore(),
+  };
+}
+
 describe("json file helpers", () => {
   it("writes formatted JSON atomically with an optional trailing newline", async () => {
     const root = await tempRoot("fs-safe-json-");
@@ -57,6 +75,54 @@ describe("json file helpers", () => {
       expect(dirStat.mode & 0o777).toBe(0o700);
       expect(fileStat.mode & 0o777).toBe(0o600);
     }
+  });
+
+  it("syncs temp file and parent directory by default for text writes", async () => {
+    const root = await tempRoot("fs-safe-json-");
+    const filePath = path.join(root, "default-durable.txt");
+    const syncCounter = mockOpenForSyncCounting();
+
+    try {
+      await writeTextAtomic(filePath, "data");
+    } finally {
+      syncCounter.restore();
+    }
+
+    expect(syncCounter.syncCalls).toBe(2);
+    await expect(fs.readFile(filePath, "utf8")).resolves.toBe("data");
+  });
+
+  it("skips fsync when text writes opt out of durability", async () => {
+    const root = await tempRoot("fs-safe-json-");
+    const filePath = path.join(root, "store.json");
+    await fs.writeFile(filePath, "old", "utf8");
+    const syncCounter = mockOpenForSyncCounting();
+
+    try {
+      await writeTextAtomic(filePath, "new", { durable: false });
+    } finally {
+      syncCounter.restore();
+    }
+
+    expect(syncCounter.syncCalls).toBe(0);
+    await expect(fs.readFile(filePath, "utf8")).resolves.toBe("new");
+    const dirEntries = await fs.readdir(root);
+    expect(dirEntries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
+  });
+
+  it("threads durable option through JSON writes", async () => {
+    const root = await tempRoot("fs-safe-json-");
+    const filePath = path.join(root, "state.json");
+    const syncCounter = mockOpenForSyncCounting();
+
+    try {
+      await writeJson(filePath, { ok: true }, { durable: false });
+    } finally {
+      syncCounter.restore();
+    }
+
+    expect(syncCounter.syncCalls).toBe(0);
+    await expect(fs.readFile(filePath, "utf8")).resolves.toBe("{\n  \"ok\": true\n}");
   });
 
   it("separates nullable and durable read failure semantics", async () => {

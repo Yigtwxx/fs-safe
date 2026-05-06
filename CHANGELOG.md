@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changes
+
+- Add a `durable: false` option to async atomic text and JSON writes so callers can preserve replace semantics while skipping temp-file and parent-directory fsync.
+
 ### Fixes
 
 - Harden temp filename prefixes, local-root reads, private store imports, durable queue reads, and regular-file byte caps against Deepsec-reported path traversal, symlink, and oversized-read races.
