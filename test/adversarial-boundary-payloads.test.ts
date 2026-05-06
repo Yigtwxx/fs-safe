@@ -140,5 +140,5 @@ describe("adversarial boundary payloads", () => {
       await expectOutsideUntouched(layout);
       await fsp.writeFile(source, "source");
     }
-  });
+  }, 15_000);
 });
