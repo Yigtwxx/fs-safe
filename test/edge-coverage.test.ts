@@ -1,0 +1,232 @@
+import fsSync from "node:fs";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { Readable } from "node:stream";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { FsSafeError } from "../src/errors.js";
+import {
+  assertSyncDirectoryGuard,
+  ensureParentSync,
+  writeStreamToTempSource,
+} from "../src/file-store-boundary.js";
+import {
+  assertCanonicalPathWithinBase,
+  resolveSafeInstallDir,
+  safePathSegmentHashed,
+} from "../src/install-path.js";
+import { replaceDirectoryAtomic } from "../src/replace-directory.js";
+import {
+  isAlreadyExistsError,
+  normalizePinnedPathError,
+  normalizePinnedWriteError,
+} from "../src/root-errors.js";
+import { movePathToTrash } from "../src/trash.js";
+
+const tempDirs = new Set<string>();
+
+async function tempRoot(prefix: string): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  tempDirs.add(dir);
+  return dir;
+}
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+  for (const dir of tempDirs) {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+  tempDirs.clear();
+});
+
+describe("root error helpers", () => {
+  it("normalizes existing and unknown low-level errors", () => {
+    const existsError = Object.assign(new Error("File exists"), { code: "EEXIST" });
+    expect(isAlreadyExistsError(existsError)).toBe(true);
+    expect(isAlreadyExistsError("EEXIST: File exists")).toBe(true);
+    expect(isAlreadyExistsError(new Error("different"))).toBe(false);
+
+    const fsSafe = new FsSafeError("not-file", "already normalized");
+    expect(normalizePinnedWriteError(fsSafe)).toBe(fsSafe);
+    expect(normalizePinnedPathError(fsSafe)).toBe(fsSafe);
+    expect(normalizePinnedWriteError(new Error("raw"))).toMatchObject({
+      code: "invalid-path",
+      message: "path is not a regular file under root",
+    });
+    expect(normalizePinnedWriteError("raw string")).toMatchObject({ code: "invalid-path" });
+    expect(normalizePinnedPathError(new Error("raw"))).toMatchObject({
+      code: "path-alias",
+      message: "path is not under root",
+    });
+    expect(normalizePinnedPathError("raw string")).toMatchObject({ code: "path-alias" });
+  });
+});
+
+describe("directory replacement and file store boundary helpers", () => {
+  it("rolls back directory replacement when the staged rename fails", async () => {
+    const root = await tempRoot("fs-safe-replace-dir-");
+    const target = path.join(root, "target");
+    const staged = path.join(root, "staged");
+    await fs.mkdir(target);
+    await fs.writeFile(path.join(target, "old.txt"), "old", "utf8");
+    await fs.mkdir(staged);
+    await fs.writeFile(path.join(staged, "new.txt"), "new", "utf8");
+
+    const realRename = fs.rename.bind(fs);
+    vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
+      if (from === staged && to === target) {
+        throw Object.assign(new Error("boom"), { code: "EACCES" });
+      }
+      return await realRename(from, to);
+    });
+
+    await expect(replaceDirectoryAtomic({ stagedDir: staged, targetDir: target })).rejects
+      .toMatchObject({ code: "EACCES" });
+    await expect(fs.readFile(path.join(target, "old.txt"), "utf8")).resolves.toBe("old");
+    await expect(fs.readFile(path.join(staged, "new.txt"), "utf8")).resolves.toBe("new");
+  });
+
+  it("guards sync parents and rejects escapes or swapped directories", async () => {
+    const root = await tempRoot("fs-safe-store-boundary-");
+    const guard = ensureParentSync({
+      rootDir: root,
+      filePath: path.join(root, "nested", "file.txt"),
+      mode: 0o700,
+    });
+    expect(path.basename(guard.dir)).toBe("nested");
+    expect(() => assertSyncDirectoryGuard(guard)).not.toThrow();
+    expect(() => assertSyncDirectoryGuard({ ...guard, realPath: path.join(root, "other") }))
+      .toThrow("changed during write");
+    expect(() =>
+      ensureParentSync({
+        rootDir: root,
+        filePath: path.join(path.dirname(root), "outside.txt"),
+        mode: 0o700,
+      }),
+    ).toThrow("escapes store root");
+
+    const badRoot = await tempRoot("fs-safe-store-boundary-bad-");
+    await fs.writeFile(path.join(badRoot, "file-parent"), "not a dir", "utf8");
+    expect(() =>
+      ensureParentSync({
+        rootDir: badRoot,
+        filePath: path.join(badRoot, "file-parent", "child.txt"),
+        mode: 0o700,
+      }),
+    ).toThrow("must be a directory");
+  });
+
+  it("stages streams and cleans failed temp sources", async () => {
+    const staged = await writeStreamToTempSource({
+      stream: Readable.from(["hello"]),
+      mode: 0o600,
+    });
+    try {
+      await expect(fs.readFile(staged.path, "utf8")).resolves.toBe("hello");
+    } finally {
+      await staged.cleanup();
+    }
+    await expect(fs.stat(path.dirname(staged.path))).rejects.toMatchObject({ code: "ENOENT" });
+
+    await expect(
+      writeStreamToTempSource({
+        stream: Readable.from(["123", "456"]),
+        maxBytes: 4,
+        mode: 0o600,
+      }),
+    ).rejects.toMatchObject({ code: "too-large" });
+  });
+});
+
+describe("install path edge paths", () => {
+  it("covers hashed segment fallbacks and canonical base failures", async () => {
+    expect(safePathSegmentHashed(".")).toMatch(/^skill-[a-f0-9]{10}$/);
+    expect(safePathSegmentHashed("!!!")).toMatch(/^skill-[a-f0-9]{10}$/);
+    expect(safePathSegmentHashed("ok-name")).toBe("ok-name");
+    expect(
+      resolveSafeInstallDir({
+        baseDir: "/tmp/plugins",
+        id: "same",
+        invalidNameMessage: "bad",
+        nameEncoder: () => "",
+      }),
+    ).toEqual({ ok: false, error: "bad" });
+
+    const root = await tempRoot("fs-safe-install-edge-");
+    const realBase = path.join(root, "real-base");
+    const linkBase = path.join(root, "link-base");
+    await fs.mkdir(realBase);
+    await fs.symlink(realBase, linkBase, "dir");
+    await expect(
+      assertCanonicalPathWithinBase({
+        baseDir: linkBase,
+        candidatePath: path.join(linkBase, "future.txt"),
+        boundaryLabel: "install root",
+      }),
+    ).resolves.toBeUndefined();
+
+    const baseFile = path.join(root, "base-file");
+    await fs.writeFile(baseFile, "not a directory", "utf8");
+    await expect(
+      assertCanonicalPathWithinBase({
+        baseDir: baseFile,
+        candidatePath: path.join(baseFile, "future.txt"),
+        boundaryLabel: "install root",
+      }),
+    ).rejects.toThrow("base directory");
+
+    const outside = await tempRoot("fs-safe-install-edge-outside-");
+    await fs.symlink(outside, path.join(realBase, "outside-link"), "dir");
+    await expect(
+      assertCanonicalPathWithinBase({
+        baseDir: realBase,
+        candidatePath: path.join(realBase, "outside-link", "future.txt"),
+        boundaryLabel: "install root",
+      }),
+    ).rejects.toThrow("within");
+  });
+});
+
+describe("trash edge paths", () => {
+  it("refuses root paths, retries name collisions, and falls back across devices", async () => {
+    const root = await tempRoot("fs-safe-trash-extra-");
+    const filePath = path.join(root, "retry.txt");
+    await fs.writeFile(filePath, "trash", "utf8");
+    await expect(movePathToTrash(path.parse(root).root, { allowedRoots: [root] }))
+      .rejects
+      .toThrow("Refusing to trash root path");
+
+    const realRename = fsSync.renameSync.bind(fsSync);
+    let collision = true;
+    vi.spyOn(fsSync, "renameSync").mockImplementation((from, to) => {
+      if (from === filePath && collision) {
+        collision = false;
+        throw Object.assign(new Error("exists"), { code: "EEXIST" });
+      }
+      return realRename(from, to);
+    });
+    const retriedDest = await movePathToTrash(filePath, { allowedRoots: [root] });
+    try {
+      expect(path.basename(retriedDest)).toBe("retry.txt");
+    } finally {
+      await fs.rm(path.dirname(retriedDest), { recursive: true, force: true });
+    }
+
+    vi.restoreAllMocks();
+    const crossDevice = path.join(root, "cross-device.txt");
+    await fs.writeFile(crossDevice, "copy fallback", "utf8");
+    vi.spyOn(fsSync, "renameSync").mockImplementation((from, to) => {
+      if (from === crossDevice) {
+        throw Object.assign(new Error("cross-device"), { code: "EXDEV" });
+      }
+      return realRename(from, to);
+    });
+    const copiedDest = await movePathToTrash(crossDevice, { allowedRoots: [root] });
+    try {
+      expect(fsSync.readFileSync(copiedDest, "utf8")).toBe("copy fallback");
+      expect(fsSync.existsSync(crossDevice)).toBe(false);
+    } finally {
+      await fs.rm(path.dirname(copiedDest), { recursive: true, force: true });
+    }
+  });
+});
