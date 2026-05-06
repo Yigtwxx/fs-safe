@@ -145,6 +145,22 @@ it("writes and reads through the boundary", async () => {
 
 For tests that need a private temp workspace, [`withTempWorkspace`](temp.md) makes the setup-and-teardown story trivial.
 
+## Repo test shards
+
+Run the full local gate before handoff:
+
+```sh
+pnpm check
+```
+
+Run only the security boundary corpus while iterating on root/path/archive/temp hardening:
+
+```sh
+pnpm test:security
+```
+
+`pnpm check` also runs `pnpm lint:file-size`. New source and test files should stay under 500 lines. Existing larger files have explicit budgets in `scripts/check-file-size.mjs`; do not increase those budgets as part of unrelated work.
+
 ## See also
 
 - [Security model](security-model.md) — what the boundary is supposed to defend; design tests around the same threats.

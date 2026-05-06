@@ -1,78 +1,25 @@
 import fsp from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { FsSafeError, root as openRoot } from "../src/index.js";
-
-type TempLayout = {
-  outside: string;
-  outsideFile: string;
-  root: string;
-};
+import { root as openRoot } from "../src/index.js";
+import {
+  ESCAPING_DIRECTORY_PAYLOADS,
+  ESCAPING_WRITE_PAYLOADS,
+  expectFsSafeCode,
+  expectNoOutsideWrite,
+  LITERAL_SUSPICIOUS_DIRECTORY_PAYLOADS,
+  LITERAL_SUSPICIOUS_WRITE_PAYLOADS,
+  makeTempLayout as makeSecurityTempLayout,
+  POSIX_LITERAL_SUSPICIOUS_WRITE_PAYLOADS,
+  SAFE_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS,
+  SAFE_REJECTED_SUSPICIOUS_WRITE_PAYLOADS,
+  WINDOWS_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS,
+} from "./helpers/security.js";
 
 const tempDirs: string[] = [];
 
-const ESCAPING_WRITE_PAYLOADS = [
-  "../pwned.txt",
-  "../../pwned.txt",
-  "nested/../../pwned.txt",
-  "nested/../../../pwned.txt",
-  "./../pwned.txt",
-  "nested/..//../pwned.txt",
-] as const;
-
-const LITERAL_SUSPICIOUS_WRITE_PAYLOADS = [
-  "nested/%2e%2e/pwned.txt",
-  "%2e%2e/pwned.txt",
-  "%2e%2e%2fpwned.txt",
-  "%252e%252e%252fpwned.txt",
-] as const;
-
-const POSIX_LITERAL_SUSPICIOUS_WRITE_PAYLOADS = [
-  "nested\\..\\..\\pwned.txt",
-  "C:\\Windows\\win.ini",
-  "\\\\server\\share\\pwned.txt",
-] as const;
-
-const SAFE_REJECTED_SUSPICIOUS_WRITE_PAYLOADS = [
-  "..%2fpwned.txt",
-  "..%00/pwned.txt",
-  "..\\pwned.txt",
-] as const;
-
-const ESCAPING_DIRECTORY_PAYLOADS = [
-  "..",
-  "../",
-  "../../",
-  "nested/../..",
-  "nested/../../outside",
-] as const;
-
-const LITERAL_SUSPICIOUS_DIRECTORY_PAYLOADS = ["%2e%2e", "%2e%2e%2f"] as const;
-
-const SAFE_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS = ["..\\"] as const;
-
-const WINDOWS_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS = [
-  "C:\\Windows",
-  "\\\\server\\share",
-] as const;
-
-async function makeTempLayout(prefix: string): Promise<TempLayout> {
-  const root = await fsp.mkdtemp(path.join(os.tmpdir(), `${prefix}-root-`));
-  const outside = await fsp.mkdtemp(path.join(os.tmpdir(), `${prefix}-outside-`));
-  tempDirs.push(root, outside);
-  const outsideFile = path.join(outside, "secret.txt");
-  await fsp.writeFile(outsideFile, "outside secret");
-  return { outside, outsideFile, root };
-}
-
-function expectFsSafeCode(error: unknown, codes: readonly string[]): void {
-  expect(error).toBeInstanceOf(FsSafeError);
-  expect(codes).toContain((error as FsSafeError).code);
-}
-
-async function expectNoOutsideWrite(layout: TempLayout, expected = "outside secret"): Promise<void> {
-  await expect(fsp.readFile(layout.outsideFile, "utf8")).resolves.toBe(expected);
+async function makeTempLayout(prefix: string) {
+  return await makeSecurityTempLayout(prefix, tempDirs);
 }
 
 afterEach(async () => {

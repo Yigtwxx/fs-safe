@@ -1,61 +1,23 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveAbsolutePathForRead } from "../src/absolute-path.js";
-import { FsSafeError, root as openRoot } from "../src/index.js";
+import { root as openRoot } from "../src/index.js";
 import { openPinnedFileSync } from "../src/pinned-open.js";
 import { pathScope } from "../src/root-paths.js";
 import { openRootFile, openRootFileSync } from "../src/root-file.js";
-
-type TempLayout = {
-  outside: string;
-  outsideFile: string;
-  root: string;
-};
+import {
+  expectFsSafeCode,
+  LIST_TRAVERSAL_PAYLOADS,
+  makeTempLayout as makeSecurityTempLayout,
+  TRAVERSAL_PAYLOADS,
+} from "./helpers/security.js";
 
 const tempDirs: string[] = [];
 
-const TRAVERSAL_PAYLOADS = [
-  "../secret.txt",
-  "../../secret.txt",
-  "nested/../../secret.txt",
-  "nested/../../../secret.txt",
-  "./../secret.txt",
-  "nested/..//../secret.txt",
-  "nested/%2e%2e/secret.txt",
-  "%2e%2e/secret.txt",
-  "%2e%2e%2fsecret.txt",
-  "..%2fsecret.txt",
-  "%252e%252e%252fsecret.txt",
-  "..%00/secret.txt",
-  "..\\secret.txt",
-  "nested\\..\\..\\secret.txt",
-  "C:\\Windows\\win.ini",
-  "\\\\server\\share\\secret.txt",
-] as const;
-
-const LIST_TRAVERSAL_PAYLOADS = [
-  "..",
-  "../",
-  "../../",
-  "nested/../..",
-  "nested/../../outside",
-  "%2e%2e",
-  "%2e%2e%2f",
-  "..\\",
-  "C:\\Windows",
-  "\\\\server\\share",
-] as const;
-
-async function makeTempLayout(prefix: string): Promise<TempLayout> {
-  const root = await fsp.mkdtemp(path.join(os.tmpdir(), `${prefix}-root-`));
-  const outside = await fsp.mkdtemp(path.join(os.tmpdir(), `${prefix}-outside-`));
-  tempDirs.push(root, outside);
-  const outsideFile = path.join(outside, "secret.txt");
-  await fsp.writeFile(outsideFile, "outside secret");
-  return { outside, outsideFile, root };
+async function makeTempLayout(prefix: string) {
+  return await makeSecurityTempLayout(prefix, tempDirs);
 }
 
 async function closeIfOpen(value: unknown): Promise<void> {
@@ -65,11 +27,6 @@ async function closeIfOpen(value: unknown): Promise<void> {
       await handle.close();
     }
   }
-}
-
-function expectFsSafeCode(error: unknown, codes: readonly string[]): void {
-  expect(error).toBeInstanceOf(FsSafeError);
-  expect(codes).toContain((error as FsSafeError).code);
 }
 
 afterEach(async () => {

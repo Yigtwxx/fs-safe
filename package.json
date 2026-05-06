@@ -95,10 +95,12 @@
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",
     "build": "tsc -p tsconfig.json",
+    "lint:file-size": "node scripts/check-file-size.mjs",
     "prepack": "node scripts/prepack-build.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "check": "pnpm build && pnpm test",
+    "test:security": "vitest run test/fs-safe.test.ts test/openclaw-read-bypass-parity.test.ts test/openclaw-write-bypass-parity.test.ts test/additional-bypass-parity.test.ts",
+    "check": "pnpm lint:file-size && pnpm build && pnpm test",
     "docs:site": "node scripts/build-docs-site.mjs"
   },
   "optionalDependencies": {
