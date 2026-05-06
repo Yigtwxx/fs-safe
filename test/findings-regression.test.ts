@@ -9,8 +9,10 @@ import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { writeJsonSync } from "../src/json.js";
 import { moveJsonDurableQueueEntryToFailed, resolveJsonDurableQueueEntryPaths } from "../src/json-durable-queue.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { replaceFileAtomic } from "../src/replace-file.js";
 import { writeViaSiblingTempPath } from "../src/sibling-temp.js";
 import { sanitizeTempFileName, tempFile } from "../src/temp-target.js";
+import { tempWorkspaceSync } from "../src/private-temp-workspace.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { movePathToTrash } from "../src/trash.js";
 
@@ -267,6 +269,43 @@ describe("security finding regressions", () => {
     await expect(fsp.readFile(target, "utf8")).resolves.toContain('"ok": true');
   });
 
+  it.runIf(process.platform !== "win32")("does not copy atomic fallback through a raced destination symlink", async () => {
+    const base = await tempRoot("fs-safe-atomic-fallback-race-");
+    const outside = await tempRoot("fs-safe-atomic-fallback-outside-");
+    const target = path.join(base, "state.txt");
+    const outsideFile = path.join(outside, "outside.txt");
+    await fsp.writeFile(target, "old");
+    await fsp.writeFile(outsideFile, "outside");
+    const originalLstat = fsp.lstat;
+    let swapped = false;
+
+    await replaceFileAtomic({
+      filePath: target,
+      content: "new",
+      copyFallbackOnPermissionError: true,
+      fileSystem: {
+        promises: {
+          ...fsp,
+          rename: async () => {
+            throw Object.assign(new Error("forced EPERM"), { code: "EPERM" });
+          },
+          lstat: async (candidate) => {
+            const stat = await originalLstat(candidate);
+            if (!swapped && candidate === target) {
+              swapped = true;
+              await fsp.rm(target);
+              await fsp.symlink(outsideFile, target, "file");
+            }
+            return stat;
+          },
+        },
+      },
+    });
+
+    await expect(fsp.readFile(outsideFile, "utf8")).resolves.toBe("outside");
+    await expect(fsp.readFile(target, "utf8")).resolves.toBe("new");
+  });
+
   it("rejects durable queue ids that are not safe path segments", async () => {
     const base = await tempRoot("fs-safe-queue-id-");
     expect(() => resolveJsonDurableQueueEntryPaths(base, "../escape")).toThrow();
@@ -285,6 +324,33 @@ describe("security finding regressions", () => {
       expect(target.file("..")).toBe(path.join(target.dir, "download.bin"));
     } finally {
       await target.cleanup();
+    }
+  });
+
+  it.runIf(process.platform !== "win32")("pins sync temp workspace reads against final symlink swaps", async () => {
+    const base = await tempRoot("fs-safe-temp-workspace-sync-read-");
+    const outside = await tempRoot("fs-safe-temp-workspace-sync-outside-");
+    const workspace = tempWorkspaceSync({ rootDir: base, prefix: "ws-" });
+    try {
+      workspace.write("value.bin", Buffer.from([0, 1, 2, 3]));
+      const outsideFile = path.join(outside, "outside.bin");
+      fsSync.writeFileSync(outsideFile, "outside");
+      const targetPath = workspace.path("value.bin");
+      const originalReadFileSync = fsSync.readFileSync;
+      let swapped = false;
+      vi.spyOn(fsSync, "readFileSync").mockImplementation((target, options) => {
+        if (!swapped && typeof target === "number") {
+          swapped = true;
+          fsSync.rmSync(targetPath);
+          fsSync.symlinkSync(outsideFile, targetPath, "file");
+        }
+        return originalReadFileSync.call(fsSync, target, options as never);
+      });
+
+      expect([...workspace.read("value.bin")]).toEqual([0, 1, 2, 3]);
+      expect(fsSync.readFileSync(outsideFile, "utf8")).toBe("outside");
+    } finally {
+      workspace.cleanup();
     }
   });
 
