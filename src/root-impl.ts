@@ -1627,7 +1627,7 @@ async function writeMissingFileFallback(
       },
       {
         onPostGuardFailure: async ({ handle }) => {
-          created = false;
+          created = false; // Parent is untrusted now; skip outer path cleanup by name.
           await handle.close().catch(() => undefined);
         },
       },

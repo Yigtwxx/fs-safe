@@ -217,6 +217,8 @@ async function runPinnedWriteFallback(params: {
         ),
       {
         onPostGuardFailure: async (openedHandle) => {
+          // The parent failed verification, so targetPath may now resolve
+          // somewhere else. Close the fd, but do not clean up by path.
           await openedHandle.close().catch(() => undefined);
         },
       },

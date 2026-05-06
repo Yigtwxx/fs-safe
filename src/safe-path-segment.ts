@@ -30,6 +30,8 @@ export function assertSafePathSegment(
   segment: string,
   options: SafePathSegmentOptions = {},
 ): string {
+  // Validate the exact value callers will later join into paths; trimming here
+  // would let whitespace-padded ids pass and then be used verbatim.
   if (!isSafePathSegment(segment, options)) {
     throw new FsSafeError(
       "invalid-path",

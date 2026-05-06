@@ -32,6 +32,9 @@ export async function withAsyncDirectoryGuards<T>(
     } catch (error) {
       if (options.onPostGuardFailure) {
         try {
+          // The mutation may have returned an owned resource before the post-guard
+          // check detected a swapped directory. Give callers one chance to close
+          // handles without letting cleanup hide the boundary failure.
           await options.onPostGuardFailure(result, error);
         } catch {
           // Preserve the boundary failure. Cleanup is best-effort.
