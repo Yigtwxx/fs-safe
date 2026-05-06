@@ -2,9 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ARCHIVE_LIMIT_ERROR_CODE,
+  type ArchiveSecurityError,
   extractArchive,
   resolvePackedRootDir,
 } from "../src/archive.js";
@@ -21,6 +22,48 @@ async function tempRoot(prefix: string): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
+}
+
+async function createRebindableDirectoryAlias(params: {
+  aliasPath: string;
+  targetPath: string;
+}): Promise<void> {
+  await fs.rm(params.aliasPath, { recursive: true, force: true });
+  await fs.symlink(
+    params.targetPath,
+    params.aliasPath,
+    process.platform === "win32" ? "junction" : undefined,
+  );
+}
+
+async function withRealpathSymlinkRebindRace<T>(params: {
+  shouldFlip: (realpathInput: string) => boolean;
+  symlinkPath: string;
+  symlinkTarget: string;
+  run: () => Promise<T>;
+}): Promise<T> {
+  const realRealpath = fs.realpath.bind(fs);
+  let flipped = false;
+  const realpathSpy = vi
+    .spyOn(fs, "realpath")
+    .mockImplementation(async (...args: Parameters<typeof fs.realpath>) => {
+      const filePath = String(args[0]);
+      if (!flipped && params.shouldFlip(filePath)) {
+        flipped = true;
+        const resolved = await realRealpath(...args);
+        await createRebindableDirectoryAlias({
+          aliasPath: params.symlinkPath,
+          targetPath: params.symlinkTarget,
+        });
+        return resolved;
+      }
+      return await realRealpath(...args);
+    });
+  try {
+    return await params.run();
+  } finally {
+    realpathSpy.mockRestore();
+  }
 }
 
 afterEach(async () => {
@@ -91,6 +134,82 @@ describe("archive extraction", () => {
     await expect(fs.readdir(destDir)).resolves.toEqual([]);
     await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside");
   });
+
+  it.runIf(process.platform !== "win32")(
+    "does not clobber out-of-destination file when parent dir is symlink-rebound",
+    async () => {
+      const root = await tempRoot("fs-safe-archive-rebind-");
+      const archivePath = path.join(root, "pkg.zip");
+      const destDir = path.join(root, "dest");
+      const outsideDir = path.join(root, "outside");
+      const slotDir = path.join(destDir, "slot");
+      await fs.mkdir(slotDir, { recursive: true });
+      await fs.mkdir(outsideDir, { recursive: true });
+      const outsideTarget = path.join(outsideDir, "target.txt");
+      await fs.writeFile(outsideTarget, "SAFE", "utf8");
+
+      const zip = new JSZip();
+      zip.file("slot/target.txt", "owned");
+      await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+      await withRealpathSymlinkRebindRace({
+        shouldFlip: (realpathInput) => realpathInput === slotDir,
+        symlinkPath: slotDir,
+        symlinkTarget: outsideDir,
+        run: async () => {
+          await expect(
+            extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 }),
+          ).rejects.toMatchObject({
+            code: "destination-symlink-traversal",
+          } satisfies Partial<ArchiveSecurityError>);
+        },
+      });
+
+      await expect(fs.readFile(outsideTarget, "utf8")).resolves.toBe("SAFE");
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "rejects zip extraction when a hardlink appears after write",
+    async () => {
+      const root = await tempRoot("fs-safe-archive-hardlink-");
+      const archivePath = path.join(root, "pkg.zip");
+      const destDir = path.join(root, "dest");
+      const outsideDir = path.join(root, "outside");
+      const outsideAlias = path.join(outsideDir, "payload.bin");
+      const extractedPath = path.join(destDir, "package", "payload.bin");
+      await fs.mkdir(destDir, { recursive: true });
+      await fs.mkdir(outsideDir, { recursive: true });
+      const extractedRealPath = path.join(await fs.realpath(destDir), "package", "payload.bin");
+
+      const zip = new JSZip();
+      zip.file("package/payload.bin", "owned");
+      await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+      const realLstat = fs.lstat.bind(fs);
+      let linked = false;
+      const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+        if (!linked && String(args[0]) === extractedRealPath) {
+          await fs.link(extractedRealPath, outsideAlias);
+          linked = true;
+        }
+        return await realLstat(...args);
+      });
+
+      try {
+        await expect(
+          extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 }),
+        ).rejects.toMatchObject({
+          code: "destination-symlink-traversal",
+        } satisfies Partial<ArchiveSecurityError>);
+      } finally {
+        lstatSpy.mockRestore();
+      }
+
+      await expect(fs.readFile(outsideAlias, "utf8")).resolves.toBe("owned");
+      await expect(fs.stat(extractedPath)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
 });
 
 describe("temp file targets", () => {

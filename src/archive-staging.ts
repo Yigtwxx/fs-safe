@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { FsSafeError } from "./errors.js";
 import { root } from "./root.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
@@ -136,6 +137,40 @@ async function applyStagedEntryMode(params: {
   }
 }
 
+async function assertExtractedFileHasNoHardlinkAlias(params: {
+  destinationRealDir: string;
+  relPath: string;
+  originalPath: string;
+}): Promise<void> {
+  const destinationPath = path.join(params.destinationRealDir, params.relPath);
+  await assertResolvedInsideDestination({
+    destinationRealDir: params.destinationRealDir,
+    targetPath: destinationPath,
+    originalPath: params.originalPath,
+  });
+  const stat = await fs.lstat(destinationPath);
+  if (stat.isFile() && stat.nlink > 1) {
+    throw symlinkTraversalError(params.originalPath);
+  }
+}
+
+async function removeExtractedDestinationFile(params: {
+  destinationRealDir: string;
+  relPath: string;
+}): Promise<void> {
+  const destinationPath = path.join(params.destinationRealDir, params.relPath);
+  let resolved: string;
+  try {
+    resolved = await fs.realpath(destinationPath);
+  } catch {
+    return;
+  }
+  if (!isPathInside(params.destinationRealDir, resolved)) {
+    return;
+  }
+  await fs.rm(destinationPath, { force: true }).catch(() => undefined);
+}
+
 export async function withStagedArchiveDestination<T>(params: {
   destinationRealDir: string;
   stagingDirPrefix?: string;
@@ -210,13 +245,29 @@ export async function mergeExtractedTreeIntoDestination(params: {
         originalPath,
         isDirectory: false,
       });
-      await targetRoot.copyIn(relPath, sourcePath, { mkdir: true });
-      await applyStagedEntryMode({
-        destinationRealDir: params.destinationRealDir,
-        relPath,
-        mode: sourceStat.mode & 0o777,
-        originalPath,
-      });
+      try {
+        await targetRoot.copyIn(relPath, sourcePath, { mkdir: true });
+        await assertExtractedFileHasNoHardlinkAlias({
+          destinationRealDir: params.destinationRealDir,
+          relPath,
+          originalPath,
+        });
+        await applyStagedEntryMode({
+          destinationRealDir: params.destinationRealDir,
+          relPath,
+          mode: sourceStat.mode & 0o777,
+          originalPath,
+        });
+      } catch (err) {
+        await removeExtractedDestinationFile({
+          destinationRealDir: params.destinationRealDir,
+          relPath,
+        });
+        if (err instanceof FsSafeError && (err.code === "hardlink" || err.code === "path-alias")) {
+          throw symlinkTraversalError(originalPath);
+        }
+        throw err;
+      }
     }
   };
 

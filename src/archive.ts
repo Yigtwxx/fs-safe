@@ -289,7 +289,7 @@ async function extractZip(params: {
 
       await mergeExtractedTreeIntoDestination({
         sourceDir: stagingRealDir,
-        destinationDir: destinationRealDir,
+        destinationDir: params.destDir,
         destinationRealDir,
       });
     },
@@ -356,7 +356,7 @@ export async function extractArchive(params: {
             });
             await mergeExtractedTreeIntoDestination({
               sourceDir: stagingDir,
-              destinationDir: destinationRealDir,
+              destinationDir: params.destDir,
               destinationRealDir,
             });
           },
