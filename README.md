@@ -1,4 +1,4 @@
-# @openclaw/fs-safe
+# 🛡️ @openclaw/fs-safe
 
 Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.
 
