@@ -97,6 +97,8 @@ describe("private temp workspaces", () => {
       const filePath = await tmp.writePrivate("input.txt", "hello");
       expect(filePath).toBe(tmp.file("input.txt"));
       expect(tmp.path("input.txt")).toBe(filePath);
+      await tmp.store.json<{ ok: boolean }>("state.json").write({ ok: true });
+      await expect(tmp.store.readJson("state.json")).resolves.toEqual({ ok: true });
     }
 
     await expect(fs.stat(workspaceDir)).rejects.toMatchObject({ code: "ENOENT" });

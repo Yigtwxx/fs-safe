@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { copyIntoRoot } from "./file-store.js";
+import {
+  fileStore,
+  fileStoreSync,
+  type FileStore,
+  type FileStoreSync,
+} from "./file-store.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 
 export type TempWorkspaceOptions = {
@@ -14,6 +19,7 @@ export type TempWorkspaceOptions = {
 
 export type TempWorkspace = {
   dir: string;
+  store: FileStore;
   file(fileName: string): string;
   path(fileName: string): string;
   writePrivate(fileName: string, data: string | Uint8Array): Promise<string>;
@@ -31,6 +37,7 @@ export type TempWorkspace = {
 
 export type TempWorkspaceSync = {
   dir: string;
+  store: FileStoreSync;
   file(fileName: string): string;
   path(fileName: string): string;
   writePrivate(fileName: string, data: string | Uint8Array): string;
@@ -63,6 +70,11 @@ function resolveWorkspaceLeaf(dir: string, fileName: string): string {
     throw new Error(`Invalid temp workspace file name: ${JSON.stringify(fileName)}`);
   }
   return path.join(dir, raw);
+}
+
+function assertWorkspaceFileName(fileName: string): string {
+  resolveWorkspaceLeaf(".", fileName);
+  return fileName.trim();
 }
 
 async function ensurePrivateDirectory(dir: string, mode: number): Promise<void> {
@@ -102,42 +114,25 @@ async function createTempWorkspace(
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new Error(`Temp workspace must be a directory: ${dir}`);
   }
+  const store = fileStore({ rootDir: dir, private: true, dirMode, mode });
 
   return {
     dir,
+    store,
     file: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     path: (fileName) => resolveWorkspaceLeaf(dir, fileName),
-    writePrivate: async (fileName, data) => {
-      const filePath = resolveWorkspaceLeaf(dir, fileName);
-      await fs.writeFile(filePath, data, { mode, flag: "wx" });
-      await fs.chmod(filePath, mode).catch(() => undefined);
-      return filePath;
-    },
-    writeText: async (fileName, data) => {
-      const filePath = resolveWorkspaceLeaf(dir, fileName);
-      await fs.writeFile(filePath, data, { encoding: "utf8", mode, flag: "wx" });
-      await fs.chmod(filePath, mode).catch(() => undefined);
-      return filePath;
-    },
-    writeJson: async (fileName, data, writeOptions) => {
-      const json = JSON.stringify(data, null, 2);
-      const payload = writeOptions?.trailingNewline === false ? json : `${json}\n`;
-      const filePath = resolveWorkspaceLeaf(dir, fileName);
-      await fs.writeFile(filePath, payload, { encoding: "utf8", mode, flag: "wx" });
-      await fs.chmod(filePath, mode).catch(() => undefined);
-      return filePath;
-    },
-    copyIn: async (fileName, sourcePath) => {
-      const filePath = resolveWorkspaceLeaf(dir, fileName);
-      await copyIntoRoot({
-        rootDir: dir,
-        relativePath: fileName,
-        sourcePath,
+    writePrivate: async (fileName, data) =>
+      await store.write(assertWorkspaceFileName(fileName), data, { mode }),
+    writeText: async (fileName, data) =>
+      await store.writeText(assertWorkspaceFileName(fileName), data, { mode }),
+    writeJson: async (fileName, data, writeOptions) =>
+      await store.writeJson(assertWorkspaceFileName(fileName), data, {
         mode,
-      });
-      return filePath;
-    },
-    read: async (fileName) => await fs.readFile(resolveWorkspaceLeaf(dir, fileName)),
+        trailingNewline: writeOptions?.trailingNewline,
+      }),
+    copyIn: async (fileName, sourcePath) =>
+      await store.copyIn(assertWorkspaceFileName(fileName), sourcePath, { mode }),
+    read: async (fileName) => await store.readBytes(assertWorkspaceFileName(fileName)),
     cleanup: async () => {
       try {
         await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
@@ -200,44 +195,26 @@ export function tempWorkspaceSync(
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new Error(`Temp workspace must be a directory: ${dir}`);
   }
+  const store = fileStoreSync({ rootDir: dir, private: true, dirMode, mode });
 
   return {
     dir,
+    store,
     file: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     path: (fileName) => resolveWorkspaceLeaf(dir, fileName),
-    writePrivate: (fileName, data) => {
-      const filePath = resolveWorkspaceLeaf(dir, fileName);
-      fsSync.writeFileSync(filePath, data, { mode, flag: "wx" });
-      try {
-        fsSync.chmodSync(filePath, mode);
-      } catch {
-        // Best-effort on platforms that do not enforce POSIX modes.
-      }
-      return filePath;
+    writePrivate: (fileName, data) =>
+      store.write(assertWorkspaceFileName(fileName), data, { mode }),
+    writeText: (fileName, data) =>
+      store.writeText(assertWorkspaceFileName(fileName), data, { mode }),
+    writeJson: (fileName, data, writeOptions) =>
+      store.writeJson(assertWorkspaceFileName(fileName), data, {
+        mode,
+        trailingNewline: writeOptions?.trailingNewline,
+      }),
+    read: (fileName) => {
+      const filePath = store.path(assertWorkspaceFileName(fileName));
+      return fsSync.readFileSync(filePath);
     },
-    writeText: (fileName, data) => {
-      const filePath = resolveWorkspaceLeaf(dir, fileName);
-      fsSync.writeFileSync(filePath, data, { encoding: "utf8", mode, flag: "wx" });
-      try {
-        fsSync.chmodSync(filePath, mode);
-      } catch {
-        // Best-effort on platforms that do not enforce POSIX modes.
-      }
-      return filePath;
-    },
-    writeJson: (fileName, data, writeOptions) => {
-      const json = JSON.stringify(data, null, 2);
-      const payload = writeOptions?.trailingNewline === false ? json : `${json}\n`;
-      const filePath = resolveWorkspaceLeaf(dir, fileName);
-      fsSync.writeFileSync(filePath, payload, { encoding: "utf8", mode, flag: "wx" });
-      try {
-        fsSync.chmodSync(filePath, mode);
-      } catch {
-        // Best-effort on platforms that do not enforce POSIX modes.
-      }
-      return filePath;
-    },
-    read: (fileName) => fsSync.readFileSync(resolveWorkspaceLeaf(dir, fileName)),
     cleanup: () => {
       try {
         fsSync.rmSync(dir, { recursive: true, force: true });

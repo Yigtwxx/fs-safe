@@ -23,6 +23,7 @@ The compact factory. Returns:
 ```ts
 type TempWorkspace = {
   dir: string;
+  store: FileStore;
   file(fileName: string): string;
   path(fileName: string): string;
   writePrivate(fileName: string, data: string | Uint8Array): Promise<string>;
@@ -45,7 +46,21 @@ await runBuild(workspace.dir, inputPath);
 
 `writePrivate` writes at `mode` (default `0o600`); `writeText` and `writeJson` are convenience wrappers for the common scratch-file shapes; `copyIn` ingests an absolute source path through the same atomic-rename machinery as `Root.copyIn`. `read` is a small accessor that reads back any file you wrote into the workspace.
 
-The sync variant `tempWorkspaceSync` exposes the same surface with sync return types.
+`store` is a `fileStore({ rootDir: workspace.dir, private: true })` handle. Use
+it when you want the richer store surface, including `writeStream`, `exists`,
+`remove`, `readJsonIfExists`, or `store.json<T>(rel)`:
+
+```ts
+await using workspace = await tempWorkspace({ rootDir: "/tmp/my-app", prefix: "build-" });
+const state = workspace.store.json<State>("state.json");
+await state.write({ ready: true });
+```
+
+The workspace owns cleanup; the store is only a view over the workspace
+directory.
+
+The sync variant `tempWorkspaceSync` exposes the same surface with sync return
+types and a `FileStoreSync` at `workspace.store`.
 
 ### `withTempWorkspace`
 

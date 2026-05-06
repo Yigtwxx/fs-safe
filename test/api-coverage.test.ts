@@ -626,12 +626,14 @@ describe("temporary workspace and symlink parent helpers", () => {
     const workspace = await tempWorkspace({ rootDir: root, prefix: "bad prefix!" });
     expect(() => workspace.file("../bad")).toThrow("Invalid temp workspace");
     const privateFile = await workspace.writePrivate("private.bin", Buffer.from("private"));
+    await workspace.store.writeText("store.txt", "stored");
     const textFile = await workspace.writeText("text.txt", "text");
     const jsonFile = await workspace.writeJson("data.json", { ok: true }, {
       trailingNewline: false,
     });
     await expect(workspace.copyIn("copy.txt", source)).resolves.toBe(workspace.path("copy.txt"));
     await expect(workspace.read("text.txt")).resolves.toEqual(Buffer.from("text"));
+    await expect(workspace.store.readText("store.txt")).resolves.toBe("stored");
     expect(path.basename(privateFile)).toBe("private.bin");
     expect(path.basename(textFile)).toBe("text.txt");
     await expect(fs.readFile(jsonFile, "utf8")).resolves.toBe('{\n  "ok": true\n}');
@@ -650,6 +652,8 @@ describe("temporary workspace and symlink parent helpers", () => {
       expect(syncWorkspace.writePrivate("private.bin", Buffer.from("private"))).toContain(
         "private.bin",
       );
+      expect(syncWorkspace.store.writeText("store.txt", "stored")).toContain("store.txt");
+      expect(syncWorkspace.store.readTextIfExists("store.txt")).toBe("stored");
       expect(syncWorkspace.writeText("text.txt", "text")).toContain("text.txt");
       expect(syncWorkspace.writeJson("data.json", { ok: true }, { trailingNewline: false }))
         .toContain("data.json");
