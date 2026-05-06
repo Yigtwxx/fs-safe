@@ -9,6 +9,7 @@ import { createBoundedReadStream } from "./bounded-read-stream.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
+import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { isPinnedPathHelperSpawnError, runPinnedPathHelper } from "./pinned-path.js";
 import { runPinnedCopyHelper, runPinnedWriteHelper } from "./pinned-write.js";
@@ -1384,11 +1385,10 @@ async function removePathFallback(resolved: { resolved: string }): Promise<void>
 }
 
 async function mkdirPathFallback(resolved: { rootReal: string; resolved: string }): Promise<void> {
-  const guard = await createNearestExistingDirectoryGuard(resolved.rootReal, resolved.resolved);
-  await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", resolved.resolved);
-  await assertAsyncDirectoryGuard(guard);
-  await fs.mkdir(resolved.resolved, { recursive: true });
-  await assertAsyncDirectoryGuard(guard);
+  await mkdirPathComponentsWithGuards({
+    rootReal: resolved.rootReal, targetPath: resolved.resolved,
+    beforeComponent: async (componentPath) => await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath),
+  });
 }
 
 async function statPathFallback(root: RootContext, relativePath: string): Promise<PathStat> {

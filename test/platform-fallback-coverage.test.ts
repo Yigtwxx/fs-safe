@@ -89,4 +89,22 @@ describe("platform fallback coverage", () => {
     // without recursive rejects dirs and would silently leave pruneEmptyDirs work.
     await expect(fs.stat(path.join(rootDir, "old"))).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it.runIf(process.platform !== "win32")("rejects symlinked missing mkdir components in fallback", async () => {
+    const { root: openRoot } = await importRootForPlatform("win32");
+    const { __setFsSafeTestHooksForTest } = await import("../src/test-hooks.js");
+    const rootDir = await tempRoot("fs-safe-win-mkdir-race-");
+    const outsideDir = await tempRoot("fs-safe-win-mkdir-outside-");
+    const scoped = await openRoot(rootDir);
+    const racedComponent = path.join(rootDir, "link");
+    __setFsSafeTestHooksForTest({
+      async beforeRootFallbackMutation(operation, targetPath) {
+        if (operation !== "mkdir" || path.basename(targetPath) !== "link") return;
+        await fs.symlink(outsideDir, targetPath, "dir");
+      },
+    });
+
+    await expect(scoped.mkdir("link/created")).rejects.toBeTruthy();
+    await expect(fs.stat(path.join(outsideDir, "created"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
 });

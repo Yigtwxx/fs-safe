@@ -170,6 +170,38 @@ describe("archive extraction", () => {
   );
 
   it.runIf(process.platform !== "win32")(
+    "does not cleanup through a swapped zip entry parent before commit",
+    async () => {
+      const root = await tempRoot("fs-safe-archive-cleanup-race-");
+      const archivePath = path.join(root, "pkg.zip");
+      const destDir = path.join(root, "dest");
+      const outsideDir = path.join(root, "outside");
+      const outsideFile = path.join(outsideDir, "payload.txt");
+      await fs.mkdir(destDir);
+      await fs.mkdir(outsideDir);
+      await fs.writeFile(outsideFile, "outside");
+      const zip = new JSZip();
+      zip.file("nested/payload.txt", "inside");
+      await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+      const realMkdir = fs.mkdir.bind(fs);
+      let swapped = false;
+      vi.spyOn(fs, "mkdir").mockImplementation(async (...args: Parameters<typeof fs.mkdir>) => {
+        const candidate = String(args[0]);
+        if (!swapped && path.basename(candidate) === "nested" && await fs.lstat(candidate).then(() => true, () => false)) {
+          swapped = true;
+          await fs.rename(candidate, path.join(path.dirname(candidate), "nested-real"));
+          await fs.symlink(outsideDir, candidate, "dir");
+        }
+        return await realMkdir(...args);
+      });
+
+      await expect(extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 }))
+        .rejects.toBeTruthy();
+      await expect(fs.readFile(outsideFile, "utf8")).resolves.toBe("outside");
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
     "rejects zip extraction when a hardlink appears after write",
     async () => {
       const root = await tempRoot("fs-safe-archive-hardlink-");

@@ -31,7 +31,6 @@ import {
   type TarEntryInfo,
 } from "./archive-tar.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
-import { isNotFoundPathError } from "./path.js";
 import { writeSiblingTempFile } from "./sibling-temp.js";
 import { withTimeout } from "./timing.js";
 
@@ -79,21 +78,6 @@ const OPEN_WRITE_CREATE_FLAGS =
   fsConstants.O_CREAT |
   fsConstants.O_EXCL |
   (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
-
-async function cleanupPartialRegularFile(filePath: string): Promise<void> {
-  let stat: Awaited<ReturnType<typeof fs.lstat>>;
-  try {
-    stat = await fs.lstat(filePath);
-  } catch (err) {
-    if (isNotFoundPathError(err)) {
-      return;
-    }
-    throw err;
-  }
-  if (stat.isFile()) {
-    await fs.unlink(filePath).catch(() => undefined);
-  }
-}
 
 type ZipEntry = {
   name: string;
@@ -214,7 +198,8 @@ async function writeZipFileEntry(params: {
       }
     }
   } catch (err) {
-    await cleanupPartialRegularFile(destinationPath).catch(() => undefined);
+    // Failures here happen before the temp has been committed. The destination
+    // parent may already be untrusted, so cleanup must stay limited to temp state.
     throw err;
   } finally {
     const openTempHandle = tempHandle as FileHandle | null;
