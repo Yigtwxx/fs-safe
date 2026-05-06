@@ -6,6 +6,8 @@ import { createAsyncLock } from "../src/async-lock.js";
 import { writeTextAtomic } from "../src/atomic.js";
 import {
   JsonFileReadError,
+  readRootJsonObjectSync,
+  readRootStructuredFileSync,
   readJson,
   readJsonIfExists,
   readJsonSync,
@@ -140,5 +142,63 @@ describe("json file helpers", () => {
     releaseFirst?.();
     await expect(Promise.all([first, second])).resolves.toEqual([1, 2]);
     expect(events).toEqual(["first:start", "first:end", "second"]);
+  });
+
+  it("reads JSON objects through a root-bounded open", async () => {
+    const root = await tempRoot("fs-safe-root-json-");
+    await fs.writeFile(path.join(root, "config.json"), JSON.stringify({ name: "demo" }), "utf8");
+
+    const result = readRootJsonObjectSync({
+      rootDir: root,
+      relativePath: "config.json",
+      boundaryLabel: "test root",
+      rejectHardlinks: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, value: { name: "demo" } });
+  });
+
+  it("rejects invalid root-bounded JSON shapes and escapes", async () => {
+    const root = await tempRoot("fs-safe-root-json-");
+    const outside = path.join(path.dirname(root), `${path.basename(root)}.json`);
+    await fs.writeFile(path.join(root, "array.json"), "[]", "utf8");
+    await fs.writeFile(outside, JSON.stringify({ name: "outside" }), "utf8");
+    try {
+      expect(
+        readRootJsonObjectSync({
+          rootDir: root,
+          relativePath: "array.json",
+          boundaryLabel: "test root",
+        }),
+      ).toMatchObject({ ok: false, reason: "invalid" });
+      expect(
+        readRootJsonObjectSync({
+          rootDir: root,
+          relativePath: "../outside-root-json-test.json",
+          boundaryLabel: "test root",
+        }),
+      ).toMatchObject({ ok: false, reason: "open" });
+    } finally {
+      await fs.rm(outside, { force: true });
+    }
+  });
+
+  it("lets callers provide parser and validation for root-bounded structured files", async () => {
+    const root = await tempRoot("fs-safe-root-structured-");
+    await fs.writeFile(path.join(root, "config.txt"), "name=demo", "utf8");
+
+    const result = readRootStructuredFileSync<{ name: string }>({
+      rootDir: root,
+      relativePath: "config.txt",
+      boundaryLabel: "test root",
+      parse: (raw) => ({ name: raw.split("=")[1]?.trim() }),
+      validate: (value): value is { name: string } =>
+        typeof value === "object" &&
+        value !== null &&
+        "name" in value &&
+        typeof value.name === "string",
+    });
+
+    expect(result).toMatchObject({ ok: true, value: { name: "demo" } });
   });
 });

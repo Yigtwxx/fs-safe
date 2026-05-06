@@ -15,3 +15,18 @@ export {
   type JsonStoreLockOptions,
   type JsonStoreOptions,
 } from "./json-store.js";
+export {
+  ackJsonDurableQueueEntry,
+  ensureJsonDurableQueueDirs,
+  jsonDurableQueueEntryExists,
+  loadJsonDurableQueueEntry,
+  loadPendingJsonDurableQueueEntries,
+  moveJsonDurableQueueEntryToFailed,
+  readJsonDurableQueueEntry,
+  resolveJsonDurableQueueEntryPaths,
+  unlinkBestEffort,
+  writeJsonDurableQueueEntry,
+  type JsonDurableQueueEntryPaths,
+  type JsonDurableQueueLoadOptions,
+  type JsonDurableQueueReadResult,
+} from "./json-durable-queue.js";

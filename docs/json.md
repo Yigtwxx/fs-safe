@@ -9,6 +9,9 @@ import {
   readJsonIfExists,
   readJsonSync,
   tryReadJsonSync,
+  readRootJsonSync,
+  readRootJsonObjectSync,
+  readRootStructuredFileSync,
   writeJson,
   writeJsonSync,
   JsonFileReadError,
@@ -68,6 +71,32 @@ Synchronous strict reader. Throws `JsonFileReadError` on missing or invalid inpu
 ### `tryReadJsonSync<T>(pathname)`
 
 Synchronous, generic, lenient. Returns `T | null`. Useful in boot paths where you want a typed result without async.
+
+## Root-bounded structured reads
+
+Use the root-bounded readers when you already have a trusted root directory and
+a caller-controlled relative path, but you only need one synchronous structured
+read instead of a full `root()` handle.
+
+```ts
+const result = readRootJsonObjectSync({
+  rootDir: "/safe/workspace",
+  relativePath: "plugin/openclaw.plugin.json",
+  boundaryLabel: "plugin manifest",
+});
+
+if (!result.ok) {
+  // reason is "open", "parse", or "invalid"
+  throw new Error(result.reason);
+}
+
+console.log(result.value);
+```
+
+`readRootJsonSync()` parses any JSON value. `readRootJsonObjectSync()` only
+accepts objects. `readRootStructuredFileSync()` accepts a custom parser and
+validator so callers can layer JSON5, TOML, YAML, or domain-specific validation
+without making `fs-safe` depend on those formats.
 
 ## Writing
 

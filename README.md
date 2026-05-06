@@ -197,6 +197,11 @@ await tryReadJson("./config.json"); // returns null on missing or invalid
 await readJson("./manifest.json");  // throws on missing or invalid
 ```
 
+For one-off structured reads under a trusted root, `readRootJsonObjectSync()`
+performs the root-bounded open and JSON object validation in one step. Use
+`readRootStructuredFileSync()` when the parser lives outside fs-safe, such as
+JSON5-backed plugin manifests.
+
 ## Atomic writes
 
 `replaceFileAtomic()` writes a sibling temp file, optionally fsyncs it, and renames it over the destination. Mode preservation, rename retry / copy fallback on `EPERM`, parent-directory fsync, and a `beforeRename` hook for backup or observer flows are all opt-in.
@@ -259,6 +264,11 @@ const cached = await media.readJsonIfExists("state/photo.json");
 const opened = await media.open("inbound/photo.jpg");
 await media.pruneExpired({ ttlMs: 10 * 60 * 1000, recursive: true });
 ```
+
+The `store` subpath also includes durable JSON queue helpers for the common
+"one JSON file per work item" pattern: atomic entry writes, pending-entry loads,
+acknowledgement via `.delivered` markers, failed-entry moves, and stale temp
+cleanup. Retry, dedupe, and transport semantics stay with the caller.
 
 `tempWorkspace()` exposes `write()`, `writeText()`, `writeJson()`, `copyIn()`, and `read()` for
 single-file scratch workflows without hand-rolled path joins, plus a `store: FileStore` view of

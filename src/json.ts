@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import path from "node:path";
 import { readRegularFile, readRegularFileSync } from "./regular-file.js";
+import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { writeTextAtomic } from "./text-atomic.js";
 
 const JSON_FILE_MODE = 0o600;
@@ -132,6 +133,106 @@ export class JsonFileReadError extends Error {
     this.filePath = filePath;
     this.reason = reason;
   }
+}
+
+export type RootStructuredFileReadResult<T> =
+  | { ok: true; value: T; stat: fsSync.Stats; path: string; rootRealPath: string }
+  | { ok: false; reason: "open"; failure: RootFileOpenFailure }
+  | { ok: false; reason: "invalid" | "parse"; error: string };
+
+export type ReadRootStructuredFileSyncOptions<T> = {
+  rootDir: string;
+  rootRealPath?: string;
+  relativePath: string;
+  boundaryLabel: string;
+  rejectHardlinks?: boolean;
+  maxBytes?: number;
+  parse: (raw: string) => unknown;
+  validate?: (value: unknown) => value is T;
+  invalidMessage?: string | ((relativePath: string) => string);
+};
+
+export type ReadRootJsonSyncOptions = Omit<
+  ReadRootStructuredFileSyncOptions<unknown>,
+  "parse" | "validate" | "invalidMessage"
+>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function resolveInvalidMessage(
+  invalidMessage: ReadRootStructuredFileSyncOptions<unknown>["invalidMessage"],
+  relativePath: string,
+): string {
+  if (typeof invalidMessage === "function") {
+    return invalidMessage(relativePath);
+  }
+  return invalidMessage ?? `${relativePath} has an unexpected shape`;
+}
+
+export function readRootStructuredFileSync<T>(
+  options: ReadRootStructuredFileSyncOptions<T>,
+): RootStructuredFileReadResult<T> {
+  const absolutePath = path.resolve(options.rootDir, options.relativePath);
+  const opened = openRootFileSync({
+    absolutePath,
+    rootPath: options.rootDir,
+    ...(options.rootRealPath !== undefined ? { rootRealPath: options.rootRealPath } : {}),
+    boundaryLabel: options.boundaryLabel,
+    rejectHardlinks: options.rejectHardlinks,
+    maxBytes: options.maxBytes,
+    allowedType: "file",
+  });
+  if (!opened.ok) {
+    return { ok: false, reason: "open", failure: opened };
+  }
+
+  try {
+    const parsed = options.parse(fsSync.readFileSync(opened.fd, "utf8"));
+    if (options.validate && !options.validate(parsed)) {
+      return {
+        ok: false,
+        reason: "invalid",
+        error: resolveInvalidMessage(options.invalidMessage, options.relativePath),
+      };
+    }
+    return {
+      ok: true,
+      value: parsed as T,
+      stat: opened.stat,
+      path: opened.path,
+      rootRealPath: opened.rootRealPath,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "parse",
+      error: `failed to parse ${options.relativePath}: ${String(error)}`,
+    };
+  } finally {
+    fsSync.closeSync(opened.fd);
+  }
+}
+
+export function readRootJsonSync<T = unknown>(
+  options: ReadRootJsonSyncOptions,
+): RootStructuredFileReadResult<T> {
+  return readRootStructuredFileSync<T>({
+    ...options,
+    parse: (raw) => JSON.parse(raw),
+  });
+}
+
+export function readRootJsonObjectSync(
+  options: ReadRootJsonSyncOptions,
+): RootStructuredFileReadResult<Record<string, unknown>> {
+  return readRootStructuredFileSync<Record<string, unknown>>({
+    ...options,
+    parse: (raw) => JSON.parse(raw),
+    validate: isRecord,
+    invalidMessage: (relativePath) => `${relativePath} must contain a JSON object`,
+  });
 }
 
 export async function tryReadJson<T>(filePath: string): Promise<T | null> {
