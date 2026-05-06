@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { sameFileIdentity } from "./file-identity.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type MovePathToTrashOptions = {
   allowedRoots?: Iterable<string>;
@@ -37,8 +39,18 @@ function resolveAllowedTrashRoots(allowedRoots?: Iterable<string>): string[] {
   return [...new Set(roots)];
 }
 
-function assertAllowedTrashTarget(targetPath: string, allowedRoots?: Iterable<string>): void {
+type TrashTargetGuard = {
+  path: string;
+  realPath: string;
+  stat: fs.Stats;
+};
+
+function assertAllowedTrashTarget(
+  targetPath: string,
+  allowedRoots?: Iterable<string>,
+): TrashTargetGuard {
   let resolvedTargetPath = path.resolve(targetPath);
+  const stat = fs.lstatSync(resolvedTargetPath);
   try {
     resolvedTargetPath = path.resolve(fs.realpathSync.native(targetPath));
   } catch {
@@ -49,6 +61,18 @@ function assertAllowedTrashTarget(targetPath: string, allowedRoots?: Iterable<st
   );
   if (!isAllowed) {
     throw new Error(`Refusing to trash path outside allowed roots: ${targetPath}`);
+  }
+  return { path: path.resolve(targetPath), realPath: resolvedTargetPath, stat };
+}
+
+function assertTrashTargetGuard(guard: TrashTargetGuard): void {
+  const stat = fs.lstatSync(guard.path);
+  if (!sameFileIdentity(stat, guard.stat)) {
+    throw new Error(`Refusing to trash path after it changed: ${guard.path}`);
+  }
+  const realPath = path.resolve(fs.realpathSync.native(guard.path));
+  if (realPath !== guard.realPath) {
+    throw new Error(`Refusing to trash path after it changed: ${guard.path}`);
   }
 }
 
@@ -103,9 +127,11 @@ function reserveTrashDestination(trashDir: string, base: string, timestamp: numb
   return resolveContainedPath(container, base);
 }
 
-function movePathToDestination(targetPath: string, dest: string): boolean {
+function movePathToDestination(target: TrashTargetGuard, dest: string): boolean {
+  getFsSafeTestHooks()?.beforeTrashMove?.(target.path, dest);
+  assertTrashTargetGuard(target);
   try {
-    fs.renameSync(targetPath, dest);
+    fs.renameSync(target.path, dest);
     return true;
   } catch (error) {
     if (getFsErrorCode(error) !== "EXDEV") {
@@ -117,8 +143,10 @@ function movePathToDestination(targetPath: string, dest: string): boolean {
   }
 
   try {
-    fs.cpSync(targetPath, dest, { recursive: true, force: false, errorOnExist: true });
-    fs.rmSync(targetPath, { recursive: true, force: false });
+    assertTrashTargetGuard(target);
+    fs.cpSync(target.path, dest, { recursive: true, force: false, errorOnExist: true });
+    assertTrashTargetGuard(target);
+    fs.rmSync(target.path, { recursive: true, force: false });
     return true;
   } catch (error) {
     if (isTrashDestinationCollision(error)) {
@@ -134,12 +162,12 @@ export async function movePathToTrash(
 ): Promise<string> {
   // Avoid resolving external trash helpers through the service PATH during cleanup.
   const base = trashBaseName(targetPath);
-  assertAllowedTrashTarget(targetPath, options.allowedRoots);
+  const target = assertAllowedTrashTarget(targetPath, options.allowedRoots);
   const trashDir = resolveTrashDir();
   const timestamp = Date.now();
   for (let attempt = 0; attempt < TRASH_DESTINATION_RETRY_LIMIT; attempt += 1) {
     const dest = reserveTrashDestination(trashDir, base, timestamp);
-    if (movePathToDestination(targetPath, dest)) {
+    if (movePathToDestination(target, dest)) {
       return dest;
     }
   }
