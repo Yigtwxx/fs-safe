@@ -30,6 +30,9 @@ function sanitizeExtension(extension?: string): string {
 export function sanitizeTempFileName(fileName: string): string {
   const base = path.basename(fileName).replace(/[^a-zA-Z0-9._-]+/g, "-");
   const normalized = base.replace(/^-+|-+$/g, "");
+  if (normalized === "." || normalized === "..") {
+    return "download.bin";
+  }
   return normalized || "download.bin";
 }
 
