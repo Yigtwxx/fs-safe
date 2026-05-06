@@ -25,13 +25,21 @@ import { pathScope } from "../src/root-paths.js";
 import { replaceFileAtomic, replaceFileAtomicSync } from "../src/replace-file.js";
 import { movePathWithCopyFallback } from "../src/move-path.js";
 import { writeSiblingTempFile } from "../src/sibling-temp.js";
-import { acquireFileLock } from "../src/file-lock.js";
+import { acquireFileLock, createFileLockManager, withFileLock } from "../src/file-lock.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { jsonStore } from "../src/json-store.js";
 import {
   createIcaclsResetCommand,
+  formatIcaclsResetCommand,
+  formatPermissionDetail,
+  formatPermissionRemediation,
+  formatWindowsAclSummary,
+  inspectPathPermissions,
   inspectWindowsAcl,
+  modeBits,
   parseIcaclsOutput,
+  resolveWindowsUserPrincipal,
+  summarizeWindowsAcl,
 } from "../src/permissions.js";
 import { readSecureFile } from "../src/secure-file.js";
 import { walkDirectory, walkDirectorySync } from "../src/walk.js";
@@ -216,6 +224,81 @@ describe("secure file reads", () => {
     });
   });
 
+  it("covers symlink, directory, size, and trusted-dir secure read branches", async () => {
+    const target = path.join(root, "target.txt");
+    const link = path.join(root, "link.txt");
+    const trusted = path.join(root, "trusted");
+    const outsideTrusted = path.join(root, "outside-trusted");
+    await fs.writeFile(target, "secret", { mode: 0o600 });
+    await fs.symlink(target, link);
+    await fs.mkdir(trusted);
+    await fs.mkdir(outsideTrusted);
+
+    await expect(readSecureFile({ filePath: "relative.txt" })).rejects.toMatchObject({
+      code: "invalid-path",
+    });
+    await expect(readSecureFile({ filePath: root })).rejects.toMatchObject({ code: "not-file" });
+    await expect(
+      readSecureFile({
+        filePath: link,
+        trust: { allowSymlink: true, trustedDirs: [outsideTrusted] },
+        permissions: { allowInsecure: true },
+      }),
+    ).rejects.toMatchObject({ code: "outside-workspace" });
+
+    const result = await readSecureFile({
+      filePath: link,
+      trust: { allowSymlink: true, trustedDirs: [root] },
+      permissions: { allowInsecure: true },
+      io: { maxBytes: 100, timeoutMs: 1000 },
+    });
+    expect(result.buffer.toString("utf8")).toBe("secret");
+
+    await expect(
+      readSecureFile({
+        filePath: target,
+        permissions: { allowInsecure: true },
+        io: { maxBytes: 2 },
+      }),
+    ).rejects.toMatchObject({ code: "too-large" });
+  });
+
+  it("uses Windows ACL permission checks for secure reads when requested", async () => {
+    const filePath = path.join(root, "windows-secret.txt");
+    await fs.writeFile(filePath, "secret", { mode: 0o600 });
+    const exec = vi.fn().mockResolvedValue({
+      stdout: "*S-1-5-18:(F)\n",
+      stderr: "",
+    });
+
+    const result = await readSecureFile({
+      filePath,
+      inject: { platform: "win32", exec },
+      permissions: { allowReadableByOthers: true },
+    });
+    expect(result.buffer.toString("utf8")).toBe("secret");
+    expect(result.permissions?.source).toBe("windows-acl");
+
+    const unsafeExec = vi.fn().mockResolvedValue({
+      stdout: "Everyone:(R)\n",
+      stderr: "",
+    });
+    await expect(
+      readSecureFile({
+        filePath,
+        inject: { platform: "win32", exec: unsafeExec },
+      }),
+    ).rejects.toMatchObject({ code: "insecure-permissions" });
+
+    const failedExec = vi.fn().mockRejectedValue(new Error("icacls failed"));
+    await expect(
+      readSecureFile({
+        filePath,
+        inject: { platform: "win32", exec: failedExec },
+      }),
+    ).rejects.toMatchObject({ code: "permission-unverified" });
+  });
+
   it("parses icacls output into ACL entries", () => {
     const entries = parseIcaclsOutput(
       String.raw`C:\Users\me\secret.txt *S-1-5-18:(F)
@@ -262,6 +345,81 @@ describe("secure file reads", () => {
       userInfo: () => ({ username: "me" }),
     });
     expect(command?.command).toBe("C:\\Windows\\System32\\icacls.exe");
+  });
+
+  it("covers permission formatting and ACL classification helpers", async () => {
+    const missing = await inspectPathPermissions(path.join(root, "missing.txt"));
+    expect(missing.ok).toBe(false);
+
+    const target = path.join(root, "acl-target.txt");
+    const link = path.join(root, "acl-link.txt");
+    await fs.writeFile(target, "ok", { mode: 0o640 });
+    await fs.symlink(target, link);
+    const posix = await inspectPathPermissions(link, { platform: "linux" });
+    expect(posix.isSymlink).toBe(true);
+    expect(formatPermissionDetail(target, posix)).toContain("mode=");
+    expect(
+      formatPermissionRemediation({
+        targetPath: target,
+        perms: posix,
+        isDir: false,
+        posixMode: 0o600,
+      }),
+    ).toBe(`chmod 600 ${target}`);
+
+    const entries = parseIcaclsOutput(
+      [
+        `"C:\\Secrets\\token.txt" DOMAIN\\me:(F)`,
+        "Everyone:(R)",
+        "BUILTIN\\Users:(M)",
+        "*S-1-5-21-123:(R)",
+        "Denied:(DENY)(F)",
+        "Successfully processed 1 files; Failed processing 0 files",
+      ].join("\n"),
+      String.raw`C:\Secrets\token.txt`,
+    );
+    const summary = summarizeWindowsAcl(entries, {
+      USERDOMAIN: "DOMAIN",
+      USERNAME: "me",
+      USERSID: "S-1-5-21-999",
+    });
+    expect(summary.trusted.map((entry) => entry.principal)).toContain("DOMAIN\\me");
+    expect(summary.untrustedWorld.some((entry) => entry.principal === "Everyone")).toBe(true);
+    expect(summary.untrustedGroup.some((entry) => entry.principal === "*S-1-5-21-123")).toBe(true);
+    expect(formatWindowsAclSummary({ ok: true, entries, ...summary })).toContain("Everyone");
+    expect(formatWindowsAclSummary({ ok: false, entries: [], trusted: [], untrustedWorld: [], untrustedGroup: [] }))
+      .toBe("unknown");
+    expect(resolveWindowsUserPrincipal({ USERDOMAIN: "DOMAIN", USERNAME: "me" })).toBe(
+      "DOMAIN\\me",
+    );
+    expect(resolveWindowsUserPrincipal({}, () => ({ username: "fallback" }))).toBe("fallback");
+    expect(createIcaclsResetCommand(target, { isDir: true, userInfo: () => ({}) })).toBeNull();
+    expect(
+      formatIcaclsResetCommand(String.raw`C:\Secrets\token.txt`, {
+        isDir: true,
+        env: { SystemRoot: "D:\\Windows", USERNAME: "me" },
+      }),
+    ).toContain('"me:(OI)(CI)F"');
+    expect(modeBits(0o100777)).toBe(0o777);
+  });
+
+  it("resolves the current user SID when ACL output only contains an unknown SID", async () => {
+    const target = String.raw`C:\Secrets\token.txt`;
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: `${target} *S-1-5-21-42:(F)\nEveryone:(R)\n`,
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: '"USER","SID"\n"DOMAIN\\me","S-1-5-21-42"\n',
+        stderr: "",
+      });
+
+    const result = await inspectWindowsAcl(target, { exec, env: { SystemRoot: "C:\\Windows" } });
+    expect(result.ok).toBe(true);
+    expect(result.trusted.some((entry) => entry.principal === "*S-1-5-21-42")).toBe(true);
+    expect(exec).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -354,6 +512,46 @@ describe("file locks", () => {
     }
 
     await expect(fs.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("supports manager lifecycle and top-level withFileLock", async () => {
+    const targetPath = path.join(root, "managed-lock.txt");
+    const manager = createFileLockManager(`manager-${Date.now()}-${Math.random()}`);
+
+    const lock = await manager.acquire(targetPath, {
+      staleMs: 60_000,
+      allowReentrant: true,
+      metadata: { suite: "new-primitives" },
+      payload: () => ({ owner: "manager" }),
+    });
+    const reentrant = await manager.acquire(targetPath, {
+      staleMs: 60_000,
+      allowReentrant: true,
+      payload: () => ({ owner: "manager" }),
+    });
+    expect(manager.heldEntries()).toHaveLength(1);
+    expect(manager.heldEntries()[0]?.metadata).toEqual({ suite: "new-primitives" });
+    await reentrant.release();
+    await lock.release();
+    expect(manager.heldEntries()).toEqual([]);
+
+    await expect(
+      manager.withLock(
+        targetPath,
+        { staleMs: 60_000, payload: () => ({ owner: "manager" }) },
+        async () => "ok",
+      ),
+    ).resolves.toBe("ok");
+
+    await expect(
+      withFileLock(
+        path.join(root, "top-level-lock.txt"),
+        { staleMs: 60_000, payload: () => ({ owner: "top-level" }) },
+        async () => "locked",
+      ),
+    ).resolves.toBe("locked");
+    manager.reset();
+    await manager.drain();
   });
 });
 

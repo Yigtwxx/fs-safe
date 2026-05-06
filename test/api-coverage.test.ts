@@ -4,7 +4,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import JSZip from "jszip";
 import * as tar from "tar";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractArchive } from "../src/archive.js";
 import { loadZipArchiveWithPreflight, readZipCentralDirectoryEntryCount } from "../src/archive-zip-preflight.js";
 import { createAsyncLock } from "../src/async-lock.js";
@@ -35,6 +35,7 @@ import {
   trySafeFileURLToPath,
 } from "../src/local-file-access.js";
 import { resolveLocalPathFromRootsSync } from "../src/local-roots.js";
+import { movePathWithCopyFallback } from "../src/move-path.js";
 import {
   hasNodeErrorCode,
   isNotFoundPathError,
@@ -482,6 +483,59 @@ describe("ZIP preflight", () => {
     await expect(loadZipArchiveWithPreflight(buffer, { maxEntries: 3 })).resolves.toBeInstanceOf(
       JSZip,
     );
+  });
+
+  it("handles non-Buffer zip views and malformed central directory metadata", async () => {
+    const emptyZip = new JSZip();
+    const emptyBuffer = await emptyZip.generateAsync({ type: "nodebuffer" });
+    expect(readZipCentralDirectoryEntryCount(new Uint8Array(emptyBuffer))).toBe(0);
+
+    const zip = new JSZip();
+    zip.file("commented.txt", "ok");
+    zip.comment = "hello";
+    const commented = await zip.generateAsync({ type: "nodebuffer" });
+    expect(readZipCentralDirectoryEntryCount(commented)).toBe(1);
+
+    const malformed = Buffer.from(commented);
+    const eocdOffset = malformed.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    expect(eocdOffset).toBeGreaterThanOrEqual(0);
+    malformed.writeUInt32LE(0xffffffff, eocdOffset + 12);
+    malformed.writeUInt32LE(0xffffffff, eocdOffset + 16);
+    expect(readZipCentralDirectoryEntryCount(malformed)).toBe(1);
+  });
+});
+
+describe("move fallback helper", () => {
+  it("renames on the same filesystem and falls back to copy/remove on EXDEV", async () => {
+    const root = await tempRoot("fs-safe-move-extra-");
+    const from = path.join(root, "from.txt");
+    const renamed = path.join(root, "renamed.txt");
+    await fs.writeFile(from, "rename", "utf8");
+    await movePathWithCopyFallback({ from, to: renamed });
+    await expect(fs.readFile(renamed, "utf8")).resolves.toBe("rename");
+    await expect(fs.stat(from)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const crossDeviceFrom = path.join(root, "cross-device.txt");
+    const crossDeviceTo = path.join(root, "copied.txt");
+    await fs.writeFile(crossDeviceFrom, "copy", "utf8");
+    const originalRename = fs.rename.bind(fs);
+    const renameSpy = vi.spyOn(fs, "rename").mockImplementation(async (source, dest) => {
+      if (source === crossDeviceFrom && dest === crossDeviceTo) {
+        const error = new Error("cross device") as NodeJS.ErrnoException;
+        error.code = "EXDEV";
+        throw error;
+      }
+      return await originalRename(source, dest);
+    });
+
+    try {
+      await movePathWithCopyFallback({ from: crossDeviceFrom, to: crossDeviceTo });
+    } finally {
+      renameSpy.mockRestore();
+    }
+
+    await expect(fs.readFile(crossDeviceTo, "utf8")).resolves.toBe("copy");
+    await expect(fs.stat(crossDeviceFrom)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 
