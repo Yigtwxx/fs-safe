@@ -1,0 +1,100 @@
+---
+title: Advanced
+description: "Lower-level composition helpers under @openclaw/fs-safe/advanced. Less stable than focused public subpaths."
+---
+
+# `@openclaw/fs-safe/advanced`
+
+Composition primitives that OpenClaw uses to build higher-level APIs. They are public — semver applies — but treated as a less stable surface than the focused subpaths (`root`, `json`, `store`, `temp`, `archive`, `errors`). Reach for them only when you are building a primitive of your own and the focused subpaths do not cover it.
+
+```ts
+import {
+  pathScope,
+  withTimeout,
+  pathExists,
+  sanitizeUntrustedFileName,
+  // …
+} from "@openclaw/fs-safe/advanced";
+```
+
+## What lives here
+
+The exports group into a handful of themes. Each documented helper has its own page; everything else is reference-only and tracked here.
+
+### Path scopes and root paths
+
+| Export | Page | Notes |
+|---|---|---|
+| `pathScope`, `PathScope`, `PathScopeOptions`, `PathScopeResolveOptions` | [path-scope.md](path-scope.md) | Absolute-path boundary helper with `Result`-shaped returns. |
+| `ensureDirectoryWithinRoot` | – | Create a directory while enforcing the root boundary. |
+| `resolvePathWithinRoot`, `resolvePathsWithinRoot` | – | Resolve one or many relative paths against a trusted root. |
+| `resolveExistingPathsWithinRoot`, `resolveStrictExistingPathsWithinRoot` | – | Same, but require the targets to exist. |
+| `resolveWritablePathWithinRoot` | – | Resolve a write target inside a root. |
+| `resolveRootPath`, `resolveRootPathSync`, `ResolvedRootPath`, `ROOT_PATH_ALIAS_POLICIES`, `RootPathAliasPolicy` | – | Resolve a root directory honoring alias policy. |
+| `resolvePathViaExistingAncestorSync` | – | Walk to an existing ancestor for paths whose tail does not yet exist. |
+
+### Absolute path helpers
+
+| Export | Page | Notes |
+|---|---|---|
+| `assertAbsolutePathInput` | – | Validate a caller-supplied absolute path string. |
+| `canonicalPathFromExistingAncestor`, `findExistingAncestor` | – | Canonicalize without requiring the leaf to exist. |
+| `resolveAbsolutePathForRead`, `resolveAbsolutePathForWrite`, `ResolvedAbsolutePath`, `ResolvedWritableAbsolutePath`, `AbsolutePathSymlinkPolicy` | – | Validate an absolute path against a symlink policy before opening. |
+
+### Files and identity
+
+| Export | Page | Notes |
+|---|---|---|
+| `openRootFile`, `openRootFileSync`, `canUseRootFileOpen`, `matchRootFileOpenFailure`, related types | – | Low-level no-follow open routed through the root-file path. |
+| `appendRegularFile`, `appendRegularFileSync`, `readRegularFile`, `readRegularFileSync`, `statRegularFile`, `statRegularFileSync`, `resolveRegularFileAppendFlags`, `AppendRegularFileOptions`, `RegularFileStatResult` | [regular-file.md](regular-file.md) | Type-checked regular-file I/O. |
+| `sameFileIdentity`, `FileIdentityStat` | – | Compare two stats for same-inode equality. |
+| `pathExists`, `pathExistsSync` | – | Boolean existence check that does not throw on `ENOENT`. |
+| `assertNoSymlinkParents`, `assertNoSymlinkParentsSync`, `AssertNoSymlinkParentsOptions` | – | Reject paths whose ancestor chain contains symlinks. |
+| `assertNoHardlinkedFinalPath`, `assertNoPathAliasEscape`, `PATH_ALIAS_POLICIES`, `PathAliasPolicy` | – | Hardlink/alias defense building blocks. |
+
+### Local roots and file URLs
+
+| Export | Page | Notes |
+|---|---|---|
+| `resolveLocalPathFromRootsSync`, `readLocalFileFromRoots`, related options/result types | [local-roots.md](local-roots.md) | Resolve a path against a list of allowed local roots. |
+| `assertNoWindowsNetworkPath`, `basenameFromMediaSource`, `hasEncodedFileUrlSeparator`, `isWindowsDriveLetterPath`, `isWindowsNetworkPath`, `safeFileURLToPath`, `trySafeFileURLToPath` | – | Defensive helpers around Windows paths and `file://` URLs. |
+
+### Install paths and filenames
+
+| Export | Page | Notes |
+|---|---|---|
+| `safeDirName`, `safePathSegmentHashed`, `resolveSafeInstallDir`, `assertCanonicalPathWithinBase` | [install-path.md](install-path.md) | Build install-target directories from caller-supplied identifiers. |
+| `sanitizeUntrustedFileName` | [filename.md](filename.md) | Coerce an untrusted string into a safe filename. |
+| `resolveHomeRelativePath` | – | Expand `~`-prefixed paths. |
+
+### Temp targets and sibling-temp writes
+
+| Export | Page | Notes |
+|---|---|---|
+| `tempFile`, `withTempFile`, `TempFile`, `buildRandomTempFilePath`, `sanitizeTempFileName` | [temp.md](temp.md) | One-file temp primitive; prefer `tempWorkspace` from `@openclaw/fs-safe/temp` for the stable surface. |
+| `writeSiblingTempFile`, `writeViaSiblingTempPath`, `WriteSiblingTempFileOptions`, `WriteSiblingTempFileResult` | – | Sibling-temp write building block used by `replaceFileAtomic`. |
+
+### Permissions
+
+| Export | Page | Notes |
+|---|---|---|
+| `formatPosixMode` | [permissions.md](permissions.md) | Format a POSIX mode bitmask. |
+| `inspectWindowsAcl`, `summarizeWindowsAcl`, `formatWindowsAclSummary`, `parseIcaclsOutput`, `resolveWindowsUserPrincipal`, `createIcaclsResetCommand`, `formatIcaclsResetCommand`, `IcaclsResetCommandOptions`, `PermissionExec`, `WindowsAclEntry`, `WindowsAclSummary` | [permissions.md](permissions.md) | Windows ACL inspection and remediation. |
+
+### Concurrency, timing, trash
+
+| Export | Page | Notes |
+|---|---|---|
+| `createAsyncLock` | – | In-process async lock (separate from cross-process file locks). |
+| `withTimeout` | [timing.md](timing.md) | Wrap a promise with a timeout that raises `FsSafeError("timeout")`. |
+| `movePathToTrash`, `MovePathToTrashOptions` | – | Best-effort move to the platform trash. |
+
+## Stability
+
+Items in this surface can change shape between minor versions if a higher-level primitive needs them to. Pin to a minor version if you depend on a specific helper, or open an issue at the [GitHub repo](https://github.com/openclaw/fs-safe) and we will discuss promoting it to a focused subpath.
+
+## Related pages
+
+- [Root API](root.md) — built on top of these helpers.
+- [Errors](errors.md) — every helper here surfaces failures as `FsSafeError`.
+- [Security model](security-model.md) — what the underlying boundary checks promise.

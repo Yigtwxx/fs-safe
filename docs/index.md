@@ -49,9 +49,11 @@ await fs.remove("notes/archive/today.txt");
 | Surface | Use it for |
 |---|---|
 | [`root()`](root.md) | One boundary for read/write/move/remove inside a trusted directory. |
+| [`@openclaw/fs-safe/config`](config.md) | Process-global Python helper configuration (`configureFsSafePython`, `getFsSafePythonConfig`). |
 | [Python helper policy](python-helper.md) | Choose `auto`, `off`, or `require` for POSIX fd-relative hardening. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
 | [`writeJson` / `readJson*`](json.md) | JSON state files with strict and lenient read variants. |
+| [`@openclaw/fs-safe/store`](store.md) | Overview of `fileStore`, `fileStoreSync`, and `jsonStore`. |
 | [`jsonStore`](json-store.md) | Single JSON state file with explicit fallback, atomic writes, and optional locking. |
 | [`fileStore`](file-store.md) | Managed multi-file/blob store with modes, stream writes, copy-in, pruning, and private mode. |
 | [Private file-store mode](private-file-store.md) | `fileStore({ private: true })` for private JSON/text state at 0600 under 0700 dirs. |
@@ -64,6 +66,8 @@ await fs.remove("notes/archive/today.txt");
 | [`acquireFileLock`](sidecar-lock.md) | Cross-process file lock with retry and stale-lock recovery. |
 | [`FsSafeError`](errors.md) | Closed code union (with `policy` / `operational` category) you can branch on. |
 | [`pathScope()`](path-scope.md) | Lower-level absolute-path boundary helper; lives behind `@openclaw/fs-safe/advanced`. |
+| [`@openclaw/fs-safe/advanced`](advanced.md) | Directory of lower-level composition helpers (path scopes, regular-file I/O, install paths, sibling-temp writes, …). |
+| [`@openclaw/fs-safe/test-hooks`](test-hooks.md) | Test-only injection hooks for reproducing open/lstat races. |
 
 ## Status
 
