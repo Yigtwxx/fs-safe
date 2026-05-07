@@ -1,40 +1,54 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-05-07
 
-### Changes
+### Features
 
-- Add a `durable: false` option to async atomic text and JSON writes so callers can preserve replace semantics while skipping temp-file and parent-directory fsync.
+- Add `writeExternalFileWithinRoot()` for libraries that require an output path while preserving caller-provided destination names. (#7; thanks @jesse-merhi)
+- Add root JSON helpers and durable JSON queue helpers for file-backed work queues with pending, delivered, failed, and acknowledgement flows.
 - Add `ensureAbsoluteDirectory()` for creating trusted absolute directory paths one segment at a time while rejecting symlink and non-directory components. (#12; thanks @jesse-merhi)
+- Add a `durable: false` option to async atomic text and JSON writes so callers can preserve replace semantics while skipping temp-file and parent-directory fsync. (#9; thanks @sallyom)
+- Add process-wide sidecar lock defaults while keeping JSON store locking opt-in per resource.
 
-### Fixes
+### Security and Correctness
 
+- Harden Root fallback mutators, archive merges, private store reads/writes, durable queue ids, JSON fallback writes, sibling temp writes, temp filename sanitization, and trash moves against symlink-swap and path traversal edge cases.
+- Centralize safe path segment validation, directory identity guards, guarded mkdir, and guarded mutation wrappers so filesystem helpers reuse the same race-resistant checks.
+- Route archive ZIP staging, temp workspace sync reads, secret-file commits, and atomic move/replace fallbacks through shared pinned-read or guarded-write primitives without applying private-directory modes to public paths.
+- Close guarded fallback write handles without following path names if post-write directory verification fails, avoiding descriptor leaks and unsafe cleanup in symlink-swap races.
 - Harden temp filename prefixes, local-root reads, private store imports, durable queue reads, and regular-file byte caps against Deepsec-reported path traversal, symlink, and oversized-read races.
 - Harden sidecar lock cleanup and stale-lock handling so stale third-party locks fail closed instead of being deleted by path.
+
+### Compatibility
+
 - Make cross-device move fallbacks reject source changes during staged copies and clean up only the source entries copied into the staged destination, preserving concurrent source additions or replacements instead of recursively deleting them.
+- Preserve directory modes during cross-device directory moves.
+- Preserve empty-directory pruning and broken-symlink trash moves across guarded fallback paths.
+- Preserve sync file-store read policy errors for directory and hardlink validation failures.
+- Preserve existing temp workspace leaf filename behavior for names such as `.env` and filenames containing spaces.
+- Preserve public parent-directory modes when writing JSON, moving files across devices, and extracting archives.
+- Make `prepack` portable on Windows and add the missing pnpm workspace `packages` field so package preparation succeeds consistently.
 
 ### Tests
 
+- Added regression coverage for the filesystem race and traversal findings fixed in this release.
 - Added Deepsec regression coverage for unsafe temp tokens, dangling symlinks, default read caps, private `copyIn()` races, symlinked queue entries, oversized queue entries, and fresh sidecar lock preservation.
+- Added regression coverage for external-output traversal rejection, guarded cleanup, sidecar lock stale handling, move fallback cleanup, durable queue validation, sync read policy failures, and absolute-directory validation.
+- Added a static filesystem-boundary primitive check that blocks reintroducing known raw copy/read/guard patterns.
+
+### Docs and Tooling
+
+- Added docs for external output writers, durable JSON queue helpers, sidecar lock defaults, boundary guardrails, and absolute-directory creation.
+- Enable ClawSweeper dispatch for pull-request review automation.
 
 ## 0.1.2 - 2026-05-06
 
 ### Fixes
 
-- Add `writeExternalFileWithinRoot()` for libraries that require an output path while preserving caller-provided destination names. (#7; thanks @jesse-merhi)
 - Reject `fileStore()` and `fileStoreSync()` writes through symlinked parent directories so store commits cannot escape the configured root.
-- Harden Root fallback mutators, archive merges, private store reads/writes, durable queue ids, JSON fallback writes, sibling temp writes, temp filename sanitization, and trash moves against symlink-swap and path traversal edge cases.
-- Centralize safe path segment validation, directory identity guards, and guarded mutation wrappers so future filesystem helpers reuse the same race-resistant checks.
-- Route archive ZIP staging, temp workspace sync reads, secret-file commits, and atomic move/replace fallbacks through shared pinned-read or guarded-write primitives without applying private-directory modes to public paths.
-- Close guarded fallback write handles without following path names if post-write directory verification fails, avoiding descriptor leaks and unsafe cleanup in symlink-swap races.
-- Preserve empty-directory pruning and broken-symlink trash moves across guarded fallback paths.
-- Preserve sync file-store read policy errors for directory and hardlink validation failures.
-- Guard fallback mkdir component creation and skip archive destination cleanup after pre-commit races.
 
 ### Tests
 
-- Added regression coverage for the filesystem race and traversal findings fixed in this release.
-- Added a static filesystem-boundary primitive check that blocks reintroducing known raw copy/read/guard patterns.
 - Increased filesystem edge coverage around secure temp fallback handling, sibling-temp cleanup, local-root resolution, file locks, and file identity checks.
 - Prevented POSIX test runs from leaving Windows-style secure-temp fallback paths in the repository root.
 
