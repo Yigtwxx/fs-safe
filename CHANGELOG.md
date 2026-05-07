@@ -5,6 +5,7 @@
 ### Changes
 
 - Add a `durable: false` option to async atomic text and JSON writes so callers can preserve replace semantics while skipping temp-file and parent-directory fsync.
+- Add `ensureAbsoluteDirectory()` for creating trusted absolute directory paths one segment at a time while rejecting symlink and non-directory components. (#12; thanks @jesse-merhi)
 
 ### Fixes
 
