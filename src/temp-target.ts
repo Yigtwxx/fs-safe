@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
-import { sanitizeSafePathSegment } from "./safe-path-segment.js";
+import { assertSafePathSegment, sanitizeSafePathSegment } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 
@@ -49,7 +49,9 @@ export function buildRandomTempFilePath(params: {
     typeof nowCandidate === "number" && Number.isFinite(nowCandidate)
       ? Math.trunc(nowCandidate)
       : Date.now();
-  const uuid = params.uuid?.trim() || crypto.randomUUID();
+  const uuid = params.uuid
+    ? assertSafePathSegment(params.uuid.trim(), { label: "temp uuid" })
+    : crypto.randomUUID();
   return path.join(rootDir, `${prefix}-${now}-${uuid}${extension}`);
 }
 

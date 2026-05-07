@@ -1,5 +1,6 @@
 import type { Stats } from "node:fs";
 import fsSync from "node:fs";
+import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { sameFileIdentity } from "./file-identity.js";
@@ -42,6 +43,54 @@ function resolveRegularFileReadFlags(): number {
       ? fsSync.constants.O_NOFOLLOW
       : 0)
   );
+}
+
+async function readFileHandleBounded(params: {
+  handle: FileHandle;
+  filePath: string;
+  maxBytes?: number;
+}): Promise<Buffer> {
+  if (params.maxBytes === undefined) {
+    return await params.handle.readFile();
+  }
+  const chunks: Buffer[] = [];
+  const scratch = Buffer.allocUnsafe(Math.min(64 * 1024, Math.max(1, params.maxBytes + 1)));
+  let total = 0;
+  while (true) {
+    const { bytesRead } = await params.handle.read(scratch, 0, scratch.length, null);
+    if (bytesRead === 0) {
+      return Buffer.concat(chunks, total);
+    }
+    total += bytesRead;
+    if (total > params.maxBytes) {
+      throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
+    }
+    chunks.push(Buffer.from(scratch.subarray(0, bytesRead)));
+  }
+}
+
+function readFileDescriptorBounded(params: {
+  fd: number;
+  filePath: string;
+  maxBytes?: number;
+}): Buffer {
+  if (params.maxBytes === undefined) {
+    return fsSync.readFileSync(params.fd);
+  }
+  const chunks: Buffer[] = [];
+  const scratch = Buffer.allocUnsafe(Math.min(64 * 1024, Math.max(1, params.maxBytes + 1)));
+  let total = 0;
+  while (true) {
+    const bytesRead = fsSync.readSync(params.fd, scratch, 0, scratch.length, null);
+    if (bytesRead === 0) {
+      return Buffer.concat(chunks, total);
+    }
+    total += bytesRead;
+    if (total > params.maxBytes) {
+      throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
+    }
+    chunks.push(Buffer.from(scratch.subarray(0, bytesRead)));
+  }
 }
 
 export async function statRegularFile(filePath: string): Promise<RegularFileStatResult> {
@@ -100,10 +149,13 @@ export async function readRegularFile(params: {
     if (params.maxBytes !== undefined && stat.size > params.maxBytes) {
       throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
     }
-    const buffer = await handle.readFile();
-    if (params.maxBytes !== undefined && buffer.byteLength > params.maxBytes) {
-      throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
-    }
+    // With a byte cap, avoid readFile(): a raced file growth would allocate
+    // the oversized content before the post-read check could reject it.
+    const buffer = await readFileHandleBounded({
+      handle,
+      filePath: params.filePath,
+      maxBytes: params.maxBytes,
+    });
     return { buffer, stat };
   } finally {
     await handle.close();
@@ -143,10 +195,13 @@ function readOpenedRegularFileSync(params: {
   if (params.maxBytes !== undefined && stat.size > params.maxBytes) {
     throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
   }
-  const buffer = fsSync.readFileSync(params.fd);
-  if (params.maxBytes !== undefined && buffer.byteLength > params.maxBytes) {
-    throw new Error(`File exceeds ${params.maxBytes} bytes: ${params.filePath}`);
-  }
+  // Keep capped sync reads incremental for the same reason as async reads:
+  // readFileSync(fd) would buffer a raced oversized file before throwing.
+  const buffer = readFileDescriptorBounded({
+    fd: params.fd,
+    filePath: params.filePath,
+    maxBytes: params.maxBytes,
+  });
   return { buffer, stat };
 }
 

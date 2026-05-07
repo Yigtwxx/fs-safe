@@ -18,9 +18,11 @@ import {
   type SyncParentGuard,
   writeStreamToTempSource,
 } from "./file-store-boundary.js";
+import { readFileStoreCopySource } from "./file-store-source.js";
 import { createJsonStore, type JsonFileStoreOptions, type JsonStore } from "./json-document-store.js";
 import { isPathInside, resolveSafeRelativePath } from "./path.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
+import { DEFAULT_ROOT_MAX_BYTES } from "./root-impl.js";
 import { matchRootFileOpenFailure, openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { writeSecretFileAtomic } from "./secret-file.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
@@ -121,7 +123,6 @@ function assertStoreFilePath(rootDir: string, filePath: string): void {
     throw new FsSafeError("outside-workspace", "file path escapes store root");
   }
 }
-
 function assertMaxBytes(size: number, maxBytes?: number): void {
   if (maxBytes !== undefined && size > maxBytes) {
     throw new FsSafeError("too-large", `file exceeds maximum size of ${maxBytes} bytes`);
@@ -246,7 +247,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
     writeStream: async (relativePath, stream, writeOptions) => {
       const safeRelativePath = assertRelativePath(relativePath);
       const destination = resolveStorePath(rootDir, safeRelativePath);
-      const limit = writeOptions?.maxBytes ?? maxBytes;
+      const limit = writeOptions?.maxBytes ?? maxBytes ?? (privateMode ? DEFAULT_ROOT_MAX_BYTES : undefined);
       if (privateMode) {
         const chunks: Buffer[] = [];
         let total = 0;
@@ -289,12 +290,11 @@ export function fileStore(options: FileStoreOptions): FileStore {
     copyIn: async (relativePath, sourcePath, writeOptions) =>
       privateMode
         ? await (async () => {
-            const sourceStat = await fs.lstat(sourcePath);
-            if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
-              throw new FsSafeError("not-file", "source path is not a file");
-            }
-            assertMaxBytes(sourceStat.size, writeOptions?.maxBytes ?? maxBytes);
-            return await write(relativePath, await fs.readFile(sourcePath), writeOptions);
+            const buffer = await readFileStoreCopySource({
+              sourcePath,
+              maxBytes: writeOptions?.maxBytes ?? maxBytes ?? DEFAULT_ROOT_MAX_BYTES,
+            });
+            return await write(relativePath, buffer, writeOptions);
           })()
         : await copyIntoRoot({
             rootDir,

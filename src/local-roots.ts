@@ -84,8 +84,10 @@ function resolveRootRealSync(rootDir: string): string | null {
 function resolveCandidateCanonicalSync(
   filePath: string,
 ): { exists: true; canonicalPath: string; isFile: boolean } | { exists: false; canonicalPath: string } {
+  let sawExistingLeaf = false;
   try {
     const stat = fsSync.lstatSync(filePath);
+    sawExistingLeaf = true;
     return {
       exists: true,
       canonicalPath: fsSync.realpathSync(filePath),
@@ -95,6 +97,11 @@ function resolveCandidateCanonicalSync(
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
       throw err;
     }
+  }
+  if (sawExistingLeaf) {
+    // lstat succeeded but realpath failed: this is an existing dangling
+    // symlink, not a missing path callers may safely create through.
+    throw new FsSafeError("symlink", "local roots candidate is a dangling symlink");
   }
 
   let cursor = filePath;
@@ -115,6 +122,8 @@ function resolveCandidateCanonicalSync(
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        // Existing ancestors that cannot be canonicalized are symlink/error
+        // terrain; do not reconstruct a trusted missing path through them.
         throw err;
       }
     }
@@ -175,12 +184,17 @@ export async function readLocalFileFromRoots(
     }
 
     try {
-      const result = await scopedRoot.read(relativePath, {
+      const readOptions: Parameters<typeof scopedRoot.read>[1] = {
         hardlinks: options.hardlinks,
-        maxBytes: options.maxBytes,
         nonBlockingRead: options.nonBlockingRead,
         symlinks: options.symlinks,
-      });
+      };
+      // Leave maxBytes absent when the caller omits it so Root's own default
+      // cap remains in force instead of being overwritten by undefined.
+      if (options.maxBytes !== undefined) {
+        readOptions.maxBytes = options.maxBytes;
+      }
+      const result = await scopedRoot.read(relativePath, readOptions);
       return { ...result, root: scopedRoot.rootReal };
     } catch {
       continue;

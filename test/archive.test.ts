@@ -79,11 +79,13 @@ describe("archive extraction", () => {
 
     const zip = new JSZip();
     zip.file("package/hello.txt", "hi");
+    zip.file("package/my file.txt", "space");
     await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
 
     await extractArchive({ archivePath, destDir, timeoutMs: 15_000 });
     const packageDir = await resolvePackedRootDir(destDir);
     await expect(fs.readFile(path.join(packageDir, "hello.txt"), "utf8")).resolves.toBe("hi");
+    await expect(fs.readFile(path.join(packageDir, "my file.txt"), "utf8")).resolves.toBe("space");
   });
 
   it("does not truncate existing destination files when zip extraction fails", async () => {

@@ -57,3 +57,23 @@ export function sanitizeSafePathSegment(
   }
   return assertSafePathSegment(fallback, { ...options, label: "fallback path segment" });
 }
+
+export function assertSafePathPrefix(
+  prefix: string,
+  options: SafePathSegmentOptions = {},
+): string {
+  // Prefixes are often derived from safe filenames. Normalize harmless
+  // filename characters first, but still reject real path-control bytes.
+  if (prefix.includes("/") || prefix.includes("\\") || prefix.includes("\0")) {
+    return assertSafePathSegment(prefix, {
+      allowDotPrefix: true,
+      ...options,
+      label: options.label ?? "path prefix",
+    });
+  }
+  return assertSafePathSegment(prefix.replace(/[^A-Za-z0-9._-]+/g, "-"), {
+    allowDotPrefix: true,
+    ...options,
+    label: options.label ?? "path prefix",
+  });
+}

@@ -5,6 +5,7 @@ import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./director
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { sanitizeUntrustedFileName } from "./filename.js";
 import { root } from "./root.js";
+import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
@@ -28,7 +29,10 @@ export type WriteSiblingTempFileResult<T> = {
 };
 
 function buildTempPath(dir: string, tempPrefix?: string): string {
-  return path.join(dir, `${tempPrefix ?? ".fs-safe-stream"}.${process.pid}.${randomUUID()}.tmp`);
+  const safePrefix = assertSafePathPrefix(tempPrefix ?? ".fs-safe-stream", {
+    label: "sibling temp prefix",
+  });
+  return path.join(dir, `${safePrefix}.${process.pid}.${randomUUID()}.tmp`);
 }
 
 async function syncFileBestEffort(filePath: string): Promise<void> {
@@ -115,11 +119,14 @@ function buildSiblingTempPath(params: {
   tempPrefix: string;
 }): string {
   const id = crypto.randomUUID();
+  const safePrefix = assertSafePathPrefix(params.tempPrefix, {
+    label: "sibling temp prefix",
+  });
   const safeTail = sanitizeUntrustedFileName(
     path.basename(params.targetPath),
     params.fallbackFileName,
   );
-  return path.join(path.dirname(params.targetPath), `${params.tempPrefix}${id}-${safeTail}.part`);
+  return path.join(path.dirname(params.targetPath), `${safePrefix}${id}-${safeTail}.part`);
 }
 
 export async function writeViaSiblingTempPath(params: {

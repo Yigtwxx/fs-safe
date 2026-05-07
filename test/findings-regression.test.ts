@@ -9,7 +9,10 @@ import { configureFsSafePython, root as openRoot } from "../src/index.js";
 import { prepareArchiveDestinationDir, prepareArchiveOutputPath, mergeExtractedTreeIntoDestination } from "../src/archive-staging.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { writeJsonSync } from "../src/json.js";
-import { moveJsonDurableQueueEntryToFailed, resolveJsonDurableQueueEntryPaths } from "../src/json-durable-queue.js";
+import {
+  moveJsonDurableQueueEntryToFailed,
+  resolveJsonDurableQueueEntryPaths,
+} from "../src/json-durable-queue.js";
 import { movePathWithCopyFallback } from "../src/move-path.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import { replaceFileAtomic } from "../src/replace-file.js";

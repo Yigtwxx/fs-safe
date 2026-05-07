@@ -3,6 +3,7 @@ import syncFs from "node:fs";
 import type { Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 import { serializePathWrite } from "./write-queue.js";
 
@@ -249,7 +250,8 @@ function validateReplaceFilePath(filePath: string): void {
 
 function buildReplaceTempPath(filePath: string, tempPrefix?: string): string {
   const dir = path.dirname(filePath);
-  return path.join(dir, `${tempPrefix ?? ".fs-safe-replace"}.${process.pid}.${randomUUID()}.tmp`);
+  const safePrefix = assertSafePathPrefix(tempPrefix ?? ".fs-safe-replace", { label: "atomic replace temp prefix" });
+  return path.join(dir, `${safePrefix}.${process.pid}.${randomUUID()}.tmp`);
 }
 
 async function resolveMode(options: ReplaceFileAtomicOptions): Promise<number> {
