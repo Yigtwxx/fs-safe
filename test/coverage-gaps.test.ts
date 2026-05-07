@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   assertAbsolutePathInput,
   canonicalPathFromExistingAncestor,
+  ensureAbsoluteDirectory,
   findExistingAncestor,
   resolveAbsolutePathForRead,
   resolveAbsolutePathForWrite,
@@ -242,6 +243,43 @@ describe("absolute path helpers", () => {
       code: "symlink",
     });
   });
+
+  it("safely creates missing absolute directory parents from a real ancestor", async () => {
+    const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-"));
+    const targetDir = path.join(root, "nested", "deeper");
+
+    await expect(
+      ensureAbsoluteDirectory(targetDir, { scopeLabel: "output directory", mode: 0o700 }),
+    ).resolves.toEqual({ ok: true, path: targetDir });
+    expect((await fs.stat(targetDir)).isDirectory()).toBe(true);
+  });
+
+  it("rejects absolute directory creation when the existing target is not a directory", async () => {
+    const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-file-"));
+    const targetPath = path.join(root, "file.txt");
+    await fs.writeFile(targetPath, "file", "utf8");
+
+    await expect(
+      ensureAbsoluteDirectory(targetPath, { scopeLabel: "output directory" }),
+    ).resolves.toMatchObject({ ok: false });
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects absolute directory creation through symlinked existing segments",
+    async () => {
+      const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-link-"));
+      const outside = await fs.realpath(await tempRoot("fs-safe-absolute-dir-outside-"));
+      const linkDir = path.join(root, "link");
+      await fs.symlink(outside, linkDir);
+
+      await expect(
+        ensureAbsoluteDirectory(path.join(linkDir, "nested"), {
+          scopeLabel: "output directory",
+        }),
+      ).resolves.toMatchObject({ ok: false });
+      await expect(fs.readdir(outside)).resolves.toEqual([]);
+    },
+  );
 });
 
 describe("filesystem utility helpers", () => {

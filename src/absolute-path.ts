@@ -14,6 +14,22 @@ export type ResolvedWritableAbsolutePath = ResolvedAbsolutePath & {
   parentExists: boolean;
 };
 
+export type EnsureAbsoluteDirectoryOptions = {
+  scopeLabel?: string;
+  mode?: number;
+};
+
+export type EnsureAbsoluteDirectoryResult =
+  | { ok: true; path: string }
+  | { ok: false; error: string };
+
+function invalidDirectoryPath(scopeLabel: string): EnsureAbsoluteDirectoryResult {
+  return {
+    ok: false,
+    error: `Invalid path: must be a real directory within ${scopeLabel}`,
+  };
+}
+
 export function assertAbsolutePathInput(filePath: string): string {
   if (!filePath) {
     throw new FsSafeError("invalid-path", "path is required");
@@ -37,11 +53,17 @@ async function pathExists(filePath: string): Promise<boolean> {
 }
 
 export async function findExistingAncestor(filePath: string): Promise<string | null> {
+  return (await findExistingAncestorWithStat(filePath))?.path ?? null;
+}
+
+async function findExistingAncestorWithStat(filePath: string): Promise<{
+  path: string;
+  stat: Awaited<ReturnType<typeof fs.lstat>>;
+} | null> {
   let current = path.resolve(filePath);
   while (true) {
     try {
-      await fs.lstat(current);
-      return current;
+      return { path: current, stat: await fs.lstat(current) };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         throw err;
@@ -52,6 +74,65 @@ export async function findExistingAncestor(filePath: string): Promise<string | n
       return null;
     }
     current = parent;
+  }
+}
+
+export async function ensureAbsoluteDirectory(
+  dirPath: string,
+  options: EnsureAbsoluteDirectoryOptions = {},
+): Promise<EnsureAbsoluteDirectoryResult> {
+  const scopeLabel = options.scopeLabel ?? "directory";
+  let targetPath: string;
+  try {
+    targetPath = assertAbsolutePathInput(dirPath);
+  } catch (err) {
+    if (err instanceof FsSafeError) {
+      return { ok: false, error: err.message };
+    }
+    throw err;
+  }
+
+  try {
+    const ancestor = await findExistingAncestorWithStat(targetPath);
+    if (!ancestor) {
+      return invalidDirectoryPath(scopeLabel);
+    }
+
+    if (ancestor.stat.isSymbolicLink() || !ancestor.stat.isDirectory()) {
+      return invalidDirectoryPath(scopeLabel);
+    }
+
+    const ancestorDir = ancestor.path;
+    const relativeDir = path.relative(ancestorDir, targetPath);
+    let current = ancestorDir;
+    for (const segment of relativeDir.split(path.sep).filter(Boolean)) {
+      current = path.join(current, segment);
+      while (true) {
+        try {
+          const stat = await fs.lstat(current);
+          if (stat.isSymbolicLink() || !stat.isDirectory()) {
+            return invalidDirectoryPath(scopeLabel);
+          }
+          break;
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+            throw err;
+          }
+          try {
+            await fs.mkdir(current, { mode: options.mode });
+          } catch (mkdirErr) {
+            if ((mkdirErr as NodeJS.ErrnoException).code === "EEXIST") {
+              continue;
+            }
+            throw mkdirErr;
+          }
+        }
+      }
+    }
+
+    return { ok: true, path: targetPath };
+  } catch {
+    return invalidDirectoryPath(scopeLabel);
   }
 }
 
