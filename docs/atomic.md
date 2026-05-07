@@ -118,19 +118,24 @@ await writeTextAtomic("/srv/workspace/rendered.md", rendered, {
 
 Rename a path. If the rename fails with `EXDEV` (cross-device), fall back to
 copying into a staged sibling path, renaming that staged path into place, and
-then removing the source. The fallback avoids buffering regular files into
-memory and does not tighten the destination parent directory mode.
+then removing only the source entries that were copied. The fallback avoids
+buffering regular files into memory and does not tighten the destination parent
+directory mode.
 
 ```ts
 import { movePathWithCopyFallback } from "@openclaw/fs-safe/atomic";
 
 await movePathWithCopyFallback({
   from: "/srv/cache/blob.bin",
+  sourceHardlinks: "reject",
   to: "/srv/persistent/blob.bin",
 });
 ```
 
 Use it when source and destination might live on different filesystems (containers, tmpfs, separate volumes).
+If another writer adds or replaces source entries after the copy phase, the
+fallback preserves those entries and may throw after the destination has been
+committed.
 
 ## Difference from `root()`
 
