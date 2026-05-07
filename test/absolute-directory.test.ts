@@ -64,6 +64,39 @@ describe("ensureAbsoluteDirectory", () => {
   );
 
   it.runIf(process.platform !== "win32")(
+    "rejects symlinked parents even when the requested suffix already exists",
+    async () => {
+      const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-link-existing-"));
+      const outside = await fs.realpath(
+        await tempRoot("fs-safe-absolute-dir-link-existing-outside-"),
+      );
+      const existing = path.join(outside, "existing");
+      const linkDir = path.join(root, "link");
+      await fs.mkdir(existing);
+      await fs.symlink(outside, linkDir);
+
+      await expect(
+        ensureAbsoluteDirectory(path.join(linkDir, "existing", "new"), {
+          scopeLabel: "output directory",
+        }),
+      ).resolves.toMatchObject({ ok: false, code: "symlink" });
+      await expect(fs.stat(path.join(existing, "new"))).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("returns a policy failure when an intermediate component is a file", async () => {
+    const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-file-component-"));
+    const filePath = path.join(root, "file");
+    await fs.writeFile(filePath, "file", "utf8");
+
+    await expect(
+      ensureAbsoluteDirectory(path.join(filePath, "child"), {
+        scopeLabel: "output directory",
+      }),
+    ).resolves.toMatchObject({ ok: false, code: "not-file" });
+  });
+
+  it.runIf(process.platform !== "win32")(
     "rejects absolute directory creation when an existing parent is swapped before mkdir",
     async () => {
       const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-race-"));
@@ -123,7 +156,7 @@ describe("ensureAbsoluteDirectory", () => {
       try {
         await expect(
           ensureAbsoluteDirectory(targetDir, { scopeLabel: "output directory" }),
-        ).resolves.toMatchObject({ ok: false, code: "not-file" });
+        ).resolves.toMatchObject({ ok: false, code: "symlink" });
       } finally {
         realpathSpy.mockRestore();
       }
