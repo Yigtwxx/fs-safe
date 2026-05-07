@@ -6,7 +6,7 @@ import {
   type AsyncDirectoryGuard,
   createAsyncDirectoryGuard,
 } from "./directory-guard.js";
-import { FsSafeError } from "./errors.js";
+import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
 
 export type AbsolutePathSymlinkPolicy = "reject" | "follow";
 
@@ -27,13 +27,51 @@ export type EnsureAbsoluteDirectoryOptions = {
 
 export type EnsureAbsoluteDirectoryResult =
   | { ok: true; path: string }
-  | { ok: false; error: string };
+  | { ok: false; code: FsSafeErrorCode; error: FsSafeError };
 
-function invalidDirectoryPath(scopeLabel: string): EnsureAbsoluteDirectoryResult {
+type EnsureAbsoluteDirectoryFailure = Extract<EnsureAbsoluteDirectoryResult, { ok: false }>;
+type DirectoryGuardCheckResult = { ok: true } | EnsureAbsoluteDirectoryFailure;
+type DirectoryGuardCreateResult =
+  | { ok: true; guard: AsyncDirectoryGuard }
+  | EnsureAbsoluteDirectoryFailure;
+
+function ensureDirectoryFailure(
+  code: FsSafeErrorCode,
+  message: string,
+  cause?: unknown,
+): EnsureAbsoluteDirectoryFailure {
   return {
     ok: false,
-    error: `Invalid path: must be a real directory within ${scopeLabel}`,
+    code,
+    error: new FsSafeError(code, message, { cause }),
   };
+}
+
+async function assertGuardResult(
+  guard: AsyncDirectoryGuard,
+): Promise<DirectoryGuardCheckResult> {
+  try {
+    await assertAsyncDirectoryGuard(guard);
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof FsSafeError) {
+      return { ok: false, code: err.code, error: err };
+    }
+    throw err;
+  }
+}
+
+async function createDirectoryGuardResult(
+  dir: string,
+): Promise<DirectoryGuardCreateResult> {
+  try {
+    return { ok: true, guard: await createAsyncDirectoryGuard(dir) };
+  } catch (err) {
+    if (err instanceof FsSafeError) {
+      return { ok: false, code: err.code, error: err };
+    }
+    throw err;
+  }
 }
 
 export function assertAbsolutePathInput(filePath: string): string {
@@ -93,64 +131,90 @@ export async function ensureAbsoluteDirectory(
     targetPath = assertAbsolutePathInput(dirPath);
   } catch (err) {
     if (err instanceof FsSafeError) {
-      return { ok: false, error: err.message };
+      return { ok: false, code: err.code, error: err };
     }
     throw err;
   }
 
-  try {
-    const ancestor = await findExistingAncestorWithStat(targetPath);
-    if (!ancestor) {
-      return invalidDirectoryPath(scopeLabel);
-    }
+  const ancestor = await findExistingAncestorWithStat(targetPath);
+  if (!ancestor) {
+    return ensureDirectoryFailure(
+      "not-found",
+      `directory path must have a real existing ancestor within ${scopeLabel}`,
+    );
+  }
 
-    if (ancestor.stat.isSymbolicLink() || !ancestor.stat.isDirectory()) {
-      return invalidDirectoryPath(scopeLabel);
-    }
+  if (ancestor.stat.isSymbolicLink()) {
+    return ensureDirectoryFailure("symlink", `directory path traverses a symlink within ${scopeLabel}`);
+  }
+  if (!ancestor.stat.isDirectory()) {
+    return ensureDirectoryFailure("not-file", `path must be a real directory within ${scopeLabel}`);
+  }
 
-    const ancestorDir = ancestor.path;
-    const relativeDir = path.relative(ancestorDir, targetPath);
-    let current = ancestorDir;
-    let currentGuard: AsyncDirectoryGuard = {
-      dir: ancestorDir,
-      realPath: await fs.realpath(ancestorDir),
-      stat: ancestor.stat,
-    };
-    for (const segment of relativeDir.split(path.sep).filter(Boolean)) {
-      current = path.join(current, segment);
-      while (true) {
+  const ancestorDir = ancestor.path;
+  const relativeDir = path.relative(ancestorDir, targetPath);
+  let current = ancestorDir;
+  let currentGuard: AsyncDirectoryGuard = {
+    dir: ancestorDir,
+    realPath: await fs.realpath(ancestorDir),
+    stat: ancestor.stat,
+  };
+  for (const segment of relativeDir.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    while (true) {
+      const guardResult = await assertGuardResult(currentGuard);
+      if (!guardResult.ok) {
+        return guardResult;
+      }
+      try {
+        const stat = await fs.lstat(current);
+        if (stat.isSymbolicLink()) {
+          return ensureDirectoryFailure(
+            "symlink",
+            `directory path traverses a symlink within ${scopeLabel}`,
+          );
+        }
+        if (!stat.isDirectory()) {
+          return ensureDirectoryFailure(
+            "not-file",
+            `path must be a real directory within ${scopeLabel}`,
+          );
+        }
+        break;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw err;
+        }
+        const parentStillValid = await assertGuardResult(currentGuard);
+        if (!parentStillValid.ok) {
+          return parentStillValid;
+        }
         try {
-          await assertAsyncDirectoryGuard(currentGuard);
-          const stat = await fs.lstat(current);
-          if (stat.isSymbolicLink() || !stat.isDirectory()) {
-            return invalidDirectoryPath(scopeLabel);
+          await fs.mkdir(current, { mode: options.mode });
+        } catch (mkdirErr) {
+          if ((mkdirErr as NodeJS.ErrnoException).code === "EEXIST") {
+            continue;
           }
-          break;
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-            throw err;
-          }
-          try {
-            await assertAsyncDirectoryGuard(currentGuard);
-            await fs.mkdir(current, { mode: options.mode });
-          } catch (mkdirErr) {
-            if ((mkdirErr as NodeJS.ErrnoException).code === "EEXIST") {
-              continue;
-            }
-            throw mkdirErr;
-          }
+          throw mkdirErr;
         }
       }
-      const nextGuard = await createAsyncDirectoryGuard(current);
-      await assertAsyncDirectoryGuard(currentGuard);
-      currentGuard = nextGuard;
     }
-
-    await assertAsyncDirectoryGuard(currentGuard);
-    return { ok: true, path: targetPath };
-  } catch {
-    return invalidDirectoryPath(scopeLabel);
+    const nextGuard = await createDirectoryGuardResult(current);
+    if (!nextGuard.ok) {
+      return nextGuard;
+    }
+    const previousGuardStillValid = await assertGuardResult(currentGuard);
+    if (!previousGuardStillValid.ok) {
+      return previousGuardStillValid;
+    }
+    currentGuard = nextGuard.guard;
   }
+
+  const finalGuardResult = await assertGuardResult(currentGuard);
+  if (!finalGuardResult.ok) {
+    return finalGuardResult;
+  }
+  return { ok: true, path: targetPath };
 }
 
 export async function canonicalPathFromExistingAncestor(filePath: string): Promise<string> {

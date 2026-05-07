@@ -47,6 +47,10 @@ locations, such as a configured output root. It does not enforce a root boundary
 use `pathScope().ensureDir()` or `ensureDirectoryWithinRoot()` when the caller
 supplies a path that must stay under a root.
 
+The helper returns `{ ok: false, code, error }` for path-policy failures such as
+relative paths, symlinks, non-directories, or directory swaps during creation.
+Operational filesystem failures such as permissions or I/O errors are rethrown.
+
 ### Files and identity
 
 | Export | Page | Notes |

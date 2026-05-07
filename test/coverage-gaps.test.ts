@@ -259,7 +259,7 @@ describe("absolute path helpers", () => {
       ensureAbsoluteDirectory(path.join("..", "..", "..", "escape"), {
         scopeLabel: "output directory",
       }),
-    ).resolves.toEqual({ ok: false, error: "path must be absolute" });
+    ).resolves.toMatchObject({ ok: false, code: "invalid-path" });
   });
 
   it("rejects absolute directory creation when the existing target is not a directory", async () => {
@@ -269,7 +269,7 @@ describe("absolute path helpers", () => {
 
     await expect(
       ensureAbsoluteDirectory(targetPath, { scopeLabel: "output directory" }),
-    ).resolves.toMatchObject({ ok: false });
+    ).resolves.toMatchObject({ ok: false, code: "not-file" });
   });
 
   it.runIf(process.platform !== "win32")(
@@ -284,7 +284,7 @@ describe("absolute path helpers", () => {
         ensureAbsoluteDirectory(path.join(linkDir, "nested"), {
           scopeLabel: "output directory",
         }),
-      ).resolves.toMatchObject({ ok: false });
+      ).resolves.toMatchObject({ ok: false, code: "symlink" });
       await expect(fs.readdir(outside)).resolves.toEqual([]);
     },
   );
@@ -313,7 +313,7 @@ describe("absolute path helpers", () => {
       try {
         await expect(
           ensureAbsoluteDirectory(targetDir, { scopeLabel: "output directory" }),
-        ).resolves.toMatchObject({ ok: false });
+        ).resolves.toMatchObject({ ok: false, code: "symlink" });
       } finally {
         lstatSpy.mockRestore();
       }
@@ -349,12 +349,32 @@ describe("absolute path helpers", () => {
       try {
         await expect(
           ensureAbsoluteDirectory(targetDir, { scopeLabel: "output directory" }),
-        ).resolves.toMatchObject({ ok: false });
+        ).resolves.toMatchObject({ ok: false, code: "not-file" });
       } finally {
         realpathSpy.mockRestore();
       }
     },
   );
+
+  it("rethrows operational absolute directory creation failures", async () => {
+    const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-io-"));
+    const targetDir = path.join(root, "nested");
+    const realMkdir = fs.mkdir.bind(fs);
+    const mkdirSpy = vi.spyOn(fs, "mkdir").mockImplementation(async (...args) => {
+      if (String(args[0]) === targetDir) {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      }
+      return await realMkdir(...args);
+    });
+
+    try {
+      await expect(
+        ensureAbsoluteDirectory(targetDir, { scopeLabel: "output directory" }),
+      ).rejects.toMatchObject({ code: "EACCES" });
+    } finally {
+      mkdirSpy.mockRestore();
+    }
+  });
 });
 
 describe("filesystem utility helpers", () => {
