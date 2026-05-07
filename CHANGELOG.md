@@ -6,7 +6,7 @@
 
 - Harden temp filename prefixes, local-root reads, private store imports, durable queue reads, and regular-file byte caps against Deepsec-reported path traversal, symlink, and oversized-read races.
 - Harden sidecar lock cleanup and stale-lock handling so stale third-party locks fail closed instead of being deleted by path.
-- Make cross-device move fallbacks clean up only the source entries copied into the staged destination, preserving concurrent source additions or replacements instead of recursively deleting them.
+- Make cross-device move fallbacks reject source changes during staged copies and clean up only the source entries copied into the staged destination, preserving concurrent source additions or replacements instead of recursively deleting them.
 
 ### Tests
 

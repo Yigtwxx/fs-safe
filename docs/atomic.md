@@ -133,9 +133,10 @@ await movePathWithCopyFallback({
 ```
 
 Use it when source and destination might live on different filesystems (containers, tmpfs, separate volumes).
-If another writer adds or replaces source entries after the copy phase, the
-fallback preserves those entries and may throw after the destination has been
-committed.
+If another writer changes source entries during the fallback, the staged copy
+throws `ESTALE` before commit when possible. If the destination has already
+been committed, cleanup still preserves the changed source entries and throws
+`ESTALE`.
 
 ## Difference from `root()`
 
