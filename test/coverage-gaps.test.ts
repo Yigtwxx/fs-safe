@@ -254,6 +254,14 @@ describe("absolute path helpers", () => {
     expect((await fs.stat(targetDir)).isDirectory()).toBe(true);
   });
 
+  it("rejects relative absolute-directory inputs", async () => {
+    await expect(
+      ensureAbsoluteDirectory(path.join("..", "..", "..", "escape"), {
+        scopeLabel: "output directory",
+      }),
+    ).resolves.toEqual({ ok: false, error: "path must be absolute" });
+  });
+
   it("rejects absolute directory creation when the existing target is not a directory", async () => {
     const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-file-"));
     const targetPath = path.join(root, "file.txt");
