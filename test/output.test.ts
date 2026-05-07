@@ -42,6 +42,26 @@ describe("writeExternalFileWithinRoot", () => {
     await expect(fs.stat(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("preserves caller-provided destination filename spacing", async () => {
+    const rootDir = await tempRoot("fs-safe-output-spaces-");
+    const fileName = " report .txt ";
+
+    const result = await writeExternalFileWithinRoot({
+      rootDir,
+      path: fileName,
+      write: async (candidate) => {
+        await fs.writeFile(candidate, "spaced", "utf8");
+      },
+    });
+
+    const finalPath = path.join(rootDir, fileName);
+    expect(result.path).toBe(path.join(await fs.realpath(rootDir), fileName));
+    await expect(fs.readFile(finalPath, "utf8")).resolves.toBe("spaced");
+    await expect(fs.stat(path.join(rootDir, fileName.trim()))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("rejects empty target paths before invoking the external writer", async () => {
     const rootDir = await tempRoot("fs-safe-output-default-");
     let called = false;

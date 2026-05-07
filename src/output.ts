@@ -65,8 +65,8 @@ export async function writeExternalFileWithinRoot<T = void>(
   options: ExternalFileWriteOptions<T>,
 ): Promise<ExternalFileWriteResult<T>> {
   const targetRoot = await root(options.rootDir);
-  const requestedTargetPath = options.path.trim();
-  if (!requestedTargetPath) {
+  const requestedTargetPath = options.path;
+  if (requestedTargetPath.length === 0) {
     throw new FsSafeError("invalid-path", "target path is required");
   }
   const targetPath = toRootPathInput({
