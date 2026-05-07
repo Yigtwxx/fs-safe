@@ -46,6 +46,11 @@ The requested `path` must name a file. Missing destination parents are created
 by the helper because the operation is "produce this output file under the
 root"; callers should choose the filename before calling this API.
 
+Use `maxBytes` when the external producer can create arbitrarily large files.
+Use `mode` when the finalized file needs a specific POSIX mode. Both are
+enforced during the `Root.copyIn()` finalization step, after the external writer
+has produced the staged file and before the final target is committed.
+
 ## Why not pass the final path to the library?
 
 If a target parent can be swapped after validation, handing an external library
@@ -73,6 +78,11 @@ The chosen path may be absolute if it is already inside `downloadsRoot`, or
 relative to `downloadsRoot`. Traversal, symlink parent escapes, hardlinked final
 targets, over-large staged files, and missing temp files surface as
 `FsSafeError`s.
+
+This helper is not the right fit when the final filename depends on inspecting
+the produced bytes. In that case, write to a private temp workspace, sniff or
+validate the file, choose the final name, then copy or write into the root with
+the normal root APIs.
 
 ## See also
 

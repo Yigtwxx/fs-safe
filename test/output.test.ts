@@ -62,6 +62,57 @@ describe("writeExternalFileWithinRoot", () => {
     });
   });
 
+  it("accepts absolute target paths that resolve inside the root", async () => {
+    const rootDir = await tempRoot("fs-safe-output-absolute-");
+    const targetPath = path.join(rootDir, "nested", "report.txt");
+
+    const result = await writeExternalFileWithinRoot({
+      rootDir,
+      path: targetPath,
+      write: async (candidate) => {
+        await fs.writeFile(candidate, "absolute", "utf8");
+      },
+    });
+
+    expect(result.path).toBe(path.join(await fs.realpath(rootDir), "nested", "report.txt"));
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("absolute");
+  });
+
+  it("enforces byte limits while leaving the final target absent", async () => {
+    const rootDir = await tempRoot("fs-safe-output-max-bytes-");
+    const targetPath = path.join(rootDir, "too-large.bin");
+
+    await expect(
+      writeExternalFileWithinRoot({
+        rootDir,
+        path: "too-large.bin",
+        maxBytes: 3,
+        write: async (candidate) => {
+          await fs.writeFile(candidate, "larger", "utf8");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "too-large" });
+
+    await expect(fs.stat(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.runIf(process.platform !== "win32")("applies the requested final file mode", async () => {
+    const rootDir = await tempRoot("fs-safe-output-mode-");
+    const targetPath = path.join(rootDir, "private.txt");
+
+    await writeExternalFileWithinRoot({
+      rootDir,
+      path: "private.txt",
+      mode: 0o600,
+      write: async (candidate) => {
+        await fs.writeFile(candidate, "private", { encoding: "utf8", mode: 0o644 });
+      },
+    });
+
+    const stat = await fs.stat(targetPath);
+    expect(stat.mode & 0o777).toBe(0o600);
+  });
+
   it("rejects empty target paths before invoking the external writer", async () => {
     const rootDir = await tempRoot("fs-safe-output-default-");
     let called = false;

@@ -243,6 +243,10 @@ the callback returns, fs-safe finalizes the staged file with `Root.copyIn()`,
 creating missing parents by default and rejecting traversal, symlink parent
 escapes, hardlinked final targets, and size-limit violations.
 
+Use it when the final filename is known before the external writer runs. If the
+filename depends on sniffing the produced bytes, write to a private temp
+workspace first, then finalize through the normal root APIs after validation.
+
 ## Stores
 
 Use `fileStore().json()` for small state files that need explicit fallback
