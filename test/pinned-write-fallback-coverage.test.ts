@@ -38,64 +38,89 @@ afterEach(async () => {
 });
 
 describe("pinned write fallback coverage", () => {
-  it("writes buffers, creates only when missing, streams, and enforces limits", async () => {
-    const { runPinnedWriteHelper } = await import("../src/pinned-write.js");
-    const root = await tempRoot("fs-safe-pinned-write-fallback-");
+  it.runIf(process.platform !== "win32")(
+    "writes buffers, creates only when missing, streams, and enforces limits",
+    async () => {
+      const { runPinnedWriteHelper } = await import("../src/pinned-write.js");
+      const root = await tempRoot("fs-safe-pinned-write-fallback-");
 
-    const created = await runPinnedWriteHelper({
-      rootPath: root,
-      relativeParentPath: "nested",
-      basename: "created.txt",
-      mkdir: true,
-      mode: 0o600,
-      overwrite: false,
-      input: { kind: "buffer", data: "created", encoding: "utf8" },
-    });
-    expect(created.ino).toBeGreaterThan(0);
-    await expect(fs.readFile(path.join(root, "nested", "created.txt"), "utf8")).resolves.toBe(
-      "created",
-    );
-    await expect(
-      runPinnedWriteHelper({
+      const created = await runPinnedWriteHelper({
         rootPath: root,
         relativeParentPath: "nested",
         basename: "created.txt",
         mkdir: true,
         mode: 0o600,
         overwrite: false,
-        input: { kind: "buffer", data: "again" },
-      }),
-    ).rejects.toMatchObject({ code: "EEXIST" });
+        input: { kind: "buffer", data: "created", encoding: "utf8" },
+      });
+      expect(created.ino).toBeGreaterThan(0);
+      await expect(fs.readFile(path.join(root, "nested", "created.txt"), "utf8")).resolves.toBe(
+        "created",
+      );
+      await expect(
+        runPinnedWriteHelper({
+          rootPath: root,
+          relativeParentPath: "nested",
+          basename: "created.txt",
+          mkdir: true,
+          mode: 0o600,
+          overwrite: false,
+          input: { kind: "buffer", data: "again" },
+        }),
+      ).rejects.toMatchObject({ code: "EEXIST" });
 
-    const streamed = await runPinnedWriteHelper({
-      rootPath: root,
-      relativeParentPath: "nested",
-      basename: "streamed.txt",
-      mkdir: true,
-      mode: 0o600,
-      overwrite: true,
-      maxBytes: 16,
-      input: { kind: "stream", stream: Readable.from(["stream", "ed"]) },
-    });
-    expect(streamed.dev).toBeGreaterThan(0);
-    await expect(fs.readFile(path.join(root, "nested", "streamed.txt"), "utf8")).resolves.toBe(
-      "streamed",
-    );
-
-    await expect(
-      runPinnedWriteHelper({
+      const streamed = await runPinnedWriteHelper({
         rootPath: root,
         relativeParentPath: "nested",
-        basename: "too-large.txt",
+        basename: "streamed.txt",
         mkdir: true,
         mode: 0o600,
         overwrite: true,
-        maxBytes: 2,
-        input: { kind: "buffer", data: Buffer.from("large") },
-      }),
-    ).rejects.toMatchObject({ code: "too-large" });
-    await expect(fs.stat(path.join(root, "nested", "too-large.txt"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-  });
+        maxBytes: 16,
+        input: { kind: "stream", stream: Readable.from(["stream", "ed"]) },
+      });
+      expect(streamed.dev).toBeGreaterThan(0);
+      await expect(fs.readFile(path.join(root, "nested", "streamed.txt"), "utf8")).resolves.toBe(
+        "streamed",
+      );
+
+      await expect(
+        runPinnedWriteHelper({
+          rootPath: root,
+          relativeParentPath: "nested",
+          basename: "too-large.txt",
+          mkdir: true,
+          mode: 0o600,
+          overwrite: true,
+          maxBytes: 2,
+          input: { kind: "buffer", data: Buffer.from("large") },
+        }),
+      ).rejects.toMatchObject({ code: "too-large" });
+      await expect(fs.stat(path.join(root, "nested", "too-large.txt"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "rejects with unsupported-platform on windows",
+    async () => {
+      // fd-relative pinned filesystem operations are unavailable on windows
+      // (see src/pinned-python.ts), so the helper fails closed before any
+      // posix-only logic runs.
+      const { runPinnedWriteHelper } = await import("../src/pinned-write.js");
+      const root = await tempRoot("fs-safe-pinned-write-fallback-");
+      await expect(
+        runPinnedWriteHelper({
+          rootPath: root,
+          relativeParentPath: "nested",
+          basename: "created.txt",
+          mkdir: true,
+          mode: 0o600,
+          overwrite: false,
+          input: { kind: "buffer", data: "created", encoding: "utf8" },
+        }),
+      ).rejects.toMatchObject({ code: "unsupported-platform" });
+    },
+  );
 });

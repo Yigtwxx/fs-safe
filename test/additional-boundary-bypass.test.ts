@@ -73,7 +73,12 @@ describe("additional helper boundary bypass attempts", () => {
   it("sanitizes temp file names and keeps temp file helpers inside their created directory", async () => {
     const layout = await makeTempLayout("fs-safe-temp");
     expect(sanitizeTempFileName("../../evil.txt")).toBe("evil.txt");
-    expect(sanitizeTempFileName("..\\evil.txt")).toBe("..-evil.txt");
+    if (process.platform !== "win32") {
+      // On windows "\" is a reserved path separator and cannot appear in a
+      // filename, so this case only exercises the posix sanitizer where "\"
+      // is a literal name character that needs neutralizing.
+      expect(sanitizeTempFileName("..\\evil.txt")).toBe("..-evil.txt");
+    }
     expect(sanitizeTempFileName("\u0000../evil.txt")).toBe("evil.txt");
 
     const target = await tempFile({ rootDir: layout.base, prefix: "../../prefix", fileName: "../../evil.txt" });

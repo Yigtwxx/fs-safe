@@ -87,7 +87,11 @@ export function expandHomePrefix(
     homedir?: () => string;
   },
 ): string {
-  if (!input.startsWith("~")) {
+  // Normalize and split into path segments. path.normalize converts "/"
+  // to the native separator on Windows and leaves "\" as a literal name
+  // character on POSIX, so the segment check is platform-correct.
+  const segments = path.normalize(input).split(path.sep);
+  if (segments[0] !== "~") {
     return input;
   }
   const home =
@@ -96,7 +100,7 @@ export function expandHomePrefix(
   if (!home) {
     return input;
   }
-  return input.replace(/^~(?=$|[\\/])/, home);
+  return path.join(home, ...segments.slice(1));
 }
 
 export function resolveHomeRelativePath(
@@ -106,19 +110,19 @@ export function resolveHomeRelativePath(
     homedir?: () => string;
   },
 ): string {
-  const trimmed = input.trim();
-  if (!trimmed) {
-    return trimmed;
+  if (!input) {
+    return input;
   }
-  if (trimmed.startsWith("~")) {
-    const expanded = expandHomePrefix(trimmed, {
-      home: resolveRequiredHomeDir(opts?.env ?? process.env, opts?.homedir ?? os.homedir),
-      env: opts?.env,
-      homedir: opts?.homedir,
-    });
-    return path.resolve(expanded);
+  const segments = path.normalize(input).split(path.sep)
+  if (segments[0] !== "~") {
+    return path.resolve(input);
   }
-  return path.resolve(trimmed);
+  const expanded = expandHomePrefix(input, {
+    home: resolveRequiredHomeDir(opts?.env ?? process.env, opts?.homedir ?? os.homedir),
+    env: opts?.env,
+    homedir: opts?.homedir,
+  });
+  return path.resolve(expanded);
 }
 
 export function resolveUserPath(
@@ -145,17 +149,17 @@ export function resolveOsHomeRelativePath(
     homedir?: () => string;
   },
 ): string {
-  const trimmed = input.trim();
-  if (!trimmed) {
-    return trimmed;
+  if (!input) {
+    return input;
   }
-  if (trimmed.startsWith("~")) {
-    const expanded = expandHomePrefix(trimmed, {
-      home: resolveRequiredOsHomeDir(opts?.env ?? process.env, opts?.homedir ?? os.homedir),
-      env: opts?.env,
-      homedir: opts?.homedir,
-    });
-    return path.resolve(expanded);
+  const segments = path.normalize(input).split(path.sep);
+  if (segments[0] !== "~") {
+    return path.resolve(input);
   }
-  return path.resolve(trimmed);
+  const expanded = expandHomePrefix(input, {
+    home: resolveRequiredOsHomeDir(opts?.env ?? process.env, opts?.homedir ?? os.homedir),
+    env: opts?.env,
+    homedir: opts?.homedir,
+  });
+  return path.resolve(expanded);
 }

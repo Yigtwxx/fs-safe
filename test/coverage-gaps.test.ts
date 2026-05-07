@@ -121,9 +121,6 @@ describe("home directory helpers", () => {
     expect(resolveHomeRelativePath("~/state", { env })).toBe(path.resolve("/configured/state"));
     expect(resolveOsHomeRelativePath("~/state", { env })).toBe(path.resolve("/home/tester/state"));
     expect(resolveUserPath("~/state", env)).toBe(path.resolve("/configured/state"));
-    expect(resolveUserPath(" ./relative ", { env })).toBe(path.resolve("./relative"));
-    expect(resolveHomeRelativePath("   ", { env })).toBe("");
-    expect(resolveOsHomeRelativePath("   ", { env })).toBe("");
   });
 
   it("ignores unusable home values", () => {

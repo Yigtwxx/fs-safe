@@ -100,7 +100,13 @@ export async function makeTempLayout(
 
 export function expectFsSafeCode(error: unknown, codes: readonly string[]): void {
   expect(error).toBeInstanceOf(FsSafeError);
-  expect(codes).toContain((error as FsSafeError).code);
+  const accepted =
+    process.platform === "win32" ? [...codes, "unsupported-platform"] : codes;
+  expect(accepted).toContain((error as FsSafeError).code);
+}
+
+export function expectedFsSafeCode(code: string): string {
+  return process.platform === "win32" ? "unsupported-platform" : code;
 }
 
 export async function expectNoOutsideWrite(

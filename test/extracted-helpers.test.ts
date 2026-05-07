@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -43,8 +42,10 @@ afterEach(async () => {
 
 describe("local file access helpers", () => {
   it("accepts local file URLs and rejects remote hosts or encoded separators", () => {
-    const filePath = path.join(path.sep, "tmp", "demo.txt");
-    expect(safeFileURLToPath(new URL(`file://${filePath}`).href)).toBe(fileURLToPath(new URL(`file://${filePath}`)));
+    const [validUrl, expectedPath] = process.platform === "win32"
+      ? ["file:///C:/tmp/demo.txt", "C:\\tmp\\demo.txt"]
+      : ["file:///tmp/demo.txt", "/tmp/demo.txt"];
+    expect(safeFileURLToPath(validUrl)).toBe(expectedPath);
     expect(() => safeFileURLToPath("file://example.com/tmp/demo.txt")).toThrow(/remote hosts/);
     expect(() => safeFileURLToPath("file:///tmp/a%2Fb.txt")).toThrow(/encode path separators/);
   });
@@ -57,10 +58,13 @@ describe("local file access helpers", () => {
 
 describe("path helpers", () => {
   it("checks containment and formats modes", () => {
-    const root = path.join(path.sep, "tmp", "root");
+    // Use path.resolve so on Windows the root carries a drive letter, which
+    // is what resolveSafeBaseDir / isPathInside both produce internally.
+    const root = path.resolve(path.sep, "tmp", "root");
+    const otherRoot = path.resolve(path.sep, "tmp", "root-other");
     expect(resolveSafeBaseDir(root)).toBe(`${root}${path.sep}`);
     expect(isWithinDir(root, path.join(root, "file.txt"))).toBe(true);
-    expect(isPathInside(root, path.join(path.sep, "tmp", "root-other"))).toBe(false);
+    expect(isPathInside(root, otherRoot)).toBe(false);
     expect(formatPosixMode(0o100755)).toBe("755");
   });
 });

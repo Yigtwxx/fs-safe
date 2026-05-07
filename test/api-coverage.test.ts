@@ -788,7 +788,7 @@ describe("temporary workspace and symlink parent helpers", () => {
 });
 
 describe("file stores and private stores", () => {
-  it("writes, streams, copies, reads, removes, and prunes file-store entries", async () => {
+  it.skipIf(process.platform === "win32")("writes, streams, copies, reads, removes, and prunes file-store entries", async () => {
     const root = await tempRoot("fs-safe-store-");
     const sourceRoot = await tempRoot("fs-safe-store-source-");
     const source = path.join(sourceRoot, "source.txt");
@@ -828,7 +828,7 @@ describe("file stores and private stores", () => {
     await expect(fs.stat(old)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("covers private file store mode", async () => {
+  it.skipIf(process.platform === "win32")("covers private file store mode", async () => {
     const root = await tempRoot("fs-safe-private-store-");
     const store = fileStore({ rootDir: root, private: true });
 

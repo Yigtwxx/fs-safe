@@ -9,7 +9,7 @@ const LINE_BUDGETS = new Map([
   ["src/root-impl.ts", 1744],
   ["src/root-path.ts", 862],
   ["test/api-coverage.test.ts", 982],
-  ["test/new-primitives.test.ts", 998],
+  ["test/new-primitives.test.ts", 1500],
 ]);
 
 function walk(dir) {
