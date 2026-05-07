@@ -81,6 +81,24 @@ describe("writeExternalFileWithinRoot", () => {
     await expect(fs.stat(outsidePath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("rejects traversal targets before invoking the external writer", async () => {
+    const rootDir = await tempRoot("fs-safe-output-traversal-root-");
+    let called = false;
+
+    await expect(
+      writeExternalFileWithinRoot({
+        rootDir,
+        path: "../../../pwned.txt",
+        write: async (candidate) => {
+          called = true;
+          await fs.writeFile(candidate, "pwned", "utf8");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "outside-workspace" });
+
+    expect(called).toBe(false);
+  });
+
   it("rejects root directory targets before invoking the external writer", async () => {
     const rootDir = await tempRoot("fs-safe-output-root-target-");
     let called = false;
