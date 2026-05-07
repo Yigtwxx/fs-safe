@@ -1,5 +1,11 @@
+import type { Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  assertAsyncDirectoryGuard,
+  type AsyncDirectoryGuard,
+  createAsyncDirectoryGuard,
+} from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 
 export type AbsolutePathSymlinkPolicy = "reject" | "follow";
@@ -58,7 +64,7 @@ export async function findExistingAncestor(filePath: string): Promise<string | n
 
 async function findExistingAncestorWithStat(filePath: string): Promise<{
   path: string;
-  stat: Awaited<ReturnType<typeof fs.lstat>>;
+  stat: Stats;
 } | null> {
   let current = path.resolve(filePath);
   while (true) {
@@ -105,10 +111,16 @@ export async function ensureAbsoluteDirectory(
     const ancestorDir = ancestor.path;
     const relativeDir = path.relative(ancestorDir, targetPath);
     let current = ancestorDir;
+    let currentGuard: AsyncDirectoryGuard = {
+      dir: ancestorDir,
+      realPath: await fs.realpath(ancestorDir),
+      stat: ancestor.stat,
+    };
     for (const segment of relativeDir.split(path.sep).filter(Boolean)) {
       current = path.join(current, segment);
       while (true) {
         try {
+          await assertAsyncDirectoryGuard(currentGuard);
           const stat = await fs.lstat(current);
           if (stat.isSymbolicLink() || !stat.isDirectory()) {
             return invalidDirectoryPath(scopeLabel);
@@ -119,6 +131,7 @@ export async function ensureAbsoluteDirectory(
             throw err;
           }
           try {
+            await assertAsyncDirectoryGuard(currentGuard);
             await fs.mkdir(current, { mode: options.mode });
           } catch (mkdirErr) {
             if ((mkdirErr as NodeJS.ErrnoException).code === "EEXIST") {
@@ -128,8 +141,12 @@ export async function ensureAbsoluteDirectory(
           }
         }
       }
+      const nextGuard = await createAsyncDirectoryGuard(current);
+      await assertAsyncDirectoryGuard(currentGuard);
+      currentGuard = nextGuard;
     }
 
+    await assertAsyncDirectoryGuard(currentGuard);
     return { ok: true, path: targetPath };
   } catch {
     return invalidDirectoryPath(scopeLabel);

@@ -2,7 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assertAbsolutePathInput,
   canonicalPathFromExistingAncestor,
@@ -286,6 +286,73 @@ describe("absolute path helpers", () => {
         }),
       ).resolves.toMatchObject({ ok: false });
       await expect(fs.readdir(outside)).resolves.toEqual([]);
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "rejects absolute directory creation when an existing parent is swapped before mkdir",
+    async () => {
+      const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-race-"));
+      const outside = await fs.realpath(await tempRoot("fs-safe-absolute-dir-race-outside-"));
+      const parentDir = path.join(root, "parent");
+      const targetDir = path.join(parentDir, "child");
+      await fs.mkdir(parentDir);
+
+      const realLstat = fs.lstat.bind(fs);
+      let swapped = false;
+      const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+        const candidate = String(args[0]);
+        if (!swapped && candidate === targetDir) {
+          swapped = true;
+          await fs.rename(parentDir, `${parentDir}-real`);
+          await fs.symlink(outside, parentDir, "dir");
+        }
+        return await realLstat(...args);
+      });
+
+      try {
+        await expect(
+          ensureAbsoluteDirectory(targetDir, { scopeLabel: "output directory" }),
+        ).resolves.toMatchObject({ ok: false });
+      } finally {
+        lstatSpy.mockRestore();
+      }
+
+      await expect(fs.stat(path.join(outside, "child"))).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "rejects absolute directory creation when the existing target changes before return",
+    async () => {
+      const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-target-race-"));
+      const outside = await fs.realpath(
+        await tempRoot("fs-safe-absolute-dir-target-race-outside-"),
+      );
+      const targetDir = path.join(root, "target");
+      await fs.mkdir(targetDir);
+
+      const realRealpath = fs.realpath.bind(fs);
+      let swapped = false;
+      const realpathSpy = vi.spyOn(fs, "realpath").mockImplementation(async (...args) => {
+        const candidate = String(args[0]);
+        if (!swapped && candidate === targetDir) {
+          swapped = true;
+          const resolved = await realRealpath(...args);
+          await fs.rename(targetDir, `${targetDir}-real`);
+          await fs.symlink(outside, targetDir, "dir");
+          return resolved;
+        }
+        return await realRealpath(...args);
+      });
+
+      try {
+        await expect(
+          ensureAbsoluteDirectory(targetDir, { scopeLabel: "output directory" }),
+        ).resolves.toMatchObject({ ok: false });
+      } finally {
+        realpathSpy.mockRestore();
+      }
     },
   );
 });
