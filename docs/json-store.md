@@ -53,6 +53,7 @@ type JsonStoreLockOptions = {
   staleMs?: number;     // default 30_000
   timeoutMs?: number;   // default 30_000
   retry?: FileLockRetryOptions;
+  staleRecovery?: "fail-closed";
   managerKey?: string;  // default `fs-safe.json-store:<filePath>`
 };
 
@@ -130,12 +131,15 @@ const counter = jsonStore<{ count: number }>({
   lock: {
     staleMs: 60_000,
     timeoutMs: 10_000,
+    staleRecovery: "fail-closed",
     retry: { retries: 30, minTimeout: 100, maxTimeout: 5_000, randomize: true },
   },
 });
 ```
 
 When `lock` is falsy, `read` / `write` / `update` are unlocked. The `update` shape is still useful — it gives you a single function for the read-modify-write pattern — but it offers no concurrency guarantees if other processes also write to the file.
+
+Process-wide lock defaults from `configureFsSafeLocks()` apply only after locking is explicitly enabled. They do not make JSON stores lock by default.
 
 The default `managerKey` namespaces the in-process `FileLockManager` per absolute file path, so two `jsonStore` calls on the same file share lock state automatically.
 

@@ -37,3 +37,8 @@ export {
   type ExternalFileWriteOptions,
   type ExternalFileWriteResult,
 } from "./output.js";
+export {
+  configureFsSafeLocks,
+  getFsSafeLockConfig,
+  type FsSafeLockConfig,
+} from "./lock-config.js";

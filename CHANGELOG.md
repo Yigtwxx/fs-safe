@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- Harden temp filename prefixes, local-root reads, private store imports, durable queue reads, and regular-file byte caps against Deepsec-reported path traversal, symlink, and oversized-read races.
+- Harden sidecar lock cleanup and stale-lock handling so stale third-party locks fail closed instead of being deleted by path.
+
+### Tests
+
+- Added Deepsec regression coverage for unsafe temp tokens, dangling symlinks, default read caps, private `copyIn()` races, symlinked queue entries, oversized queue entries, and fresh sidecar lock preservation.
+
 ## 0.1.2 - 2026-05-06
 
 ### Fixes

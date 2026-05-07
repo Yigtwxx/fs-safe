@@ -329,20 +329,24 @@ describe("sidecar lock manager", () => {
     manager.reset();
   });
 
-  it("times out and reclaims stale locks", async () => {
+  it("times out on stale locks without deleting them by path", async () => {
     const root = await tempRoot("fs-safe-sidecar-timeout-");
     const targetPath = path.join(root, "state.json");
     const lockPath = `${targetPath}.lock`;
     const manager = createSidecarLockManager(`coverage-timeout-${Date.now()}-${Math.random()}`);
     await fs.writeFile(lockPath, "{\"createdAt\":\"2000-01-01T00:00:00.000Z\"}\n", "utf8");
 
-    const reclaimed = await manager.acquire({
-      targetPath,
-      lockPath,
-      staleMs: 1,
-      payload: () => ({ owner: "coverage" }),
-    });
-    await reclaimed.release();
+    await expect(
+      manager.acquire({
+        targetPath,
+        lockPath,
+        staleMs: 1,
+        timeoutMs: 1,
+        retry: { retries: 0, minTimeout: 1, maxTimeout: 1 },
+        payload: () => ({ owner: "coverage" }),
+      }),
+    ).rejects.toMatchObject({ code: "file_lock_stale" });
+    await expect(fs.readFile(lockPath, "utf8")).resolves.toContain("2000");
 
     await fs.writeFile(lockPath, "{\"createdAt\":\"2999-01-01T00:00:00.000Z\"}\n", "utf8");
     await expect(

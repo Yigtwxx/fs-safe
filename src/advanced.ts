@@ -35,6 +35,11 @@ export {
 } from "./local-file-access.js";
 export { formatPosixMode } from "./mode.js";
 export {
+  configureFsSafeLocks,
+  getFsSafeLockConfig,
+  type FsSafeLockConfig,
+} from "./lock-config.js";
+export {
   assertNoHardlinkedFinalPath,
   assertNoPathAliasEscape,
   PATH_ALIAS_POLICIES,

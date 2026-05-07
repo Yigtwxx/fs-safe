@@ -1,7 +1,9 @@
 import fsSync from "node:fs";
+import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { sameFileIdentity } from "./file-identity.js";
 
 export type SidecarLockRetryOptions = {
   retries?: number;
@@ -11,12 +13,15 @@ export type SidecarLockRetryOptions = {
   randomize?: boolean;
 };
 
+export type SidecarLockStaleRecovery = "fail-closed";
+
 export type SidecarLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   targetPath: string;
   lockPath?: string;
   staleMs: number;
   timeoutMs?: number;
   retry?: SidecarLockRetryOptions;
+  staleRecovery?: SidecarLockStaleRecovery;
   allowReentrant?: boolean;
   payload: () => TPayload | Promise<TPayload>;
   shouldReclaim?: (params: {
@@ -56,6 +61,7 @@ type HeldLock = {
   count: number;
   handle: FileHandle;
   lockPath: string;
+  snapshot: LockSnapshot;
   acquiredAt: number;
   metadata: Record<string, unknown>;
   releasePromise?: Promise<void>;
@@ -88,14 +94,75 @@ function resolveManagerState(key: string): SidecarLockManagerState {
   return state;
 }
 
-async function readJsonPayload(lockPath: string): Promise<Record<string, unknown> | null> {
+type LockSnapshot = {
+  raw?: string;
+  payload: Record<string, unknown> | null;
+  stat?: Stats;
+};
+
+async function readLockSnapshot(lockPath: string): Promise<LockSnapshot | null> {
   try {
-    const parsed = JSON.parse(await fs.readFile(lockPath, "utf8")) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
+    const stat = await fs.lstat(lockPath);
+    const raw = await fs.readFile(lockPath, "utf8");
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      const payload =
+        parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : null;
+      return { raw, payload, stat };
+    } catch {
+      return { raw, payload: null, stat };
+    }
   } catch {
     return null;
+  }
+}
+
+function snapshotMatches(current: LockSnapshot, observed: LockSnapshot): boolean {
+  if (observed.stat && current.stat && !sameFileIdentity(observed.stat, current.stat)) {
+    return false;
+  }
+  if (observed.raw !== undefined) {
+    return current.raw === observed.raw;
+  }
+  return observed.stat !== undefined && current.stat !== undefined;
+}
+
+async function removeLockIfUnchanged(
+  lockPath: string,
+  observed: LockSnapshot | null,
+): Promise<boolean> {
+  const current = await readLockSnapshot(lockPath);
+  if (!current || !observed) {
+    return false;
+  }
+  if (!snapshotMatches(current, observed)) {
+    // The lock changed after we decided it was stale. Leave the fresh holder's
+    // file alone; deleting by path here would break mutual exclusion.
+    return false;
+  }
+  await fs.rm(lockPath, { force: true }).catch(() => undefined);
+  return true;
+}
+
+async function lockSnapshotStillPresent(
+  lockPath: string,
+  observed: LockSnapshot | null,
+): Promise<boolean> {
+  const current = await readLockSnapshot(lockPath);
+  return !!current && !!observed && snapshotMatches(current, observed);
+}
+
+function snapshotMatchesSync(lockPath: string, observed: LockSnapshot): boolean {
+  try {
+    const stat = fsSync.lstatSync(lockPath);
+    if (observed.stat && !sameFileIdentity(observed.stat, stat)) {
+      return false;
+    }
+    return observed.raw === undefined || fsSync.readFileSync(lockPath, "utf8") === observed.raw;
+  } catch {
+    return false;
   }
 }
 
@@ -142,7 +209,9 @@ function releaseAllLocksSync(state: SidecarLockManagerState): void {
   for (const [normalizedTargetPath, held] of state.held) {
     void held.handle.close().catch(() => undefined);
     try {
-      fsSync.rmSync(held.lockPath, { force: true });
+      if (snapshotMatchesSync(held.lockPath, held.snapshot)) {
+        fsSync.rmSync(held.lockPath, { force: true });
+      }
     } catch {
       // Best-effort process-exit cleanup.
     }
@@ -175,7 +244,7 @@ async function releaseHeldLock(
   state.held.delete(normalizedTargetPath);
   held.releasePromise = (async () => {
     await held.handle.close().catch(() => undefined);
-    await fs.rm(held.lockPath, { force: true }).catch(() => undefined);
+    await removeLockIfUnchanged(held.lockPath, held.snapshot);
   })();
   try {
     await held.releasePromise;
@@ -222,15 +291,19 @@ export function createSidecarLockManager(key: string) {
       let handle: FileHandle | null = null;
       try {
         handle = await fs.open(lockPath, "wx");
+        const payload = await options.payload();
+        const raw = `${JSON.stringify(payload, null, 2)}\n`;
+        await handle.writeFile(raw, "utf8");
+        const snapshot = { raw, payload, stat: await handle.stat() };
         const createdHeld: HeldLock = {
           count: 1,
           handle,
           lockPath,
+          snapshot,
           acquiredAt: Date.now(),
           metadata: options.metadata ?? {},
         };
         state.held.set(normalizedTargetPath, createdHeld);
-        await handle.writeFile(`${JSON.stringify(await options.payload(), null, 2)}\n`, "utf8");
         const release = () =>
           releaseHeldLock(state, normalizedTargetPath, createdHeld).then(() => undefined);
         return {
@@ -241,31 +314,57 @@ export function createSidecarLockManager(key: string) {
         };
       } catch (err) {
         if (handle) {
+          const failedSnapshot: LockSnapshot = { payload: null };
+          try {
+            failedSnapshot.stat = await handle.stat();
+          } catch {
+            // Best-effort cleanup of a failed exclusive create.
+          }
           const current = state.held.get(normalizedTargetPath);
           if (current?.handle === handle) {
             state.held.delete(normalizedTargetPath);
           }
-          await handle.close().catch(() => undefined);
+          // If payload serialization/write fails, the file may be empty or
+          // partial JSON, so remove while our exclusive handle is still open.
           await fs.rm(lockPath, { force: true }).catch(() => undefined);
+          await handle.close().catch(() => undefined);
+          // Windows can refuse removing an open file; retry after close but
+          // only if the path still points at the file identity we created.
+          await removeLockIfUnchanged(lockPath, failedSnapshot);
         }
         if ((err as { code?: unknown }).code !== "EEXIST") {
           throw err;
         }
         const nowMs = Date.now();
-        const payload = await readJsonPayload(lockPath);
+        const snapshot = await readLockSnapshot(lockPath);
+        if (!snapshot) {
+          continue;
+        }
         const shouldReclaim = options.shouldReclaim ?? defaultShouldReclaim;
         if (
           await shouldReclaim({
             lockPath,
             normalizedTargetPath,
-            payload,
+            payload: snapshot?.payload ?? null,
             staleMs: options.staleMs,
             nowMs,
             heldByThisProcess: state.held.has(normalizedTargetPath),
           })
         ) {
-          await fs.rm(lockPath, { force: true }).catch(() => undefined);
-          continue;
+          if (!(await lockSnapshotStillPresent(lockPath, snapshot))) {
+            continue;
+          }
+          // Node exposes only path-based unlink/rename here. A stale-lock
+          // reclaimer cannot bind the delete to the file it inspected, so a
+          // concurrent release+fresh-acquire could otherwise lose its lock.
+          // Fail closed and let callers choose a higher-level recovery path.
+          if ((options.staleRecovery ?? "fail-closed") === "fail-closed") {
+            throw Object.assign(new Error(`file lock stale for ${normalizedTargetPath}`), {
+              code: "file_lock_stale",
+              lockPath,
+              normalizedTargetPath,
+            });
+          }
         }
         const elapsed = Date.now() - startedAt;
         if (

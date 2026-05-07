@@ -49,7 +49,7 @@ await fs.remove("notes/archive/today.txt");
 | Surface | Use it for |
 |---|---|
 | [`root()`](root.md) | One boundary for read/write/move/remove inside a trusted directory. |
-| [`@openclaw/fs-safe/config`](config.md) | Process-global Python helper configuration (`configureFsSafePython`, `getFsSafePythonConfig`). |
+| [`@openclaw/fs-safe/config`](config.md) | Process-global Python helper and lock-option defaults. |
 | [Python helper policy](python-helper.md) | Choose `auto`, `off`, or `require` for POSIX fd-relative hardening. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
 | [`writeExternalFileWithinRoot`](output.md) | Stage external-library file output in private temp storage, then finalize under a root. |
@@ -64,7 +64,7 @@ await fs.remove("notes/archive/today.txt");
 | [`extractArchive`](archive.md) | ZIP/TAR extraction with size, count, link, and traversal limits. |
 | [Secret files](secret-file.md) | Mode-0600 credentials with size and TOCTOU defense. |
 | [Permissions](permissions.md) | POSIX mode and Windows ACL inspection/remediation helpers. |
-| [`acquireFileLock`](sidecar-lock.md) | Cross-process file lock with retry and stale-lock recovery. |
+| [`acquireFileLock`](sidecar-lock.md) | Cross-process file lock with retry and fail-closed stale-lock handling. |
 | [`FsSafeError`](errors.md) | Closed code union (with `policy` / `operational` category) you can branch on. |
 | [`pathScope()`](path-scope.md) | Lower-level absolute-path boundary helper; lives behind `@openclaw/fs-safe/advanced`. |
 | [`@openclaw/fs-safe/advanced`](advanced.md) | Directory of lower-level composition helpers (path scopes, regular-file I/O, install paths, sibling-temp writes, …). |

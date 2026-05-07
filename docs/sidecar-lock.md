@@ -1,6 +1,6 @@
 # File lock
 
-`acquireFileLock()` and `withFileLock()` provide a cross-process file lock with retry, stale-lock reclaim, and process-exit cleanup. The lock is implemented as a sidecar file (e.g. `state.json` ↔ `state.json.lock`) — only one acquirer can create the sidecar with `O_CREAT | O_EXCL` at a time.
+`acquireFileLock()` and `withFileLock()` provide a cross-process file lock with retry and process-exit cleanup. The lock is implemented as a sidecar file (e.g. `state.json` ↔ `state.json.lock`) — only one acquirer can create the sidecar with `O_CREAT | O_EXCL` at a time.
 
 ```ts
 import { acquireFileLock } from "@openclaw/fs-safe/file-lock";
@@ -19,9 +19,9 @@ try {
 
 ## Why sidecar?
 
-The lock file sits next to the protected resource. If a process crashes mid-lock, the next acquirer notices the held entry, inspects its payload (PID, host, acquired-at timestamp), and decides — via `shouldReclaim` (defaulting to "is the lock older than `staleMs`?") — whether to take it over.
+The lock file sits next to the protected resource. If a process crashes mid-lock, the next acquirer notices the held entry, inspects its payload (PID, host, acquired-at timestamp), and decides — via `shouldReclaim` (defaulting to "is the lock older than `staleMs`?") — whether it should keep waiting or fail.
 
-The library installs a `process.on("exit")` handler that releases all currently-held locks synchronously, so well-behaved exits leave no stale sidecars. Crashes still need the reclaim path.
+The library installs a `process.on("exit")` handler that releases all currently-held locks synchronously, so well-behaved exits leave no stale sidecars. Crashed holders leave their sidecar behind; remove those through an application-owned recovery path after you have proved the holder cannot still be writing.
 
 ## API
 
@@ -48,9 +48,10 @@ function createFileLockManager(key: string): FileLockManager;
 type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   managerKey?: string;                   // optional in-process manager namespace
   lockPath?: string;                     // override; defaults to `${targetPath}.lock`
-  staleMs: number;                       // how long until a held lock is considered stale
+  staleMs?: number;                      // default 30_000
   timeoutMs?: number;                    // overall acquire deadline; default unbounded
   retry?: FileLockRetryOptions;
+  staleRecovery?: "fail-closed";         // default
   allowReentrant?: boolean;              // if this process already holds it, increment a count instead of failing
   payload: () => TPayload | Promise<TPayload>;
   shouldReclaim?: (params: {
@@ -100,7 +101,7 @@ try {
 }
 ```
 
-If your process dies before `release()` runs and skips the exit handler, the next acquirer reclaims the lock once `staleMs` elapses (or your `shouldReclaim` returns true).
+If your process dies before `release()` runs and skips the exit handler, the sidecar remains. Once `staleMs` elapses (or your `shouldReclaim` returns true), acquisition fails closed instead of deleting by path, because Node cannot atomically bind that deletion to the file that was inspected.
 
 ## `withFileLock` — common shape made one-liner
 
@@ -139,9 +140,9 @@ await handle.release();
 await locks.drain();
 ```
 
-## Reclaim policy: `shouldReclaim`
+## Stale policy: `shouldReclaim`
 
-The default policy reclaims locks whose `acquiredAt` is older than `staleMs`. Pass a custom callback when you want a richer notion of "is the holder still alive":
+The default policy treats locks whose `createdAt` is older than `staleMs` as stale. Pass a custom callback when you want a richer notion of "is the holder still alive":
 
 ```ts
 import { kill } from "node:process";
@@ -155,26 +156,26 @@ const handle = await acquireFileLock(targetPath, {
     if (!Number.isFinite(pid)) return true;
     try {
       kill(pid, 0);
-      return false;                     // process still alive — don't reclaim
+      return false;                     // process still alive — keep waiting
     } catch {
-      return true;                      // process gone — reclaim
+      return true;                      // process gone — fail closed for recovery
     }
   },
 });
 ```
 
-`heldByThisProcess` is true when this manager already holds the lock (relevant for the reentrant case).
+`heldByThisProcess` is true when this manager already holds the lock (relevant for the reentrant case). A `true` result does not delete the sidecar; it lets the acquire loop stop waiting once the retry/timeout policy says to give up.
 
 ## What sidecar locks defend against
 
 - **Two processes writing the same file at once.** `acquire` serializes the critical section.
-- **A crashed holder leaving a stale lock.** `staleMs` plus optional `shouldReclaim` recovers it.
+- **Accidentally deleting a fresh lock during stale recovery.** Stale third-party locks fail closed because safe compare-and-unlink is not available through Node's path APIs.
 - **Race between simultaneous acquire attempts.** `O_CREAT | O_EXCL` ensures one wins.
 
 ## What they do **not** defend against
 
 - **Misbehaving holders that ignore the lock.** Locks are advisory — only callers that go through `acquire` are bound.
-- **Holders that never call `release` and have no liveness check.** Without a real `shouldReclaim`, the lock relies on `staleMs` alone — pick a deadline that is comfortably longer than your real work but short enough to recover from crashes.
+- **Automatic stale lock deletion.** If a process crashes, use the payload and your own supervisor/process table to decide when to remove the sidecar.
 - **Multi-host coordination over network filesystems.** Behavior depends on the underlying filesystem's `O_EXCL` semantics; treat as best-effort.
 
 ## Common patterns

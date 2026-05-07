@@ -1,10 +1,13 @@
 import type { FileLockRetryOptions } from "./file-lock.js";
+import { getFsSafeLockConfig } from "./lock-config.js";
 import { createSidecarLockManager } from "./sidecar-lock.js";
+import type { SidecarLockStaleRecovery } from "./sidecar-lock.js";
 
 export type JsonStoreLockOptions = {
   staleMs?: number;
   timeoutMs?: number;
   retry?: FileLockRetryOptions;
+  staleRecovery?: SidecarLockStaleRecovery;
   managerKey?: string;
 };
 
@@ -45,11 +48,13 @@ function resolveLockOptions(
     return null;
   }
   const lockOptions = options.lock === true ? {} : options.lock;
+  const defaults = getFsSafeLockConfig();
   return {
     managerKey: lockOptions.managerKey ?? `fs-safe.json-store:${filePath}`,
-    retry: lockOptions.retry ?? {},
-    staleMs: lockOptions.staleMs ?? 30_000,
-    timeoutMs: lockOptions.timeoutMs ?? 30_000,
+    retry: lockOptions.retry ?? defaults.retry ?? {},
+    staleMs: lockOptions.staleMs ?? defaults.staleMs ?? 30_000,
+    staleRecovery: lockOptions.staleRecovery ?? defaults.staleRecovery,
+    timeoutMs: lockOptions.timeoutMs ?? defaults.timeoutMs ?? 30_000,
   };
 }
 
@@ -84,6 +89,7 @@ export function createJsonStore<T>(
         staleMs: lockOptions.staleMs,
         timeoutMs: lockOptions.timeoutMs,
         retry: lockOptions.retry,
+        staleRecovery: lockOptions.staleRecovery,
         allowReentrant: true,
         payload: () => ({ pid: process.pid, createdAt: new Date().toISOString() }),
       },

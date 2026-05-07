@@ -1,22 +1,25 @@
 ---
 title: Config
-description: "Process-global configuration for the optional Python helper used by fs-safe on POSIX."
+description: "Process-global defaults for optional fs-safe helpers."
 ---
 
 # `@openclaw/fs-safe/config`
 
-Process-global configuration knobs for the optional persistent Python helper that backs POSIX fd-relative operations in `root()`. The whole helper policy is described in the [Python helper policy](python-helper.md); this page is the API reference.
+Process-global configuration knobs for optional fs-safe helpers. The Python helper policy is described in the [Python helper policy](python-helper.md); this page is the API reference.
 
 ```ts
 import {
   configureFsSafePython,
+  configureFsSafeLocks,
   getFsSafePythonConfig,
+  getFsSafeLockConfig,
+  type FsSafeLockConfig,
   type FsSafePythonConfig,
   type FsSafePythonMode,
 } from "@openclaw/fs-safe/config";
 ```
 
-`configureFsSafePython` is also re-exported from the main entry point, so `import { configureFsSafePython } from "@openclaw/fs-safe"` works too. Prefer the subpath when you only need helper configuration and want the smallest import surface.
+These functions are also re-exported from the main entry point. Prefer the subpath when you only need helper configuration and want the smallest import surface.
 
 ## `configureFsSafePython(config)`
 
@@ -47,6 +50,31 @@ function getFsSafePythonConfig(): FsSafePythonConfig;
 
 Return the effective configuration: programmatic overrides win, then env vars, then the package default (`auto`).
 
+## `configureFsSafeLocks(config)`
+
+```ts
+function configureFsSafeLocks(config: Partial<FsSafeLockConfig>): void;
+
+type FsSafeLockConfig = {
+  staleRecovery: "fail-closed";
+  staleMs?: number;
+  timeoutMs?: number;
+  retry?: FileLockRetryOptions;
+};
+```
+
+Set process-wide defaults for sidecar lock options. This does **not** turn locking on globally; callers still need to pass `lock: true` or a lock options object for the specific JSON store/resource that needs cross-process coordination.
+
+`staleRecovery` currently supports `"fail-closed"` only. Stale third-party sidecars are not deleted by path because Node cannot atomically bind that deletion to the file that was inspected.
+
+## `getFsSafeLockConfig()`
+
+```ts
+function getFsSafeLockConfig(): FsSafeLockConfig;
+```
+
+Return the current sidecar lock defaults.
+
 ## Environment variables
 
 The same policy can be set without code:
@@ -61,5 +89,6 @@ OpenClaw compatibility aliases are accepted: `OPENCLAW_FS_SAFE_PYTHON_MODE`, `OP
 ## Related pages
 
 - [Python helper policy](python-helper.md) — when to pick `auto`, `off`, or `require`, and what each mode protects.
+- [File lock](sidecar-lock.md) — the per-resource lock API that consumes lock defaults.
 - [Root API](root.md) — the API whose POSIX hardening the helper backs.
 - [Errors](errors.md) — `helper-unavailable` and `helper-failed`.
