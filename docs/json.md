@@ -115,8 +115,13 @@ type WriteJsonOptions = {
   mode?: number;             // file mode (default 0o600)
   dirMode?: number;          // mode for parent dirs created on demand
   trailingNewline?: boolean; // append "\n" if missing (default false)
+  durable?: boolean;         // default true; false skips temp/parent fsync
 };
 ```
+
+`durable: false` preserves atomic temp-file replacement but skips the temp-file
+and parent-directory `fsync` calls. Use it only for reconstructible JSON state
+where lower latency matters more than crash-durability.
 
 ### `writeJsonSync(pathname, data)`
 
