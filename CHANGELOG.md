@@ -4,6 +4,7 @@
 
 ### Fixes
 
+- Add `writeExternalFileWithinRoot()` for libraries that require an output path while preserving caller-provided destination names. (#7; thanks @jesse-merhi)
 - Reject `fileStore()` and `fileStoreSync()` writes through symlinked parent directories so store commits cannot escape the configured root.
 - Harden Root fallback mutators, archive merges, private store reads/writes, durable queue ids, JSON fallback writes, sibling temp writes, temp filename sanitization, and trash moves against symlink-swap and path traversal edge cases.
 - Centralize safe path segment validation, directory identity guards, and guarded mutation wrappers so future filesystem helpers reuse the same race-resistant checks.
