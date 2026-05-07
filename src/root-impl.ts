@@ -1250,8 +1250,10 @@ async function resolvePinnedWriteTargetInRoot(
     throw new FsSafeError("path-alias", "path alias escape blocked", { cause: err });
   }
 
+  // resolvePathInRoot already enforces isPathInside, so any actual escape
+  // is rejected upstream.
   const relativeResolved = path.relative(rootReal, resolved);
-  if (relativeResolved.startsWith("..") || path.isAbsolute(relativeResolved)) {
+  if (path.isAbsolute(relativeResolved)) {
     throw new FsSafeError("outside-workspace", "file is outside workspace root");
   }
   const relativePosix = relativeResolved

@@ -31,18 +31,21 @@ export function resolveOsHomeDir(
 
 function resolveRawHomeDir(env: NodeJS.ProcessEnv, homedir: () => string): string | undefined {
   const explicitHome = normalize(env.OPENCLAW_HOME);
-  if (explicitHome) {
-    if (explicitHome === "~" || explicitHome.startsWith("~/") || explicitHome.startsWith("~\\")) {
-      const fallbackHome = resolveRawOsHomeDir(env, homedir);
-      if (fallbackHome) {
-        return explicitHome.replace(/^~(?=$|[\\/])/, fallbackHome);
-      }
-      return undefined;
-    }
+  if (!explicitHome) {
+    return resolveRawOsHomeDir(env, homedir);
+  }
+  const segments = path.normalize(explicitHome).split(path.sep);
+  if (segments[0] !== "~") {
     return explicitHome;
   }
-
-  return resolveRawOsHomeDir(env, homedir);
+  // OPENCLAW_HOME starts with "~"; expand against the os home dir. Fall
+  // back to undefined when there is no os home to expand against rather
+  // than returning a raw "~"-prefixed path the caller cannot use.
+  const fallbackHome = resolveRawOsHomeDir(env, homedir);
+  if (!fallbackHome) {
+    return undefined;
+  }
+  return expandHomePrefix(explicitHome, { home: fallbackHome });
 }
 
 function resolveRawOsHomeDir(env: NodeJS.ProcessEnv, homedir: () => string): string | undefined {
@@ -87,9 +90,6 @@ export function expandHomePrefix(
     homedir?: () => string;
   },
 ): string {
-  // Normalize and split into path segments. path.normalize converts "/"
-  // to the native separator on Windows and leaves "\" as a literal name
-  // character on POSIX, so the segment check is platform-correct.
   const segments = path.normalize(input).split(path.sep);
   if (segments[0] !== "~") {
     return input;
