@@ -38,8 +38,18 @@ The exports group into a handful of themes. Each documented helper has its own p
 | Export | Page | Notes |
 |---|---|---|
 | `assertAbsolutePathInput` | – | Validate a caller-supplied absolute path string. |
+| `ensureAbsoluteDirectory`, `EnsureAbsoluteDirectoryOptions`, `EnsureAbsoluteDirectoryResult` | – | Create a trusted absolute directory path one segment at a time, rejecting symlink or non-directory segments. |
 | `canonicalPathFromExistingAncestor`, `findExistingAncestor` | – | Canonicalize without requiring the leaf to exist. |
 | `resolveAbsolutePathForRead`, `resolveAbsolutePathForWrite`, `ResolvedAbsolutePath`, `ResolvedWritableAbsolutePath`, `AbsolutePathSymlinkPolicy` | – | Validate an absolute path against a symlink policy before opening. |
+
+`ensureAbsoluteDirectory()` is for paths you already intend to trust as absolute
+locations, such as a configured output root. It does not enforce a root boundary;
+use `pathScope().ensureDir()` or `ensureDirectoryWithinRoot()` when the caller
+supplies a path that must stay under a root.
+
+The helper returns `{ ok: false, code, error }` for path-policy failures such as
+relative paths, symlinks, non-directories, or directory swaps during creation.
+Operational filesystem failures such as permissions or I/O errors are rethrown.
 
 ### Files and identity
 

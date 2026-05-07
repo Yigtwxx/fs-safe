@@ -242,6 +242,7 @@ describe("absolute path helpers", () => {
       code: "symlink",
     });
   });
+
 });
 
 describe("filesystem utility helpers", () => {
