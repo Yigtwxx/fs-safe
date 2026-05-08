@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.1 - 2026-05-08
+
 ### Fixes
 
 - Align POSIX and Windows handling for literal `..`-prefixed write targets, preserve whitespace in direct home-relative path inputs, and run the check suite on Windows CI. (#14; thanks @sjf)
