@@ -2,7 +2,17 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createBoundedReadStream, createMaxBytesTransform } from "../src/bounded-read-stream.js";
+import {
+  assertAsyncDirectoryGuard,
+  assertSyncDirectoryGuard,
+  createAsyncDirectoryGuard,
+  createNearestExistingDirectoryGuard,
+  createNearestExistingSyncDirectoryGuard,
+  createSyncDirectoryGuard,
+} from "../src/directory-guard.js";
 import { drainFileLockManagerForTest, resetFileLockManagerForTest } from "../src/file-lock.js";
 import { sameFileIdentity } from "../src/file-identity.js";
 import { readLocalFileFromRoots, resolveLocalPathFromRootsSync } from "../src/local-roots.js";
@@ -135,6 +145,46 @@ describe("small identity and lock wrappers", () => {
     const targetPath = path.join(root, "state.json");
     await drainFileLockManagerForTest(targetPath, "coverage-lock-wrapper");
     resetFileLockManagerForTest(targetPath, "coverage-lock-wrapper");
+  });
+});
+
+describe("bounded streams and directory guard coverage", () => {
+  it("returns raw streams without limits and rejects oversized limited streams", async () => {
+    const raw = Readable.from(["ok"]);
+    const returned = createBoundedReadStream({ handle: { createReadStream: () => raw } }, undefined);
+    expect(returned).toBe(raw);
+
+    await expect(async () => {
+      for await (const _chunk of Readable.from(["ab", "cd"]).pipe(createMaxBytesTransform(3))) {
+        // Drain the stream so transform errors surface.
+      }
+    }).rejects.toMatchObject({ code: "too-large" });
+  });
+
+  it("detects changed or invalid directory guards", async () => {
+    const root = await tempRoot("fs-safe-dir-guard-more-");
+    const nested = path.join(root, "nested");
+    const filePath = path.join(root, "file.txt");
+    await fs.mkdir(nested);
+    await fs.writeFile(filePath, "not a dir", "utf8");
+
+    await expect(createAsyncDirectoryGuard(filePath)).rejects.toMatchObject({ code: "not-file" });
+    expect(() => createSyncDirectoryGuard(filePath)).toThrow("directory component");
+
+    const asyncGuard = await createAsyncDirectoryGuard(nested);
+    const syncGuard = createSyncDirectoryGuard(nested);
+    await fs.rm(nested, { recursive: true });
+    await fs.mkdir(nested);
+
+    await expect(assertAsyncDirectoryGuard(asyncGuard)).rejects.toMatchObject({
+      code: "path-mismatch",
+    });
+    expect(() => assertSyncDirectoryGuard(syncGuard)).toThrow("directory changed");
+
+    const nearest = await createNearestExistingDirectoryGuard(root, path.join(root, "missing", "x"));
+    expect(nearest.dir).toBe(root);
+    expect(createNearestExistingSyncDirectoryGuard(root, path.join(root, "missing", "x")).dir)
+      .toBe(root);
   });
 });
 

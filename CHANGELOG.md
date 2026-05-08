@@ -5,6 +5,8 @@
 ### Fixes
 
 - Align POSIX and Windows handling for literal `..`-prefixed write targets, preserve whitespace in direct home-relative path inputs, and run the check suite on Windows CI. (#14; thanks @sjf)
+- Keep source prepack builds isolated from parent monorepo ambient type packages such as Bun typings. (#13; thanks @Kaspre)
+- Let secret-file reads follow symlink paths through the pinned real target unless callers opt into `rejectSymlink: true`.
 
 ## 0.2.0 - 2026-05-07
 

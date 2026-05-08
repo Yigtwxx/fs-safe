@@ -55,12 +55,26 @@ function readSecretFileOutcomeSync(
     };
   }
 
-  if (options.rejectSymlink && previewStat.isSymbolicLink()) {
-    return {
-      ok: false,
-      code: "symlink",
-      message: `${label} file at ${resolvedPath} must not be a symlink.`,
-    };
+  if (previewStat.isSymbolicLink()) {
+    if (!options.rejectSymlink) {
+      try {
+        previewStat = fs.statSync(resolvedPath);
+      } catch (error) {
+        const normalized = normalizeSecretReadError(error);
+        return {
+          ok: false,
+          code: (error as NodeJS.ErrnoException).code === "ENOENT" ? "not-found" : "invalid-path",
+          error: normalized,
+          message: `Failed to inspect ${label} file at ${resolvedPath}: ${String(normalized)}`,
+        };
+      }
+    } else {
+      return {
+        ok: false,
+        code: "symlink",
+        message: `${label} file at ${resolvedPath} must not be a symlink.`,
+      };
+    }
   }
   if (!previewStat.isFile()) {
     return {

@@ -68,9 +68,15 @@ describe("secret file helpers", () => {
     const root = await tempRoot("fs-safe-secret-");
     const target = path.join(root, "target.txt");
     const link = path.join(root, "link.txt");
+    const broken = path.join(root, "broken.txt");
     await fs.writeFile(target, "secret", "utf8");
     await fs.symlink(target, link);
+    await fs.symlink(path.join(root, "missing.txt"), broken);
 
+    expect(readSecretFileSync(link, "API token")).toBe("secret");
+    expect(tryReadSecretFileSync(link, "API token")).toBe("secret");
+    expectSecretReadCode(() => readSecretFileSync(broken, "API token"), "not-found");
+    expect(tryReadSecretFileSync(broken, "API token")).toBeUndefined();
     expect(() => readSecretFileSync(link, "API token", { rejectSymlink: true })).toThrow(
       `API token file at ${link} must not be a symlink.`,
     );
