@@ -72,11 +72,15 @@ describe("read boundary bypass attempts", () => {
       return true;
     });
     await expect(safeRoot.stat("../secret.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "invalid-path", "path-alias"]);
+      expectFsSafeCode(error, ["outside-workspace", "invalid-path", "path-alias"], {
+        allowUnsupportedPlatformOnWindows: true,
+      });
       return true;
     });
     await expect(safeRoot.list(".." as string)).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "invalid-path", "path-alias"]);
+      expectFsSafeCode(error, ["outside-workspace", "invalid-path", "path-alias"], {
+        allowUnsupportedPlatformOnWindows: true,
+      });
       return true;
     });
     await expect(scope.files(["../secret.txt"])).resolves.toMatchObject({ ok: false });
@@ -96,11 +100,15 @@ describe("read boundary bypass attempts", () => {
       return true;
     });
     await expect(safeRoot.stat("link/secret.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "symlink"]);
+      expectFsSafeCode(error, ["outside-workspace", "path-alias", "symlink"], {
+        allowUnsupportedPlatformOnWindows: true,
+      });
       return true;
     });
     await expect(safeRoot.list("link")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "symlink"]);
+      expectFsSafeCode(error, ["outside-workspace", "path-alias", "symlink"], {
+        allowUnsupportedPlatformOnWindows: true,
+      });
       return true;
     });
   });
@@ -120,7 +128,9 @@ describe("read boundary bypass attempts", () => {
       return true;
     });
     await expect(safeRoot.stat("secret-link.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "symlink"]);
+      expectFsSafeCode(error, ["outside-workspace", "path-alias", "symlink"], {
+        allowUnsupportedPlatformOnWindows: true,
+      });
       return true;
     });
 
@@ -168,7 +178,9 @@ describe("read boundary bypass attempts", () => {
       return true;
     });
     await expect(safeRoot.stat(layout.outsideFile)).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "invalid-path"]);
+      expectFsSafeCode(error, ["outside-workspace", "path-alias", "invalid-path"], {
+        allowUnsupportedPlatformOnWindows: true,
+      });
       return true;
     });
 

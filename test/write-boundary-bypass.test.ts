@@ -3,7 +3,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
-import { root as openRoot } from "../src/index.js";
+import { configureFsSafePython, root as openRoot } from "../src/index.js";
 import {
   ESCAPING_DIRECTORY_PAYLOADS,
   ESCAPING_WRITE_PAYLOADS,
@@ -24,6 +24,7 @@ async function makeTempLayout(prefix: string) {
 }
 
 afterEach(async () => {
+  configureFsSafePython({ mode: "auto", pythonPath: undefined });
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { force: true, recursive: true })));
 });
 
@@ -242,4 +243,18 @@ describe("write, move, and delete boundary bypass attempts", () => {
     }
     await expectNoOutsideWrite(layout);
   }, 15000);
+
+  it.runIf(process.platform !== "win32")("keeps literal '..'-prefixed paths available when the helper is disabled", async () => {
+    configureFsSafePython({ mode: "off" });
+    const layout = await makeTempLayout("fs-safe-write-helper-off-literal");
+    const safeRoot = await openRoot(layout.root);
+
+    await safeRoot.write("..%2fpwned.txt", "literal");
+    await expect(safeRoot.stat("..%2fpwned.txt")).resolves.toMatchObject({ isFile: true });
+    await safeRoot.remove("..%2fpwned.txt");
+    await expect(fsp.stat(path.join(layout.root, "..%2fpwned.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expectNoOutsideWrite(layout);
+  });
 });

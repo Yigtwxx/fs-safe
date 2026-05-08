@@ -100,10 +100,15 @@ export async function makeTempLayout(
   return { outside, outsideFile, root };
 }
 
-export function expectFsSafeCode(error: unknown, codes: readonly string[]): void {
+export function expectFsSafeCode(
+  error: unknown,
+  codes: readonly string[],
+  opts: { allowUnsupportedPlatformOnWindows?: boolean } = {},
+): void {
   expect(error).toBeInstanceOf(FsSafeError);
-  const accepted =
-    process.platform === "win32" ? [...codes, "unsupported-platform"] : codes;
+  const accepted = process.platform === "win32" && opts.allowUnsupportedPlatformOnWindows
+    ? [...codes, "unsupported-platform"]
+    : codes;
   expect(accepted).toContain((error as FsSafeError).code);
 }
 

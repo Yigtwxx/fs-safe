@@ -1334,10 +1334,11 @@ async function resolvePinnedOperationPathInRoot(
   if ((relativeResolved === "" || relativeResolved === ".") && params.allowRoot === true) {
     return { rootReal: resolved.rootReal, resolved: resolved.canonicalPath, relativePosix: "" };
   }
+  const firstSegment = relativeResolved.split(path.sep)[0];
   if (
     relativeResolved === "" ||
     relativeResolved === "." ||
-    relativeResolved.startsWith("..") ||
+    firstSegment === ".." ||
     path.isAbsolute(relativeResolved)
   ) {
     throw new FsSafeError("outside-workspace", "file is outside workspace root");

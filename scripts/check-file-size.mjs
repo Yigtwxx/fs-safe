@@ -8,7 +8,7 @@ const LINE_BUDGETS = new Map([
   ["src/pinned-python.ts", 655],
   ["src/root-impl.ts", 1750],
   ["src/root-path.ts", 862],
-  ["test/api-coverage.test.ts", 982],
+  ["test/api-coverage.test.ts", 983],
   ["test/new-primitives.test.ts", 1500],
 ]);
 
