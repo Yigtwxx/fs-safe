@@ -156,7 +156,10 @@ describe("sibling temp coverage", () => {
 
     expect(result.filePath).toBe(path.join(root, "final.txt"));
     await expect(fs.readFile(result.filePath, "utf8")).resolves.toBe("synced");
-    expect((await fs.stat(result.filePath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      // POSIX file modes don't fully apply on Windows.
+      expect((await fs.stat(result.filePath)).mode & 0o777).toBe(0o600);
+    }
   });
 
   it("removes sibling temp files when copy-in rejects the staged source", async () => {
@@ -188,15 +191,15 @@ describe("temp target edge coverage", () => {
     const root = await tempRoot("fs-safe-temp-more-");
 
     expect(sanitizeTempFileName("???")).toBe("download.bin");
-    expect(
-      buildRandomTempFilePath({
-        rootDir: root,
-        prefix: "!!!",
-        extension: "._-",
-        now: Number.NaN,
-        uuid: "id",
-      }),
-    ).toMatch(new RegExp(`^${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/tmp-\\d+-id$`));
+    const built = buildRandomTempFilePath({
+      rootDir: root,
+      prefix: "!!!",
+      extension: "._-",
+      now: Number.NaN,
+      uuid: "id",
+    });
+    expect(path.dirname(built)).toBe(root);
+    expect(path.basename(built)).toMatch(/^tmp-\d+-id$/);
 
     const tmp = await tempFile({ rootDir: root, prefix: "???", fileName: "???" });
     expect(path.basename(tmp.dir)).toMatch(/^tmp-/);

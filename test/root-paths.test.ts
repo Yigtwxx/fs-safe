@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -173,7 +174,10 @@ describe("local roots helpers", () => {
       const missingPath = path.join(uploadsDir, "new", "later.txt");
       const outsidePath = path.join(baseDir, "outside.txt");
       await fs.writeFile(filePath, "ok", "utf8");
-      const uploadsReal = await fs.realpath(uploadsDir);
+      // Use the sync realpath to compare against resolveLocalPathFromRootsSync.
+      // On windows fs.realpathSync and fs.realpath (async) sometimes disagree
+      // on 8.3 short-name canonicalization (e.g. "RUNNER~1" vs "runneradmin").
+      const uploadsReal = realpathSync(uploadsDir);
 
       expect(
         resolveLocalPathFromRootsSync({
@@ -182,7 +186,7 @@ describe("local roots helpers", () => {
           label: "media roots",
           requireFile: true,
         }),
-      ).toEqual({ path: await fs.realpath(filePath), root: uploadsReal });
+      ).toEqual({ path: realpathSync(filePath), root: uploadsReal });
       expect(
         resolveLocalPathFromRootsSync({
           filePath: missingPath,

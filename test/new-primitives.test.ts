@@ -125,7 +125,7 @@ describe("private temp workspaces", () => {
 });
 
 describe("file store", () => {
-  it("writes, reads, copies, and prunes files under the store root", async () => {
+  it.skipIf(process.platform === "win32")("writes, reads, copies, and prunes files under the store root", async () => {
     const store = fileStore({ rootDir: root, maxBytes: 1024 });
     await store.write("media/a.txt", "hello");
     await expect(store.readBytes("media/a.txt")).resolves.toEqual(Buffer.from("hello"));
@@ -175,7 +175,7 @@ describe("json store", () => {
 });
 
 describe("secure file reads", () => {
-  it("reads from a validated file handle", async () => {
+  it.runIf(process.platform !== "win32")("reads from a validated file handle", async () => {
     const filePath = path.join(root, "secret.json");
     await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
     await fs.chmod(filePath, 0o600).catch(() => undefined);
@@ -189,6 +189,24 @@ describe("secure file reads", () => {
     expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
     expect(result.realPath).toBe(await fs.realpath(filePath));
   });
+
+  it.runIf(process.platform === "win32")(
+    "fails closed on windows when ACL inspection is unavailable",
+    async () => {
+      // See src/secure-file.ts:177 — readSecureFile throws permission-unverified
+      // on Windows because ACL inspection has no portable equivalent.
+      const filePath = path.join(root, "secret.json");
+      await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
+
+      await expect(
+        readSecureFile({
+          filePath,
+          label: "test secret",
+          io: { maxBytes: 1024 },
+        }),
+      ).rejects.toMatchObject({ code: "permission-unverified" });
+    },
+  );
 
   it("rejects symlinks and files outside trusted dirs", async () => {
     const trusted = path.join(root, "trusted");

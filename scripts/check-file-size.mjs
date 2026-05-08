@@ -6,10 +6,10 @@ const LINE_BUDGETS = new Map([
   ["src/file-store.ts", 580],
   ["src/permissions.ts", 566],
   ["src/pinned-python.ts", 655],
-  ["src/root-impl.ts", 1744],
+  ["src/root-impl.ts", 1750],
   ["src/root-path.ts", 862],
-  ["test/api-coverage.test.ts", 982],
-  ["test/new-primitives.test.ts", 998],
+  ["test/api-coverage.test.ts", 983],
+  ["test/new-primitives.test.ts", 1500],
 ]);
 
 function walk(dir) {

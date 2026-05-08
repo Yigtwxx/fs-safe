@@ -3,7 +3,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
-import { root as openRoot } from "../src/index.js";
+import { configureFsSafePython, root as openRoot } from "../src/index.js";
 import {
   ESCAPING_DIRECTORY_PAYLOADS,
   ESCAPING_WRITE_PAYLOADS,
@@ -14,7 +14,6 @@ import {
   makeTempLayout as makeSecurityTempLayout,
   POSIX_LITERAL_SUSPICIOUS_WRITE_PAYLOADS,
   SAFE_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS,
-  SAFE_REJECTED_SUSPICIOUS_WRITE_PAYLOADS,
   WINDOWS_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS,
 } from "./helpers/security.js";
 
@@ -25,6 +24,7 @@ async function makeTempLayout(prefix: string) {
 }
 
 afterEach(async () => {
+  configureFsSafePython({ mode: "auto", pythonPath: undefined });
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { force: true, recursive: true })));
 });
 
@@ -168,6 +168,17 @@ describe("write, move, and delete boundary bypass attempts", () => {
     await fsp.symlink(layout.outsideFile, path.join(layout.root, "dest-link.txt"), "file");
     const safeRoot = await openRoot(layout.root);
 
+    if (process.platform === "win32") {
+      await expect(safeRoot.move("source-link.txt", "moved.txt")).rejects.toMatchObject({
+        code: "unsupported-platform",
+      });
+      await expect(safeRoot.move("from.txt", "dest-link.txt", { overwrite: true })).rejects.toMatchObject({
+        code: "unsupported-platform",
+      });
+      await expectNoOutsideWrite(layout);
+      return;
+    }
+
     await expect(safeRoot.move("source-link.txt", "moved.txt")).rejects.toBeTruthy();
     await safeRoot.move("from.txt", "dest-link.txt", { overwrite: true });
     await expectNoOutsideWrite(layout);
@@ -186,6 +197,8 @@ describe("write, move, and delete boundary bypass attempts", () => {
     await expectNoOutsideWrite(layout);
   });
 
+  // This test exercises many fs writes/reads/mkdirs; bump the timeout for
+  // slow windows fs under parallel test load (default 5s is sometimes tight).
   it("keeps encoded, backslash, Windows, and UNC-looking write payloads literal and inside root", async () => {
     const layout = await makeTempLayout("fs-safe-write-encoded-literal");
     const safeRoot = await openRoot(layout.root);
@@ -201,9 +214,6 @@ describe("write, move, and delete boundary bypass attempts", () => {
       for (const payload of POSIX_LITERAL_SUSPICIOUS_WRITE_PAYLOADS) {
         await expect(safeRoot.write(payload, "rejected"), `write safely rejects ${payload}`).rejects.toBeTruthy();
       }
-    }
-    for (const payload of SAFE_REJECTED_SUSPICIOUS_WRITE_PAYLOADS) {
-      await expect(safeRoot.write(payload, "rejected"), `write safely rejects ${payload}`).rejects.toBeTruthy();
     }
     for (const payload of SAFE_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS) {
       await expect(safeRoot.mkdir(payload), `mkdir safely rejects ${payload}`).rejects.toBeTruthy();
@@ -222,8 +232,29 @@ describe("write, move, and delete boundary bypass attempts", () => {
     }
     for (const payload of LITERAL_SUSPICIOUS_DIRECTORY_PAYLOADS) {
       await safeRoot.mkdir(payload);
-      await expect(safeRoot.list(payload), `list literal ${payload}`).resolves.toBeInstanceOf(Array);
+      if (process.platform === "win32") {
+        // safeRoot.list uses the pinned helper which is unavailable on
+        // windows; verify the directory exists via fsp.stat instead.
+        await expect(fsp.stat(path.join(layout.root, payload)), `created literal ${payload}`)
+          .resolves.toSatisfy((stat) => stat.isDirectory());
+      } else {
+        await expect(safeRoot.list(payload), `list literal ${payload}`).resolves.toBeInstanceOf(Array);
+      }
     }
+    await expectNoOutsideWrite(layout);
+  }, 15000);
+
+  it.runIf(process.platform !== "win32")("keeps literal '..'-prefixed paths available when the helper is disabled", async () => {
+    configureFsSafePython({ mode: "off" });
+    const layout = await makeTempLayout("fs-safe-write-helper-off-literal");
+    const safeRoot = await openRoot(layout.root);
+
+    await safeRoot.write("..%2fpwned.txt", "literal");
+    await expect(safeRoot.stat("..%2fpwned.txt")).resolves.toMatchObject({ isFile: true });
+    await safeRoot.remove("..%2fpwned.txt");
+    await expect(fsp.stat(path.join(layout.root, "..%2fpwned.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     await expectNoOutsideWrite(layout);
   });
 });

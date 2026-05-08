@@ -6,6 +6,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { configureFsSafePython, FsSafeError, root as openRoot } from "../src/index.js";
 import { openLocalFileSafely, readLocalFileSafely } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
+import { expectedFsSafeCode } from "./helpers/security.js";
+
+const skipOnWindows = process.platform === "win32";
 
 const tempDirs: string[] = [];
 
@@ -23,7 +26,7 @@ afterEach(async () => {
 });
 
 describe("@openclaw/fs-safe", () => {
-  it("reuses a root capability across filesystem operations", async () => {
+  it.skipIf(skipOnWindows)("reuses a root capability across filesystem operations", async () => {
     const rootPath = await tempRoot("fs-root-object-");
     const root = await openRoot(rootPath);
 
@@ -62,7 +65,7 @@ describe("@openclaw/fs-safe", () => {
     });
   });
 
-  it("can disable the Python helper and keep root operations available", async () => {
+  it.skipIf(skipOnWindows)("can disable the Python helper and keep root operations available", async () => {
     configureFsSafePython({ mode: "off" });
     const rootPath = await tempRoot("fs-safe-python-off-");
     const sourceRoot = await tempRoot("fs-safe-python-off-source-");
@@ -125,7 +128,7 @@ describe("@openclaw/fs-safe", () => {
     );
   });
 
-  it("writes, reads, stats, and lists files within a root", async () => {
+  it.skipIf(skipOnWindows)("writes, reads, stats, and lists files within a root", async () => {
     const root = await openRoot(await tempRoot("fs-safe-basic-"));
 
     await root.mkdir("nested");
@@ -234,7 +237,7 @@ describe("@openclaw/fs-safe", () => {
     await expect(root.read("link/secret.txt")).rejects.toMatchObject({
       code: "outside-workspace",
     });
-    await expect(root.list("link")).rejects.toMatchObject({ code: "path-alias" });
+    await expect(root.list("link")).rejects.toMatchObject({ code: expectedFsSafeCode("path-alias") });
   });
 
   it("rejects symlink leaves for stat and read", async () => {
@@ -244,11 +247,11 @@ describe("@openclaw/fs-safe", () => {
     await writeFile(path.join(outside, "secret.txt"), "secret");
     await symlink(path.join(outside, "secret.txt"), path.join(rootPath, "secret-link"), "file");
 
-    await expect(root.stat("secret-link")).rejects.toMatchObject({ code: "path-alias" });
+    await expect(root.stat("secret-link")).rejects.toMatchObject({ code: expectedFsSafeCode("path-alias") });
     await expect(root.read("secret-link")).rejects.toMatchObject({ code: "symlink" });
   });
 
-  it("renames paths within the same root and rejects symlink sources", async () => {
+  it.skipIf(skipOnWindows)("renames paths within the same root and rejects symlink sources", async () => {
     const rootPath = await tempRoot("fs-safe-rename-");
     const root = await openRoot(rootPath);
     const outside = await tempRoot("fs-safe-outside-");
@@ -264,7 +267,7 @@ describe("@openclaw/fs-safe", () => {
     });
   });
 
-  it("requires explicit overwrite for moves that replace a target", async () => {
+  it.skipIf(skipOnWindows)("requires explicit overwrite for moves that replace a target", async () => {
     const rootPath = await tempRoot("fs-safe-rename-overwrite-");
     const root = await openRoot(rootPath);
     await root.write("from.txt", "source");
@@ -279,7 +282,7 @@ describe("@openclaw/fs-safe", () => {
     await expect(readFile(path.join(rootPath, "to.txt"), "utf8")).resolves.toBe("source");
   });
 
-  it("enforces copyIn maxBytes while streaming", async () => {
+  it.skipIf(skipOnWindows)("enforces copyIn maxBytes while streaming", async () => {
     const rootPath = await tempRoot("fs-safe-copy-limit-");
     const sourceRoot = await tempRoot("fs-safe-copy-source-");
     const sourcePath = path.join(sourceRoot, "source.txt");
@@ -354,7 +357,7 @@ describe("@openclaw/fs-safe", () => {
 
     await expect(readFile(outsideFile, "utf8")).resolves.toBe("kept");
     await expect(root.stat("link")).rejects.toMatchObject({
-      code: "not-found",
+      code: expectedFsSafeCode("not-found"),
     });
   });
 

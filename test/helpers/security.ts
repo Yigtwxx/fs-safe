@@ -56,17 +56,19 @@ export const LITERAL_SUSPICIOUS_WRITE_PAYLOADS = [
   "%2e%2e/pwned.txt",
   "%2e%2e%2fpwned.txt",
   "%252e%252e%252fpwned.txt",
+  // ".." prefix without an actual separator: a single literal filename
+  // ("..%2fpwned.txt") or two literal segments ("..%00", "pwned.txt") that
+  // resolve fully inside root. Accepted on both platforms.
+  "..%2fpwned.txt",
+  "..%00/pwned.txt",
 ] as const;
 
 export const POSIX_LITERAL_SUSPICIOUS_WRITE_PAYLOADS = [
   "nested\\..\\..\\pwned.txt",
   "C:\\Windows\\win.ini",
   "\\\\server\\share\\pwned.txt",
-] as const;
-
-export const SAFE_REJECTED_SUSPICIOUS_WRITE_PAYLOADS = [
-  "..%2fpwned.txt",
-  "..%00/pwned.txt",
+  // "..\\" is a real traversal on Windows (separator) but a literal filename
+  // on POSIX (where "\\" is a regular name character).
   "..\\pwned.txt",
 ] as const;
 
@@ -98,9 +100,20 @@ export async function makeTempLayout(
   return { outside, outsideFile, root };
 }
 
-export function expectFsSafeCode(error: unknown, codes: readonly string[]): void {
+export function expectFsSafeCode(
+  error: unknown,
+  codes: readonly string[],
+  opts: { allowUnsupportedPlatformOnWindows?: boolean } = {},
+): void {
   expect(error).toBeInstanceOf(FsSafeError);
-  expect(codes).toContain((error as FsSafeError).code);
+  const accepted = process.platform === "win32" && opts.allowUnsupportedPlatformOnWindows
+    ? [...codes, "unsupported-platform"]
+    : codes;
+  expect(accepted).toContain((error as FsSafeError).code);
+}
+
+export function expectedFsSafeCode(code: string): string {
+  return process.platform === "win32" ? "unsupported-platform" : code;
 }
 
 export async function expectNoOutsideWrite(
