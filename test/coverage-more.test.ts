@@ -173,13 +173,20 @@ describe("bounded streams and directory guard coverage", () => {
 
     const asyncGuard = await createAsyncDirectoryGuard(nested);
     const syncGuard = createSyncDirectoryGuard(nested);
-    await fs.rm(nested, { recursive: true });
-    await fs.mkdir(nested);
-
-    await expect(assertAsyncDirectoryGuard(asyncGuard)).rejects.toMatchObject({
+    await expect(assertAsyncDirectoryGuard({ ...asyncGuard, realPath: root })).rejects.toMatchObject({
       code: "path-mismatch",
     });
-    expect(() => assertSyncDirectoryGuard(syncGuard)).toThrow("directory changed");
+    expect(() => assertSyncDirectoryGuard({ ...syncGuard, realPath: root })).toThrow(
+      "directory changed",
+    );
+
+    await fs.rm(nested, { recursive: true });
+    await fs.writeFile(nested, "not a dir", "utf8");
+
+    await expect(assertAsyncDirectoryGuard(asyncGuard)).rejects.toMatchObject({
+      code: "not-file",
+    });
+    expect(() => assertSyncDirectoryGuard(syncGuard)).toThrow("directory component");
 
     const nearest = await createNearestExistingDirectoryGuard(root, path.join(root, "missing", "x"));
     expect(nearest.dir).toBe(root);
