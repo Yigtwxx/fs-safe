@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.2 - 2026-05-11
+
 ### Fixes
 
 - Fall back to Node path guards for root stat and list operations on Windows, where the pinned Python helper is intentionally unsupported.
