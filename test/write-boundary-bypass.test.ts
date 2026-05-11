@@ -169,6 +169,13 @@ describe("write, move, and delete boundary bypass attempts", () => {
     const safeRoot = await openRoot(layout.root);
 
     await expect(safeRoot.move("source-link.txt", "moved.txt")).rejects.toBeTruthy();
+    if (process.platform === "win32") {
+      await expect(safeRoot.move("from.txt", "dest-link.txt", { overwrite: true })).rejects
+        .toMatchObject({ code: "path-alias" });
+      await expectNoOutsideWrite(layout);
+      return;
+    }
+
     await safeRoot.move("from.txt", "dest-link.txt", { overwrite: true });
     await expectNoOutsideWrite(layout);
     await expect(fsp.readFile(path.join(layout.root, "dest-link.txt"), "utf8")).resolves.toBe("from");
