@@ -225,21 +225,6 @@ describe("persistent Python helper worker", () => {
     const rootDir = await tempRoot("fs-safe-python-policy-");
     await fs.writeFile(path.join(rootDir, "file.txt"), "ok");
 
-    if (process.platform === "win32") {
-      spawnMock.mockImplementation(makeFailingChild);
-      configureFsSafePython({ mode: "auto", pythonPath: "/tmp/missing-python" });
-      const autoRoot = await root(rootDir);
-      await expect(autoRoot.stat("file.txt")).rejects.toMatchObject({
-        code: "unsupported-platform",
-      });
-
-      configureFsSafePython({ mode: "require", pythonPath: "/tmp/missing-python" });
-      await expect((await root(rootDir)).stat("file.txt")).rejects.toMatchObject({
-        code: "unsupported-platform",
-      });
-      return;
-    }
-
     spawnMock.mockImplementation(makeFailingChild);
     configureFsSafePython({ mode: "auto", pythonPath: "/tmp/missing-python" });
     const autoRoot = await root(rootDir);
@@ -256,7 +241,7 @@ describe("persistent Python helper worker", () => {
     spawnMock.mockImplementation(makeFailingChild);
     configureFsSafePython({ mode: "require", pythonPath: "/tmp/missing-python" });
     await expect((await root(rootDir)).stat("file.txt")).rejects.toMatchObject({
-      code: "helper-unavailable",
+      code: process.platform === "win32" ? "unsupported-platform" : "helper-unavailable",
     });
   });
 });

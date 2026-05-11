@@ -168,17 +168,6 @@ describe("write, move, and delete boundary bypass attempts", () => {
     await fsp.symlink(layout.outsideFile, path.join(layout.root, "dest-link.txt"), "file");
     const safeRoot = await openRoot(layout.root);
 
-    if (process.platform === "win32") {
-      await expect(safeRoot.move("source-link.txt", "moved.txt")).rejects.toMatchObject({
-        code: "unsupported-platform",
-      });
-      await expect(safeRoot.move("from.txt", "dest-link.txt", { overwrite: true })).rejects.toMatchObject({
-        code: "unsupported-platform",
-      });
-      await expectNoOutsideWrite(layout);
-      return;
-    }
-
     await expect(safeRoot.move("source-link.txt", "moved.txt")).rejects.toBeTruthy();
     await safeRoot.move("from.txt", "dest-link.txt", { overwrite: true });
     await expectNoOutsideWrite(layout);

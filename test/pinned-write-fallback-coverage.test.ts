@@ -103,24 +103,22 @@ describe("pinned write fallback coverage", () => {
   );
 
   it.runIf(process.platform === "win32")(
-    "rejects with unsupported-platform on windows",
+    "falls back on windows",
     async () => {
-      // fd-relative pinned filesystem operations are unavailable on windows
-      // (see src/pinned-python.ts), so the helper fails closed before any
-      // posix-only logic runs.
       const { runPinnedWriteHelper } = await import("../src/pinned-write.js");
       const root = await tempRoot("fs-safe-pinned-write-fallback-");
-      await expect(
-        runPinnedWriteHelper({
-          rootPath: root,
-          relativeParentPath: "nested",
-          basename: "created.txt",
-          mkdir: true,
-          mode: 0o600,
-          overwrite: false,
-          input: { kind: "buffer", data: "created", encoding: "utf8" },
-        }),
-      ).rejects.toMatchObject({ code: "unsupported-platform" });
+      await expect(runPinnedWriteHelper({
+        rootPath: root,
+        relativeParentPath: "nested",
+        basename: "created.txt",
+        mkdir: true,
+        mode: 0o600,
+        overwrite: false,
+        input: { kind: "buffer", data: "created", encoding: "utf8" },
+      })).resolves.toMatchObject({ dev: expect.any(Number), ino: expect.any(Number) });
+      await expect(fs.readFile(path.join(root, "nested", "created.txt"), "utf8")).resolves.toBe(
+        "created",
+      );
     },
   );
 });

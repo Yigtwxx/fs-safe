@@ -113,7 +113,7 @@ export function expectFsSafeCode(
 }
 
 export function expectedFsSafeCode(code: string): string {
-  return process.platform === "win32" ? "unsupported-platform" : code;
+  return code;
 }
 
 export async function expectNoOutsideWrite(
