@@ -34,6 +34,23 @@ afterEach(async () => {
 });
 
 describe("platform fallback coverage", () => {
+  it("falls back for stat and list on Windows", async () => {
+    const { root: openRoot } = await importRootForPlatform("win32");
+    const rootDir = await tempRoot("fs-safe-win-stat-list-");
+    await fs.mkdir(path.join(rootDir, "nested"), { recursive: true });
+    await fs.writeFile(path.join(rootDir, "nested", "file.txt"), "ok", "utf8");
+    const scoped = await openRoot(rootDir);
+
+    await expect(scoped.stat("nested/file.txt")).resolves.toMatchObject({
+      isFile: true,
+      size: 2,
+    });
+    await expect(scoped.list("nested")).resolves.toEqual(["file.txt"]);
+    await expect(scoped.list("nested", { withFileTypes: true })).resolves.toMatchObject([
+      { name: "file.txt", isFile: true, size: 2 },
+    ]);
+  });
+
   it("exercises root write, copy, mkdir, and remove fallbacks used on Windows", async () => {
     const { root: openRoot } = await importRootForPlatform("win32");
     const rootDir = await tempRoot("fs-safe-win-fallback-");

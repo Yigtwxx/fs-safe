@@ -164,17 +164,21 @@ describe("Python helper configuration", () => {
     });
   });
 
-  it("only allows helper-unavailable fallback outside require mode", () => {
-    const error = Object.assign(new Error("missing"), { code: "helper-unavailable" });
+  it("only allows helper fallback errors outside require mode", () => {
+    const unavailable = Object.assign(new Error("missing"), { code: "helper-unavailable" });
+    const unsupportedPlatform = Object.assign(new Error("unsupported"), { code: "unsupported-platform" });
 
     configureFsSafePython({ mode: "auto" });
-    expect(canFallbackFromPythonError(error)).toBe(true);
+    expect(canFallbackFromPythonError(unavailable)).toBe(true);
+    expect(canFallbackFromPythonError(unsupportedPlatform)).toBe(true);
 
     configureFsSafePython({ mode: "off" });
-    expect(canFallbackFromPythonError(error)).toBe(true);
+    expect(canFallbackFromPythonError(unavailable)).toBe(true);
+    expect(canFallbackFromPythonError(unsupportedPlatform)).toBe(true);
 
     configureFsSafePython({ mode: "require" });
-    expect(canFallbackFromPythonError(error)).toBe(false);
+    expect(canFallbackFromPythonError(unavailable)).toBe(false);
+    expect(canFallbackFromPythonError(unsupportedPlatform)).toBe(false);
   });
 });
 

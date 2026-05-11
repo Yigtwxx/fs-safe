@@ -45,10 +45,9 @@ export function getFsSafePythonConfig(): FsSafePythonConfig {
 }
 
 export function canFallbackFromPythonError(error: unknown): boolean {
+  const code = error instanceof Error && "code" in error ? (error as { code?: unknown }).code : undefined;
   return (
     getFsSafePythonConfig().mode !== "require" &&
-    error instanceof Error &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "helper-unavailable"
+    (code === "helper-unavailable" || code === "unsupported-platform")
   );
 }
