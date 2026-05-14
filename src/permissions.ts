@@ -70,13 +70,7 @@ export type IcaclsResetCommandOptions = {
 };
 
 const INHERIT_FLAGS = new Set(["I", "OI", "CI", "IO", "NP"]);
-const WORLD_PRINCIPALS = new Set([
-  "everyone",
-  "users",
-  "builtin\\users",
-  "authenticated users",
-  "nt authority\\authenticated users",
-]);
+const WORLD_PRINCIPALS = new Set(["everyone", "users", "builtin\\users", "authenticated users", "nt authority\\authenticated users", "anonymous logon", "nt authority\\anonymous logon", "guests", "builtin\\guests", "interactive", "nt authority\\interactive", "network", "nt authority\\network", "local"]);
 const TRUSTED_BASE = new Set([
   "nt authority\\system",
   "system",
@@ -95,7 +89,7 @@ const TRUSTED_SIDS = new Set([
   "s-1-5-32-544",
   "s-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
 ]);
-const WORLD_SIDS = new Set(["s-1-1-0", "s-1-5-11", "s-1-5-32-545"]);
+const WORLD_SIDS = new Set(["s-1-1-0", "s-1-5-11", "s-1-5-32-545", "s-1-5-7", "s-1-5-32-546", "s-1-5-4", "s-1-2-0", "s-1-5-2"]);
 const STATUS_PREFIXES = [
   "successfully processed",
   "processed",

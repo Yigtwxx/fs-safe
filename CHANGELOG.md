@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.3 - 2026-05-14
+
+### Fixes
+
+- Classify broad Windows ACL identities such as Anonymous Logon, Guests, Interactive, Local, and Network as world-equivalent so writable paths are not downgraded to group-writable findings.
+
 ## 0.2.2 - 2026-05-11
 
 ### Fixes

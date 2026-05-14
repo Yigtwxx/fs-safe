@@ -421,6 +421,55 @@ describe("secure file reads", () => {
     expect(modeBits(0o100777)).toBe(0o777);
   });
 
+  it("classifies broad Windows SID principals as world-equivalent", () => {
+    const entries = [
+      "*S-1-5-7",
+      "*S-1-5-32-546",
+      "*S-1-5-4",
+      "*S-1-2-0",
+      "*S-1-5-2",
+      "NT AUTHORITY\\ANONYMOUS LOGON",
+      "BUILTIN\\Guests",
+    ].map((principal) => ({
+      principal,
+      rights: ["R"],
+      rawRights: "(R)",
+      canRead: true,
+      canWrite: false,
+    }));
+
+    const summary = summarizeWindowsAcl(entries, { USERSID: "S-1-5-7" });
+    expect(summary.untrustedWorld.map((entry) => entry.principal)).toEqual([
+      "*S-1-5-7",
+      "*S-1-5-32-546",
+      "*S-1-5-4",
+      "*S-1-2-0",
+      "*S-1-5-2",
+      "NT AUTHORITY\\ANONYMOUS LOGON",
+      "BUILTIN\\Guests",
+    ]);
+    expect(summary.trusted).toEqual([]);
+    expect(summary.untrustedGroup).toEqual([]);
+  });
+
+  it("reports broad Windows SID writes as world-writable", async () => {
+    const target = path.join(root, "windows-acl-token.txt");
+    await fs.writeFile(target, "secret", { mode: 0o600 });
+    const exec = vi.fn().mockResolvedValue({
+      stdout: `${target} *S-1-5-18:(F)\n *S-1-5-7:(F)\n`,
+      stderr: "",
+    });
+
+    const result = await inspectPathPermissions(target, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows", USERSID: "S-1-5-7" },
+      exec,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.worldWritable).toBe(true);
+    expect(result.groupWritable).toBe(false);
+  });
+
   it("resolves the current user SID when ACL output only contains an unknown SID", async () => {
     const target = String.raw`C:\Secrets\token.txt`;
     const exec = vi
