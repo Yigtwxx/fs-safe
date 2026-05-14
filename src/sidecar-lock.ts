@@ -13,7 +13,14 @@ export type SidecarLockRetryOptions = {
   randomize?: boolean;
 };
 
-export type SidecarLockStaleRecovery = "fail-closed";
+export type SidecarLockStaleRecovery = "fail-closed" | "remove-if-unchanged";
+
+export type SidecarLockStaleSnapshot = {
+  lockPath: string;
+  normalizedTargetPath: string;
+  raw: string;
+  payload: Record<string, unknown> | null;
+};
 
 export type SidecarLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   targetPath: string;
@@ -32,6 +39,9 @@ export type SidecarLockAcquireOptions<TPayload extends Record<string, unknown>> 
     nowMs: number;
     heldByThisProcess: boolean;
   }) => boolean | Promise<boolean>;
+  shouldRemoveStaleLock?: (
+    snapshot: SidecarLockStaleSnapshot,
+  ) => boolean | Promise<boolean>;
   metadata?: Record<string, unknown>;
 };
 
@@ -152,6 +162,42 @@ async function lockSnapshotStillPresent(
 ): Promise<boolean> {
   const current = await readLockSnapshot(lockPath);
   return !!current && !!observed && snapshotMatches(current, observed);
+}
+
+async function removeStaleLockIfAllowed(params: {
+  lockPath: string;
+  normalizedTargetPath: string;
+  snapshot: LockSnapshot;
+  shouldRemoveStaleLock?: (
+    snapshot: SidecarLockStaleSnapshot,
+  ) => boolean | Promise<boolean>;
+}): Promise<"removed" | "changed" | "not-approved"> {
+  if (!params.shouldRemoveStaleLock) {
+    return "not-approved";
+  }
+  if (params.snapshot.raw === undefined) {
+    return "not-approved";
+  }
+  if (
+    !(await params.shouldRemoveStaleLock({
+      lockPath: params.lockPath,
+      normalizedTargetPath: params.normalizedTargetPath,
+      raw: params.snapshot.raw,
+      payload: params.snapshot.payload,
+    }))
+  ) {
+    return "not-approved";
+  }
+  const current = await readLockSnapshot(params.lockPath);
+  if (!current || !snapshotMatches(current, params.snapshot)) {
+    return "changed";
+  }
+  try {
+    await fs.rm(params.lockPath, { force: true });
+  } catch {
+    return "not-approved";
+  }
+  return "removed";
 }
 
 function snapshotMatchesSync(lockPath: string, observed: LockSnapshot): boolean {
@@ -354,17 +400,23 @@ export function createSidecarLockManager(key: string) {
           if (!(await lockSnapshotStillPresent(lockPath, snapshot))) {
             continue;
           }
-          // Node exposes only path-based unlink/rename here. A stale-lock
-          // reclaimer cannot bind the delete to the file it inspected, so a
-          // concurrent release+fresh-acquire could otherwise lose its lock.
-          // Fail closed and let callers choose a higher-level recovery path.
-          if ((options.staleRecovery ?? "fail-closed") === "fail-closed") {
-            throw Object.assign(new Error(`file lock stale for ${normalizedTargetPath}`), {
-              code: "file_lock_stale",
+          const staleRecovery = options.staleRecovery ?? "fail-closed";
+          if (staleRecovery === "remove-if-unchanged") {
+            const removal = await removeStaleLockIfAllowed({
               lockPath,
               normalizedTargetPath,
+              snapshot,
+              shouldRemoveStaleLock: options.shouldRemoveStaleLock,
             });
+            if (removal === "removed" || removal === "changed") {
+              continue;
+            }
           }
+          throw Object.assign(new Error(`file lock stale for ${normalizedTargetPath}`), {
+            code: "file_lock_stale",
+            lockPath,
+            normalizedTargetPath,
+          });
         }
         const elapsed = Date.now() - startedAt;
         if (

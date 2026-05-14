@@ -56,7 +56,7 @@ Return the effective configuration: programmatic overrides win, then env vars, t
 function configureFsSafeLocks(config: Partial<FsSafeLockConfig>): void;
 
 type FsSafeLockConfig = {
-  staleRecovery: "fail-closed";
+  staleRecovery: "fail-closed" | "remove-if-unchanged";
   staleMs?: number;
   timeoutMs?: number;
   retry?: FileLockRetryOptions;
@@ -65,7 +65,7 @@ type FsSafeLockConfig = {
 
 Set process-wide defaults for sidecar lock options. This does **not** turn locking on globally; callers still need to pass `lock: true` or a lock options object for the specific JSON store/resource that needs cross-process coordination.
 
-`staleRecovery` currently supports `"fail-closed"` only. Stale third-party sidecars are not deleted by path because Node cannot atomically bind that deletion to the file that was inspected.
+`staleRecovery` defaults to `"fail-closed"`. `"remove-if-unchanged"` is available for callers that also pass `shouldRemoveStaleLock`; fs-safe re-reads the observed sidecar and removes it only when the raw content and file identity still match.
 
 ## `getFsSafeLockConfig()`
 

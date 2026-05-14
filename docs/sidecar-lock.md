@@ -51,7 +51,7 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   staleMs?: number;                      // default 30_000
   timeoutMs?: number;                    // overall acquire deadline; default unbounded
   retry?: FileLockRetryOptions;
-  staleRecovery?: "fail-closed";         // default
+  staleRecovery?: "fail-closed" | "remove-if-unchanged"; // default "fail-closed"
   allowReentrant?: boolean;              // if this process already holds it, increment a count instead of failing
   payload: () => TPayload | Promise<TPayload>;
   shouldReclaim?: (params: {
@@ -61,6 +61,12 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
     staleMs: number;
     nowMs: number;
     heldByThisProcess: boolean;
+  }) => boolean | Promise<boolean>;
+  shouldRemoveStaleLock?: (snapshot: {
+    lockPath: string;
+    normalizedTargetPath: string;
+    raw: string;
+    payload: Record<string, unknown> | null;
   }) => boolean | Promise<boolean>;
   metadata?: Record<string, unknown>;    // attached to heldEntries() output for diagnostics
 };
@@ -101,7 +107,7 @@ try {
 }
 ```
 
-If your process dies before `release()` runs and skips the exit handler, the sidecar remains. Once `staleMs` elapses (or your `shouldReclaim` returns true), acquisition fails closed instead of deleting by path, because Node cannot atomically bind that deletion to the file that was inspected.
+If your process dies before `release()` runs and skips the exit handler, the sidecar remains. Once `staleMs` elapses (or your `shouldReclaim` returns true), acquisition fails closed by default instead of deleting by path.
 
 ## `withFileLock` — common shape made one-liner
 
@@ -164,18 +170,40 @@ const handle = await acquireFileLock(targetPath, {
 });
 ```
 
-`heldByThisProcess` is true when this manager already holds the lock (relevant for the reentrant case). A `true` result does not delete the sidecar; it lets the acquire loop stop waiting once the retry/timeout policy says to give up.
+`heldByThisProcess` is true when this manager already holds the lock (relevant for the reentrant case). A `true` result marks the observed sidecar as stale; `staleRecovery` then decides whether acquisition fails closed or tries caller-approved removal.
+
+## Stale recovery: `remove-if-unchanged`
+
+The default `staleRecovery: "fail-closed"` never removes third-party sidecars. Use `staleRecovery: "remove-if-unchanged"` only when your app has a reliable owner-liveness policy and can prove a stale owner cannot still be writing.
+
+```ts
+const handle = await acquireFileLock(targetPath, {
+  staleMs: 60_000,
+  staleRecovery: "remove-if-unchanged",
+  payload: () => ({ pid: process.pid, createdAt: new Date().toISOString() }),
+  shouldReclaim: ({ payload }) => {
+    const pid = Number(payload?.pid);
+    return Number.isInteger(pid) && pid > 0 && ownerIsDefinitelyDead(pid);
+  },
+  shouldRemoveStaleLock: ({ payload }) => {
+    const pid = Number(payload?.pid);
+    return Number.isInteger(pid) && pid > 0 && ownerIsDefinitelyDead(pid);
+  },
+});
+```
+
+`shouldRemoveStaleLock` receives the exact lock snapshot that `fs-safe` inspected. `fs-safe` re-reads the sidecar and removes it only if the raw content and file identity are unchanged. If the callback is missing, returns false, or the file changed, acquisition fails closed or keeps retrying according to the normal retry policy.
 
 ## What sidecar locks defend against
 
 - **Two processes writing the same file at once.** `acquire` serializes the critical section.
-- **Accidentally deleting a fresh lock during stale recovery.** Stale third-party locks fail closed because safe compare-and-unlink is not available through Node's path APIs.
+- **Accidentally deleting a fresh lock during stale recovery.** Stale third-party locks fail closed by default. Opt-in removal rechecks the observed snapshot before unlinking.
 - **Race between simultaneous acquire attempts.** `O_CREAT | O_EXCL` ensures one wins.
 
 ## What they do **not** defend against
 
 - **Misbehaving holders that ignore the lock.** Locks are advisory — only callers that go through `acquire` are bound.
-- **Automatic stale lock deletion.** If a process crashes, use the payload and your own supervisor/process table to decide when to remove the sidecar.
+- **Automatic stale lock deletion.** If a process crashes, use the payload and your own supervisor/process table to decide when removal is safe, then opt into `remove-if-unchanged`.
 - **Multi-host coordination over network filesystems.** Behavior depends on the underlying filesystem's `O_EXCL` semantics; treat as best-effort.
 
 ## Common patterns

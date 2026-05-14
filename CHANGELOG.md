@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.4 - 2026-05-14
+
+### Features
+
+- Add opt-in `remove-if-unchanged` stale lock recovery so callers can centralize compare-and-remove mechanics while keeping application-owned stale-owner policy.
+
 ## 0.2.3 - 2026-05-14
 
 ### Fixes
