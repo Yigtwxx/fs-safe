@@ -53,7 +53,7 @@ type JsonStoreLockOptions = {
   staleMs?: number;     // default 30_000
   timeoutMs?: number;   // default 30_000
   retry?: FileLockRetryOptions;
-  staleRecovery?: "fail-closed";
+  staleRecovery?: "fail-closed" | "remove-if-unchanged";
   managerKey?: string;  // default `fs-safe.json-store:<filePath>`
 };
 
@@ -140,6 +140,8 @@ const counter = jsonStore<{ count: number }>({
 When `lock` is falsy, `read` / `write` / `update` are unlocked. The `update` shape is still useful — it gives you a single function for the read-modify-write pattern — but it offers no concurrency guarantees if other processes also write to the file.
 
 Process-wide lock defaults from `configureFsSafeLocks()` apply only after locking is explicitly enabled. They do not make JSON stores lock by default.
+
+JSON store locks do not expose `shouldRemoveStaleLock`, so `staleRecovery: "remove-if-unchanged"` cannot remove a stale sidecar by itself. Use the lower-level [file lock](sidecar-lock.md) API when your application needs custom owner-liveness checks and caller-approved stale-lock removal.
 
 The default `managerKey` namespaces the in-process `FileLockManager` per absolute file path, so two `jsonStore` calls on the same file share lock state automatically.
 

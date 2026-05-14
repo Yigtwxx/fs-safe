@@ -270,6 +270,8 @@ the common merge-into-defaults case. Standalone helpers use options bags
 because they do not carry a bound root and often need multiple authority, path,
 and policy knobs.
 
+Sidecar locks fail closed on stale holders by default. Use the [file lock docs](docs/sidecar-lock.md) for the lower-level `remove-if-unchanged` recovery mode when your application can prove the old owner is gone.
+
 Use `fileStore()` for cache/blob/media-style directories where callers
 need safe relative paths, size limits, atomic replacement, stream writes, and
 TTL cleanup behind one root. Pass `private: true` for credentials, auth
