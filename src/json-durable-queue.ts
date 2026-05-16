@@ -1,6 +1,8 @@
 import fs from "node:fs";
+import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { sameFileIdentity } from "./file-identity.js";
+import { stringifyJsonDocument } from "./json-stringify.js";
 import { replaceFileAtomic } from "./replace-file.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
 
@@ -20,6 +22,11 @@ export type JsonDurableQueueLoadOptions<T> = {
   read?: (entry: T, filePath: string) => Promise<JsonDurableQueueReadResult<T>>;
   cleanupTmpMaxAgeMs?: number;
   maxBytes?: number;
+};
+
+type QueueValidationRoot = {
+  path: string;
+  allowSymlinkBase: boolean;
 };
 
 export const DEFAULT_JSON_DURABLE_QUEUE_ENTRY_MAX_BYTES = 16 * 1024 * 1024;
@@ -82,8 +89,182 @@ export async function ensureJsonDurableQueueDirs(params: {
   queueDir: string;
   failedDir: string;
 }): Promise<void> {
-  await fs.promises.mkdir(params.queueDir, { recursive: true, mode: 0o700 });
-  await fs.promises.mkdir(params.failedDir, { recursive: true, mode: 0o700 });
+  const roots = await queueValidationRoots(params.queueDir, params.failedDir);
+  await ensureJsonDurableQueueDir(params.queueDir, roots.queueRoot);
+  await ensureJsonDurableQueueDir(params.failedDir, roots.failedRoot);
+}
+
+async function ensureJsonDurableQueueDir(
+  dir: string,
+  validationRoot?: QueueValidationRoot,
+): Promise<void> {
+  const root = validationRoot
+    ? validationRoot
+    : queueValidationRoot(dir);
+  await assertNoSymlinkDirectorySegments(root, dir, true);
+  await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+  await assertNoSymlinkDirectorySegments(root, dir, false);
+  await chmodQueueDirectory(dir);
+}
+
+async function assertJsonDurableQueueDir(
+  dir: string,
+  validationRoot?: QueueValidationRoot,
+): Promise<void> {
+  const root = validationRoot
+    ? validationRoot
+    : queueValidationRoot(dir);
+  await assertNoSymlinkDirectorySegments(root, dir, false);
+}
+
+function commonPathAncestor(paths: string[]): string {
+  const resolved = paths.map((entry) => path.resolve(entry));
+  const root = path.parse(resolved[0] ?? process.cwd()).root;
+  const parts = resolved.map((entry) => path.relative(root, entry).split(path.sep));
+  const common: string[] = [];
+  for (let index = 0; parts.every((part) => index < part.length); index++) {
+    const segment = parts[0]?.[index];
+    if (!segment || !parts.every((part) => part[index] === segment)) break;
+    common.push(segment);
+  }
+  return path.join(root, ...common);
+}
+
+function samePathRoot(paths: string[]): boolean {
+  const roots = paths.map((entry) => path.parse(path.resolve(entry)).root);
+  const first = process.platform === "win32" ? roots[0]?.toLowerCase() : roots[0];
+  return roots.every((root) => (process.platform === "win32" ? root.toLowerCase() : root) === first);
+}
+
+async function queueValidationRoots(
+  queueDir: string,
+  failedDir: string,
+): Promise<{ queueRoot: QueueValidationRoot; failedRoot: QueueValidationRoot }> {
+  if (samePathRoot([queueDir, failedDir])) {
+    const common = commonPathAncestor([queueDir, failedDir]);
+    const root = queueValidationRoot(common);
+    return { failedRoot: root, queueRoot: root };
+  }
+  return {
+    failedRoot: queueValidationRoot(failedDir),
+    queueRoot: queueValidationRoot(queueDir),
+  };
+}
+
+function queueValidationRoot(dir: string): QueueValidationRoot {
+  return {
+    path: path.parse(path.resolve(dir)).root,
+    allowSymlinkBase: process.platform === "darwin",
+  };
+}
+
+async function isDarwinSystemAlias(
+  dir: string,
+  stat: Awaited<ReturnType<typeof fs.promises.lstat>>,
+): Promise<boolean> {
+  if (process.platform !== "darwin" || !stat.isSymbolicLink()) {
+    return false;
+  }
+  const resolved = path.resolve(dir);
+  if (resolved !== "/tmp" && resolved !== "/var") {
+    return false;
+  }
+  return await fs.promises.realpath(resolved).then(
+    (realPath) => realPath === `/private${resolved}`,
+    () => false,
+  );
+}
+
+async function assertNoSymlinkDirectorySegments(
+  validationRoot: QueueValidationRoot,
+  dir: string,
+  allowMissing: boolean,
+): Promise<void> {
+  let base = path.resolve(validationRoot.path);
+  let target = path.resolve(dir);
+  let current = base;
+  let baseStat = await fs.promises.lstat(base);
+  if (baseStat.isSymbolicLink() && validationRoot.allowSymlinkBase) {
+    const relative = path.relative(base, target);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error(`durable queue path is not a directory: ${dir}`);
+    }
+    base = await fs.promises.realpath(base);
+    target = path.join(base, ...relative.split(path.sep).filter(Boolean));
+    current = base;
+    baseStat = await fs.promises.lstat(base);
+  }
+  if (baseStat.isSymbolicLink() || !baseStat.isDirectory()) {
+    throw new Error(`durable queue path is not a directory: ${dir}`);
+  }
+  const segments = path.relative(base, target).split(path.sep).filter(Boolean);
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index];
+    if (segment === undefined) {
+      continue;
+    }
+    current = path.join(current, segment);
+    let stat: Awaited<ReturnType<typeof fs.promises.lstat>>;
+    try {
+      stat = await fs.promises.lstat(current);
+    } catch (error) {
+      if (allowMissing && (error as NodeJS.ErrnoException).code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      if (stat.isSymbolicLink() && validationRoot.allowSymlinkBase) {
+        if (await isDarwinSystemAlias(current, stat)) {
+          current = await fs.promises.realpath(current);
+          continue;
+        }
+      }
+      throw new Error(`durable queue path is not a directory: ${dir}`);
+    }
+  }
+}
+
+async function chmodQueueDirectory(dir: string): Promise<void> {
+  const noFollow =
+    typeof fs.constants.O_NOFOLLOW === "number" && process.platform !== "win32"
+      ? fs.constants.O_NOFOLLOW
+      : 0;
+  const directoryFlag =
+    typeof fs.constants.O_DIRECTORY === "number" && process.platform !== "win32"
+      ? fs.constants.O_DIRECTORY
+      : 0;
+  if (noFollow || directoryFlag) {
+    let handle: FileHandle | undefined;
+    try {
+      handle = await fs.promises.open(dir, fs.constants.O_RDONLY | noFollow | directoryFlag);
+      const stat = await handle.stat();
+      if (!stat.isDirectory()) {
+        throw new Error(`durable queue path is not a directory: ${dir}`);
+      }
+      try {
+        await handle.chmod(0o700);
+      } catch {
+        // Best-effort on platforms that do not enforce POSIX modes.
+      }
+      return;
+    } finally {
+      try {
+        await handle?.close();
+      } catch {
+        // Best-effort cleanup after chmod/open failures.
+      }
+    }
+  }
+  const stat = await fs.promises.lstat(dir);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`durable queue path is not a directory: ${dir}`);
+  }
+  try {
+    await fs.promises.chmod(dir, 0o700);
+  } catch {
+    // Best-effort on platforms that do not enforce POSIX modes.
+  }
 }
 
 export async function writeJsonDurableQueueEntry(params: {
@@ -93,7 +274,7 @@ export async function writeJsonDurableQueueEntry(params: {
 }): Promise<void> {
   await replaceFileAtomic({
     filePath: params.filePath,
-    content: JSON.stringify(params.entry, null, 2),
+    content: stringifyJsonDocument(params.entry, null, 2),
     mode: 0o600,
     tempPrefix: params.tempPrefix,
   });
@@ -262,7 +443,9 @@ export async function moveJsonDurableQueueEntryToFailed(params: {
   id: string;
 }): Promise<void> {
   assertSafeQueueEntryId(params.id);
-  await fs.promises.mkdir(params.failedDir, { recursive: true, mode: 0o700 });
+  const roots = await queueValidationRoots(params.queueDir, params.failedDir);
+  await assertJsonDurableQueueDir(params.queueDir, roots.queueRoot);
+  await ensureJsonDurableQueueDir(params.failedDir, roots.failedRoot);
   await fs.promises.rename(
     path.join(params.queueDir, `${params.id}.json`),
     path.join(params.failedDir, `${params.id}.json`),

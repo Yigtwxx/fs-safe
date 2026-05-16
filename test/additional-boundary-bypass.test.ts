@@ -150,11 +150,11 @@ describe("additional helper boundary bypass attempts", () => {
     const filePath = path.join(layout.base, "state.json");
     const adapter = {
       filePath,
-      async readIfExists(): Promise<{ ok: boolean } | null> {
+      async readIfExists(): Promise<{ ok: boolean } | undefined> {
         try {
           return JSON.parse(await fsp.readFile(filePath, "utf8")) as { ok: boolean };
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
           throw error;
         }
       },

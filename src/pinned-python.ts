@@ -88,6 +88,85 @@ def reject_unsafe_endpoint(st):
     if stat.S_ISREG(mode) and st.st_nlink > 1:
         raise OSError(errno.EPERM, "hardlinked file endpoint is not allowed")
 
+def copy_bytes(source_fd, dest_fd):
+    while True:
+        chunk = os.read(source_fd, 65536)
+        if not chunk:
+            break
+        view = memoryview(chunk)
+        while view:
+            written = os.write(dest_fd, view)
+            if written <= 0:
+                raise OSError(errno.EIO, "short write")
+            view = view[written:]
+
+def write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        if written <= 0:
+            raise OSError(errno.EIO, "short write")
+        view = view[written:]
+
+def link_unsupported(exc):
+    unsupported = (errno.EPERM, errno.EOPNOTSUPP, getattr(errno, "ENOTSUP", errno.EOPNOTSUPP))
+    return getattr(exc, "errno", None) in unsupported
+
+def link_no_replace(name, new_name, source_fd, target_fd):
+    linked = False
+    try:
+        os.link(name, new_name, src_dir_fd=source_fd, dst_dir_fd=target_fd, follow_symlinks=False)
+        linked = True
+        os.unlink(name, dir_fd=source_fd)
+    except Exception:
+        if linked:
+            try: os.unlink(new_name, dir_fd=target_fd)
+            except FileNotFoundError: pass
+        raise
+    os.fsync(source_fd)
+    if source_fd != target_fd:
+        os.fsync(target_fd)
+
+def copy_file_no_replace(source_parent_fd, source_name, target_parent_fd, basename, mode, expected=None, unlink_source=False):
+    source_fd = os.open(source_name, READ_FLAGS, dir_fd=source_parent_fd)
+    dest_fd = None
+    success = False
+    try:
+        if expected is not None:
+            source_stat = os.fstat(source_fd)
+            if source_stat.st_dev != expected.st_dev or source_stat.st_ino != expected.st_ino:
+                raise RuntimeError("fs-safe-source-mismatch")
+        dest_fd = os.open(basename, WRITE_FLAGS, mode, dir_fd=target_parent_fd)
+        copy_bytes(source_fd, dest_fd)
+        os.fsync(dest_fd)
+        success = True
+    finally:
+        os.close(source_fd)
+        if dest_fd is not None:
+            os.close(dest_fd)
+        if dest_fd is not None and not success:
+            try: os.unlink(basename, dir_fd=target_parent_fd)
+            except FileNotFoundError: pass
+    if unlink_source:
+        try:
+            os.unlink(source_name, dir_fd=source_parent_fd)
+        except Exception:
+            try: os.unlink(basename, dir_fd=target_parent_fd)
+            except FileNotFoundError: pass
+            raise
+
+def commit_temp_file(parent_fd, temp_name, basename, overwrite, mode):
+    if overwrite:
+        os.replace(temp_name, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+    else:
+        try:
+            os.link(temp_name, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+            os.unlink(temp_name, dir_fd=parent_fd)
+        except OSError as exc:
+            if not link_unsupported(exc):
+                raise
+            copy_file_no_replace(parent_fd, temp_name, parent_fd, basename, mode, unlink_source=True)
+
 def stat_path(root_fd, payload):
     relative = payload.get("relativePath", "")
     segments = split_relative(relative)
@@ -162,7 +241,18 @@ def rename_path(root_fd, payload):
     try:
         from_stat = os.lstat(from_base, dir_fd=from_parent_fd)
         reject_unsafe_endpoint(from_stat)
-        if not payload.get("overwrite", True):
+        overwrite = payload.get("overwrite", True)
+        if not overwrite and stat.S_ISREG(from_stat.st_mode):
+            try:
+                link_no_replace(from_base, to_base, from_parent_fd, to_parent_fd)
+            except OSError as exc:
+                if not link_unsupported(exc):
+                    raise
+                copy_file_no_replace(from_parent_fd, from_base, to_parent_fd, to_base, stat.S_IMODE(from_stat.st_mode), from_stat, True)
+            return None
+        if not overwrite and stat.S_ISDIR(from_stat.st_mode):
+            raise RuntimeError("fs-safe-directory-noreplace-unsupported")
+        if not overwrite:
             try:
                 os.lstat(to_base, dir_fd=to_parent_fd)
                 raise FileExistsError(errno.EEXIST, "destination exists", to_base)
@@ -207,16 +297,11 @@ def write_path(root_fd, payload):
             except FileNotFoundError:
                 pass
         temp_name, temp_fd = create_temp_file(parent_fd, basename, mode)
-        view = memoryview(data)
-        while view:
-            written = os.write(temp_fd, view)
-            if written <= 0:
-                raise OSError(errno.EIO, "short write")
-            view = view[written:]
+        write_all(temp_fd, data)
         os.fsync(temp_fd)
         os.close(temp_fd)
         temp_fd = None
-        os.replace(temp_name, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        commit_temp_file(parent_fd, temp_name, basename, overwrite, mode)
         temp_name = None
         os.fsync(parent_fd)
         result_stat = os.stat(basename, dir_fd=parent_fd, follow_symlinks=False)
@@ -249,12 +334,6 @@ def copy_path(root_fd, payload):
         if max_bytes >= 0 and source_stat.st_size > max_bytes:
             raise RuntimeError("fs-safe-too-large:%d:%d" % (max_bytes, source_stat.st_size))
         parent_fd = walk_dir(root_fd, split_relative(payload.get("relativeParentPath", "")), bool(payload.get("mkdir", True)))
-        if not overwrite:
-            try:
-                os.lstat(basename, dir_fd=parent_fd)
-                raise FileExistsError(errno.EEXIST, "destination exists", basename)
-            except FileNotFoundError:
-                pass
         temp_name, temp_fd = create_temp_file(parent_fd, basename, mode)
         written_bytes = 0
         while True:
@@ -273,7 +352,7 @@ def copy_path(root_fd, payload):
         os.fsync(temp_fd)
         os.close(temp_fd)
         temp_fd = None
-        os.replace(temp_name, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        commit_temp_file(parent_fd, temp_name, basename, overwrite, mode)
         temp_name = None
         os.fsync(parent_fd)
         result_stat = os.stat(basename, dir_fd=parent_fd, follow_symlinks=False)
@@ -431,6 +510,9 @@ function mapWorkerError(response: Record<string, unknown>): Error {
   if (message.includes("fs-safe-source-mismatch")) {
     return new FsSafeError("path-mismatch", "source path changed during copy");
   }
+  if (message.includes("fs-safe-directory-noreplace-unsupported")) {
+    return new FsSafeError("invalid-path", "directory moves require overwrite: true");
+  }
   if (code === "FileNotFoundError" || errno === 2) {
     return new FsSafeError("not-found", "file not found");
   }
@@ -449,31 +531,37 @@ function mapWorkerError(response: Record<string, unknown>): Error {
   return new FsSafeError("helper-failed", message);
 }
 
-function rejectPending(error: Error): void {
-  if (!worker) {
+function rejectPending(error: Error, targetWorker = worker): void {
+  if (!targetWorker || worker !== targetWorker) {
     return;
   }
-  setWorkerRef(worker, false);
-  for (const pending of worker.pending.values()) {
+  setWorkerRef(targetWorker, false);
+  for (const pending of targetWorker.pending.values()) {
     pending.reject(error);
   }
-  worker.pending.clear();
+  targetWorker.pending.clear();
   worker = null;
 }
 
-function handleWorkerLine(line: string): void {
-  if (!worker || !line.trim()) {
+function handleWorkerLine(currentWorker: PinnedPythonWorker, line: string): void {
+  if (worker !== currentWorker || !line.trim()) {
     return;
   }
   let decoded: unknown;
   try {
     decoded = JSON.parse(line) as unknown;
   } catch {
-    rejectPending(new FsSafeError("helper-failed", `pinned helper returned invalid JSON: ${line}`));
+    rejectPending(
+      new FsSafeError("helper-failed", `pinned helper returned invalid JSON: ${line}`),
+      currentWorker,
+    );
     return;
   }
   if (typeof decoded !== "object" || decoded === null || !("id" in decoded)) {
-    rejectPending(new FsSafeError("helper-failed", "pinned helper returned invalid response"));
+    rejectPending(
+      new FsSafeError("helper-failed", "pinned helper returned invalid response"),
+      currentWorker,
+    );
     return;
   }
   const response = decoded as { id?: unknown; ok?: unknown; result?: unknown };
@@ -481,13 +569,13 @@ function handleWorkerLine(line: string): void {
   if (id === undefined) {
     return;
   }
-  const pending = worker.pending.get(id);
+  const pending = currentWorker.pending.get(id);
   if (!pending) {
     return;
   }
-  worker.pending.delete(id);
-  if (worker.pending.size === 0) {
-    setWorkerRef(worker, false);
+  currentWorker.pending.delete(id);
+  if (currentWorker.pending.size === 0) {
+    setWorkerRef(currentWorker, false);
   }
   if (response.ok === true) {
     pending.resolve(response.result);
@@ -504,28 +592,28 @@ function getWorker() {
   const child = spawn(resolvePython(), ["-u", "-c", PINNED_PYTHON_WORKER_SOURCE], {
     stdio: ["pipe", "pipe", "pipe"],
   });
-  worker = { child, pending: new Map(), stderr: "", stdoutBuffer: "" };
+  const currentWorker: PinnedPythonWorker = { child, pending: new Map(), stderr: "", stdoutBuffer: "" };
+  worker = currentWorker;
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
-    const current = worker;
-    if (!current) {
+    if (worker !== currentWorker) {
       return;
     }
-    current.stdoutBuffer += chunk;
+    currentWorker.stdoutBuffer += chunk;
     for (;;) {
-      const newline = current.stdoutBuffer.indexOf("\n");
+      const newline = currentWorker.stdoutBuffer.indexOf("\n");
       if (newline < 0) {
         break;
       }
-      const line = current.stdoutBuffer.slice(0, newline);
-      current.stdoutBuffer = current.stdoutBuffer.slice(newline + 1);
-      handleWorkerLine(line);
+      const line = currentWorker.stdoutBuffer.slice(0, newline);
+      currentWorker.stdoutBuffer = currentWorker.stdoutBuffer.slice(newline + 1);
+      handleWorkerLine(currentWorker, line);
     }
   });
   child.stderr.on("data", (chunk: string) => {
-    if (worker) {
-      worker.stderr = `${worker.stderr}${chunk}`.slice(-4096);
+    if (worker === currentWorker) {
+      currentWorker.stderr = `${currentWorker.stderr}${chunk}`.slice(-4096);
     }
   });
   child.once("error", (error) => {
@@ -534,22 +622,23 @@ function getWorker() {
       : error instanceof Error
         ? error
         : new Error(String(error));
-    rejectPending(mapped);
+    rejectPending(mapped, currentWorker);
   });
   child.once("close", (code, signal) => {
-    const stderr = worker?.stderr.trim();
+    const stderr = currentWorker.stderr.trim();
     rejectPending(
       new FsSafeError(
         "helper-failed",
         stderr || `pinned helper exited with code ${code ?? "null"} (${signal ?? "?"})`,
       ),
+      currentWorker,
     );
   });
   process.once("exit", () => {
     child.kill("SIGTERM");
   });
-  setWorkerRef(worker, false);
-  return worker;
+  setWorkerRef(currentWorker, false);
+  return currentWorker;
 }
 
 function setRefable(value: unknown, ref: boolean): void {

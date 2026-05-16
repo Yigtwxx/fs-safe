@@ -73,7 +73,23 @@ export async function prepareArchiveDestinationDir(destDir: string): Promise<str
       "archive destination is not a directory",
     );
   }
-  return await fs.realpath(destDir);
+  const realPath = await fs.realpath(destDir);
+  const realStat = await fs.stat(realPath);
+  const postStat = await fs.lstat(destDir);
+  if (
+    realStat.dev !== stat.dev ||
+    realStat.ino !== stat.ino ||
+    postStat.isSymbolicLink() ||
+    !postStat.isDirectory() ||
+    postStat.dev !== stat.dev ||
+    postStat.ino !== stat.ino
+  ) {
+    throw new ArchiveSecurityError(
+      "destination-symlink-traversal",
+      "archive destination changed during extraction",
+    );
+  }
+  return realPath;
 }
 
 async function assertNoSymlinkTraversal(params: {

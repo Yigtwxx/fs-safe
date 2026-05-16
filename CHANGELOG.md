@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Security and Correctness
+
+- Reject Windows drive-letter paths on POSIX secure-file reads, missing path fallbacks under symlinked parents, swapped archive destination roots, broad domain ACL principals, and hardlinked sync store reads.
+- Preserve top-level JSON `null` values in JSON stores and reject non-document JSON values such as top-level `undefined` before replacing files.
+- Fix timeout error factories, root-relative path resolution at filesystem roots, dot-prefixed child names in root path helpers, durable queue directory modes, and pinned helper stale-worker events.
+
+### Build
+
+- Clean `dist` before package builds and make prepack fail deterministically when dependencies are missing instead of resolving new toolchain versions at publish time.
+
+### Tests
+
+- Added Clawpatch regression coverage for secure reads, path fallback validation, sync stores, archive destination races, Windows ACL classification, JSON writes/stores, durable queue modes, root create no-clobber behavior, and pinned helper worker replacement.
+
 ## 0.2.4 - 2026-05-14
 
 ### Features

@@ -99,7 +99,7 @@
   },
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",
-    "build": "tsc -p tsconfig.json",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
     "lint:file-size": "node scripts/check-file-size.mjs",
     "lint:fs-boundary": "node scripts/check-fs-boundary-primitives.mjs",
     "prepack": "node scripts/prepack-build.mjs",

@@ -149,7 +149,7 @@ export function splitSafeRelativePath(relativePath: string): string[] {
 export function resolveSafeRelativePath(rootDir: string, relativePath: string): string {
   const root = path.resolve(rootDir);
   const target = path.resolve(root, ...splitSafeRelativePath(relativePath));
-  if (target !== root && !target.startsWith(root + path.sep)) {
+  if (!isPathInside(root, target)) {
     throw new FsSafeError("outside-workspace", "relative path escapes root");
   }
   return target;

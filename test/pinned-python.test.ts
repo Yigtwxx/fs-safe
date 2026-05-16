@@ -244,4 +244,39 @@ describe("persistent Python helper worker", () => {
       code: process.platform === "win32" ? "unsupported-platform" : "helper-unavailable",
     });
   });
+
+  it.runIf(process.platform !== "win32")("ignores stale events from a replaced worker", async () => {
+    const oldChild = makeChild();
+    const newChild = makeChild((line) => {
+      const request = JSON.parse(line) as { id: number };
+      queueMicrotask(() => {
+        newChild.stdout.emit(
+          "data",
+          `${JSON.stringify({ id: request.id, ok: true, result: { ok: true } })}\n`,
+        );
+      });
+    });
+    spawnMock.mockReturnValueOnce(oldChild).mockReturnValueOnce(newChild);
+    configureFsSafePython({ mode: "auto", pythonPath: "/tmp/fake-python" });
+
+    const first = runPinnedPythonOperation({
+      operation: "stat",
+      rootPath: "/tmp/root",
+      payload: { relativePath: "a.txt" },
+    });
+    oldChild.emit(
+      "error",
+      Object.assign(new Error("old failed"), { code: "ENOENT", syscall: "spawn python3" }),
+    );
+    await expect(first).rejects.toMatchObject({ code: "helper-unavailable" });
+
+    const second = runPinnedPythonOperation({
+      operation: "stat",
+      rootPath: "/tmp/root",
+      payload: { relativePath: "b.txt" },
+    });
+    oldChild.emit("close", 1, null);
+
+    await expect(second).resolves.toEqual({ ok: true });
+  });
 });

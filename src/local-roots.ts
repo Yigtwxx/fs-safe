@@ -179,7 +179,12 @@ export async function readLocalFileFromRoots(
     }
 
     const relativePath = path.relative(scopedRoot.rootDir, requestedPath);
-    if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    if (
+      !relativePath ||
+      relativePath === ".." ||
+      relativePath.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relativePath)
+    ) {
       continue;
     }
 

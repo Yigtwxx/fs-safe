@@ -57,7 +57,11 @@ export type SecureFileReadResult = {
 };
 
 function isAbsolutePathname(value: string): boolean {
-  return path.isAbsolute(value) || isWindowsDriveLetterPath(value, "win32") || isWindowsNetworkPath(value, "win32");
+  return (
+    path.isAbsolute(value) ||
+    (process.platform === "win32" &&
+      (isWindowsDriveLetterPath(value, "win32") || isWindowsNetworkPath(value, "win32")))
+  );
 }
 
 function label(options: SecureFileReadOptions): string {

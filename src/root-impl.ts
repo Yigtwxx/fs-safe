@@ -43,6 +43,7 @@ import {
   normalizePinnedWriteError,
 } from "./root-errors.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { stringifyJsonDocument } from "./json-stringify.js";
 import type { DirEntry, PathStat } from "./types.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 import { serializePathWrite } from "./write-queue.js";
@@ -485,7 +486,7 @@ class RootHandle implements Root {
     options: RootWriteJsonOptions = {},
   ): Promise<void> {
     const { replacer, space, trailingNewline = true, ...writeOptions } = options;
-    const json = JSON.stringify(data, replacer, space);
+    const json = stringifyJsonDocument(data, replacer, space);
     await this.write(relativePath, trailingNewline ? `${json}\n` : json, writeOptions);
   }
 
@@ -495,7 +496,7 @@ class RootHandle implements Root {
     options: RootCreateJsonOptions = {},
   ): Promise<void> {
     const { replacer, space, trailingNewline = true, ...writeOptions } = options;
-    const json = JSON.stringify(data, replacer, space);
+    const json = stringifyJsonDocument(data, replacer, space);
     await this.create(relativePath, trailingNewline ? `${json}\n` : json, writeOptions);
   }
 
@@ -1485,7 +1486,9 @@ async function movePathFallback(
   if (sourceStat.isFile() && sourceStat.nlink > 1) {
     throw new FsSafeError("hardlink", "hardlinked path not allowed");
   }
-
+  if (!params.overwrite && sourceStat.isDirectory()) {
+    throw new FsSafeError("invalid-path", "directory moves require overwrite: true");
+  }
   if (!params.overwrite) {
     try {
       await fs.lstat(target.resolved);

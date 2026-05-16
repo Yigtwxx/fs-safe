@@ -28,7 +28,7 @@ export type JsonStore<T> = {
 
 export type JsonStoreAdapter<T> = {
   filePath: string;
-  readIfExists(): Promise<T | null>;
+  readIfExists(): Promise<T | undefined>;
   readRequired(): Promise<T>;
   write(value: T, options?: { trailingNewline?: boolean }): Promise<void>;
 };
@@ -66,11 +66,12 @@ export function createJsonStore<T>(
   const locks = lockOptions ? createSidecarLockManager(lockOptions.managerKey) : null;
 
   async function read(): Promise<T | undefined> {
-    return (await adapter.readIfExists()) ?? undefined;
+    return await adapter.readIfExists();
   }
 
   async function readOr(fallback: T): Promise<T> {
-    return (await read()) ?? cloneFallback(fallback);
+    const current = await read();
+    return current === undefined ? cloneFallback(fallback) : current;
   }
 
   async function write(value: T): Promise<void> {
@@ -115,7 +116,8 @@ export function createJsonStore<T>(
       }),
     updateOr: async (fallback, run) =>
       await withOptionalLock(async () => {
-        const next = await run((await read()) ?? cloneFallback(fallback));
+        const current = await read();
+        const next = await run(current === undefined ? cloneFallback(fallback) : current);
         await write(next);
         return next;
       }),

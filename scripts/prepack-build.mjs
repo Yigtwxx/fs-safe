@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 
@@ -26,25 +26,8 @@ function run(command, args, env = {}) {
 let tscBin = resolveTypeScriptCompiler();
 
 if (!tscBin || !existsSync(tscBin)) {
-  run(
-    "pnpm",
-    [
-      "add",
-      "--save-dev",
-      "typescript@^5.8.3",
-      "@types/node@^22.15.19",
-      "--ignore-scripts",
-      "--lockfile=false",
-    ],
-    {
-      npm_config_lockfile_only: "false",
-      PNPM_CONFIG_LOCKFILE_ONLY: "false",
-    },
-  );
-  tscBin = resolveTypeScriptCompiler();
-  if (!tscBin || !existsSync(tscBin)) {
-    throw new Error("TypeScript compiler is unavailable after installing dev dependencies");
-  }
+  throw new Error("TypeScript compiler is unavailable; run pnpm install before packing");
 }
 
+rmSync("dist", { recursive: true, force: true });
 run(process.execPath, [tscBin, "-p", "tsconfig.json"]);

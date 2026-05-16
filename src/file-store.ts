@@ -20,6 +20,7 @@ import {
 } from "./file-store-boundary.js";
 import { readFileStoreCopySource } from "./file-store-source.js";
 import { createJsonStore, type JsonFileStoreOptions, type JsonStore } from "./json-document-store.js";
+import { stringifyJsonDocument } from "./json-stringify.js";
 import { isPathInside, resolveSafeRelativePath } from "./path.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
 import { DEFAULT_ROOT_MAX_BYTES } from "./root-impl.js";
@@ -352,7 +353,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
     exists: async (relativePath) => await (await openRoot()).exists(assertRelativePath(relativePath)),
     writeText: async (relativePath, data, writeOptions) => await write(relativePath, data, writeOptions),
     writeJson: async (relativePath, data, writeOptions) => {
-      const json = JSON.stringify(data, null, 2);
+      const json = stringifyJsonDocument(data, null, 2);
       return await write(
         relativePath,
         writeOptions?.trailingNewline === false ? json : `${json}\n`,
@@ -369,7 +370,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
               return await (await openRoot()).readJson<T>(assertRelativePath(relativePath));
             } catch (error) {
               if (isNotFound(error)) {
-                return null;
+                return undefined;
               }
               throw error;
             }
@@ -377,7 +378,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
           readRequired: async () =>
             await (await openRoot()).readJson<T>(assertRelativePath(relativePath)),
           write: async (value, options) => {
-            const json = JSON.stringify(value, null, 2);
+            const json = stringifyJsonDocument(value, null, 2);
             await write(
               relativePath,
               options?.trailingNewline === false ? json : `${json}\n`,
@@ -546,7 +547,7 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
         absolutePath: targetPath,
         rootPath: rootDir,
         boundaryLabel: "store root",
-        rejectHardlinks: privateMode,
+        rejectHardlinks: true,
       });
       if (!opened.ok) {
         return handleSyncStoreReadOpenFailure(opened);
@@ -568,7 +569,7 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
     write,
     writeText: (relativePath, data, writeOptions) => write(relativePath, data, writeOptions),
     writeJson: (relativePath, data, writeOptions) => {
-      const json = JSON.stringify(data, null, 2);
+      const json = stringifyJsonDocument(data, null, 2);
       return write(
         relativePath,
         writeOptions?.trailingNewline === false ? json : `${json}\n`,

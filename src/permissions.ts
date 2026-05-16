@@ -82,7 +82,6 @@ const TRUSTED_BASE = new Set([
   "autoridade nt\\system",
 ]);
 const WORLD_SUFFIXES = ["\\users", "\\authenticated users"];
-const TRUSTED_SUFFIXES = ["\\administrators", "\\system", "\\système"];
 const SID_RE = /^\*?s-\d+-\d+(-\d+)+$/i;
 const TRUSTED_SIDS = new Set([
   "s-1-5-18",
@@ -97,6 +96,11 @@ const STATUS_PREFIXES = [
   "no mapping between account names",
 ];
 
+function stripDiacritics(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+const TRUSTED_BASE_ASCII = new Set([...TRUSTED_BASE].map(stripDiacritics));
 const normalize = (value: string) => normalizeLowercaseStringOrEmpty(value);
 const defaultWindowsUserInfo: WindowsUserInfoProvider = () => os.userInfo();
 
@@ -341,10 +345,7 @@ function classifyPrincipal(
     if (TRUSTED_SIDS.has(sid) || trustedPrincipals.has(sid)) return "trusted";
     return "group";
   }
-  if (
-    trustedPrincipals.has(normalized) ||
-    TRUSTED_SUFFIXES.some((suffix) => normalized.endsWith(suffix))
-  ) {
+  if (trustedPrincipals.has(normalized) || TRUSTED_BASE.has(normalized)) {
     return "trusted";
   }
   if (
@@ -353,15 +354,8 @@ function classifyPrincipal(
   ) {
     return "world";
   }
-  const stripped = normalized.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  if (
-    stripped !== normalized &&
-    (TRUSTED_BASE.has(stripped) ||
-      TRUSTED_SUFFIXES.some((suffix) => {
-        const strippedSuffix = suffix.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        return stripped.endsWith(strippedSuffix);
-      }))
-  ) {
+  const stripped = stripDiacritics(normalized);
+  if (stripped !== normalized && TRUSTED_BASE_ASCII.has(stripped)) {
     return "trusted";
   }
   return "group";

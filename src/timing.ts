@@ -19,7 +19,13 @@ export async function withTimeout<T>(
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timeoutId = setTimeout(() => reject(createError()), timeoutMs);
+        timeoutId = setTimeout(() => {
+          try {
+            reject(createError());
+          } catch (error) {
+            reject(error);
+          }
+        }, timeoutMs);
       }),
     ]);
   } finally {

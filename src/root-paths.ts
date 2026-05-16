@@ -106,7 +106,7 @@ export function resolvePathWithinRoot(params: {
   }
   const resolved = path.resolve(root, raw);
   const rel = path.relative(root, resolved);
-  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
+  if (!rel || rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
     return { ok: false, error: `Invalid path: must stay within ${params.scopeLabel}` };
   }
   return { ok: true, path: resolved };
@@ -177,7 +177,7 @@ async function assertNoSymlinkSegments(params: {
   scopeLabel: string;
 }): Promise<void> {
   const relative = path.relative(params.rootDir, params.targetPath);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error(`Invalid path: must stay within ${params.scopeLabel}`);
   }
   let current = params.rootDir;
@@ -353,7 +353,10 @@ async function resolveCheckedPathsWithinRoot(
   const root = rootRealPath ? await openRoot(rootDir) : undefined;
 
   const isInRoot = (relativePath: string) =>
-    Boolean(relativePath) && !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
+    Boolean(relativePath) &&
+    relativePath !== ".." &&
+    !relativePath.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relativePath);
 
   const resolveExistingRelativePath = async (
     requestedPath: string,
@@ -408,6 +411,24 @@ async function resolveCheckedPathsWithinRoot(
       resolvedPaths.push(opened.realPath);
     } catch (err) {
       if (allowMissingFallback && err instanceof FsSafeError && err.code === "not-found") {
+        if (!rootRealPath) {
+          resolvedPaths.push(pathResult.fallbackPath);
+          continue;
+        }
+        try {
+          await assertNoSymlinkSegments({
+            rootDir,
+            targetPath: pathResult.fallbackPath,
+            scopeLabel: params.scopeLabel,
+          });
+          const existingPath = await resolveNearestExistingPath(pathResult.fallbackPath);
+          const existingRealPath = await fs.realpath(existingPath);
+          if (!isPathInside(rootRealPath, existingRealPath)) {
+            return invalidPath(params.scopeLabel);
+          }
+        } catch {
+          return invalidPath(params.scopeLabel);
+        }
         resolvedPaths.push(pathResult.fallbackPath);
         continue;
       }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import path from "node:path";
+import { stringifyJsonDocument } from "./json-stringify.js";
 import { readRegularFile, readRegularFileSync } from "./regular-file.js";
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
@@ -105,7 +106,7 @@ export function tryReadJsonSync<T = unknown>(pathname: string): T | null {
 export function writeJsonSync(pathname: string, data: unknown) {
   const targetPath = pathname;
   const tmpPath = `${targetPath}.${randomUUID()}.tmp`;
-  const payload = `${JSON.stringify(data, null, 2)}\n`;
+  const payload = `${stringifyJsonDocument(data, null, 2)}\n`;
 
   fsSync.mkdirSync(path.dirname(targetPath), { recursive: true, mode: JSON_DIR_MODE });
   try {
@@ -299,7 +300,7 @@ export async function writeJson(
   value: unknown,
   options?: WriteJsonOptions,
 ) {
-  const text = JSON.stringify(value, null, 2);
+  const text = stringifyJsonDocument(value, null, 2);
   await writeTextAtomic(filePath, text, {
     mode: options?.mode,
     dirMode: options?.dirMode,
