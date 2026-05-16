@@ -231,8 +231,7 @@ describe("secure file reads", () => {
       .toMatchObject({ code: "invalid-path" });
   });
 
-  it("rejects overly broad POSIX permissions", async () => {
-    if (process.platform === "win32") return;
+  it.runIf(process.platform !== "win32")("rejects overly broad POSIX permissions", async () => {
     const filePath = path.join(root, "too-open.txt");
     await fs.writeFile(filePath, "secret", { mode: 0o644 });
     await fs.chmod(filePath, 0o644);
@@ -512,8 +511,7 @@ describe("directory walking", () => {
     expect(truncated.scannedEntryCount).toBe(1);
   });
 
-  it("does not recurse forever through followed symlink cycles", async () => {
-    if (process.platform === "win32") return;
+  it.runIf(process.platform !== "win32")("does not recurse forever through followed symlink cycles", async () => {
     await fs.mkdir(path.join(root, "a"), { recursive: true });
     await fs.writeFile(path.join(root, "a", "file.txt"), "1");
     await fs.symlink(root, path.join(root, "a", "loop"));
@@ -814,7 +812,7 @@ describe("atomic file replacement", () => {
     expect(entries.filter((entry) => entry.startsWith(".cron-store"))).toEqual([]);
   });
 
-  it("applies requested directory and file modes", async () => {
+  it.runIf(process.platform !== "win32")("applies requested directory and file modes", async () => {
     const filePath = path.join(root, "nested", "mode.txt");
     await replaceFileAtomic({
       filePath,
@@ -823,10 +821,8 @@ describe("atomic file replacement", () => {
       mode: 0o644,
     });
 
-    if (process.platform !== "win32") {
-      expect((await fs.stat(path.dirname(filePath))).mode & 0o777).toBe(0o755);
-      expect((await fs.stat(filePath)).mode & 0o777).toBe(0o644);
-    }
+    expect((await fs.stat(path.dirname(filePath))).mode & 0o777).toBe(0o755);
+    expect((await fs.stat(filePath)).mode & 0o777).toBe(0o644);
   });
 
   it("supports sync replacement", async () => {

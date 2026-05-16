@@ -305,10 +305,7 @@ describe("@openclaw/fs-safe", () => {
     await expect(readdir(rootPath)).resolves.toEqual([]);
   });
 
-  it("rejects pinned copy when the source path is swapped after identity capture", async () => {
-    if (process.platform === "win32") {
-      return;
-    }
+  it.runIf(process.platform !== "win32")("rejects pinned copy when the source path is swapped after identity capture", async () => {
     const { runPinnedCopyHelper } = await import("../src/pinned-write.js");
     const rootPath = await tempRoot("fs-safe-copy-source-swap-root-");
     const sourceRoot = await tempRoot("fs-safe-copy-source-swap-source-");
@@ -400,33 +397,29 @@ describe("@openclaw/fs-safe", () => {
     );
   });
 
-  it("honors mode on root text and JSON writes", async () => {
+  it.runIf(process.platform !== "win32")("honors mode on root text and JSON writes", async () => {
     const rootPath = await tempRoot("fs-safe-write-mode-");
     const root = await openRoot(rootPath);
 
     await root.write("secret.txt", "secret", { mode: 0o640 });
     await root.writeJson("secret.json", { ok: true }, { mode: 0o640 });
 
-    if (process.platform !== "win32") {
-      await expect(stat(path.join(rootPath, "secret.txt")).then((s) => s.mode & 0o777)).resolves
-        .toBe(0o640);
-      await expect(stat(path.join(rootPath, "secret.json")).then((s) => s.mode & 0o777)).resolves
-        .toBe(0o640);
-    }
+    await expect(stat(path.join(rootPath, "secret.txt")).then((s) => s.mode & 0o777)).resolves
+      .toBe(0o640);
+    await expect(stat(path.join(rootPath, "secret.json")).then((s) => s.mode & 0o777)).resolves
+      .toBe(0o640);
   });
 
-  it("honors default mode on root writes", async () => {
+  it.runIf(process.platform !== "win32")("honors default mode on root writes", async () => {
     const rootPath = await tempRoot("fs-safe-default-write-mode-");
     const root = await openRoot(rootPath, { mode: 0o640 });
 
     await root.write("secret.txt", "secret");
     await root.writeJson("secret.json", { ok: true });
 
-    if (process.platform !== "win32") {
-      await expect(stat(path.join(rootPath, "secret.txt")).then((s) => s.mode & 0o777)).resolves
-        .toBe(0o640);
-      await expect(stat(path.join(rootPath, "secret.json")).then((s) => s.mode & 0o777)).resolves
-        .toBe(0o640);
-    }
+    await expect(stat(path.join(rootPath, "secret.txt")).then((s) => s.mode & 0o777)).resolves
+      .toBe(0o640);
+    await expect(stat(path.join(rootPath, "secret.json")).then((s) => s.mode & 0o777)).resolves
+      .toBe(0o640);
   });
 });

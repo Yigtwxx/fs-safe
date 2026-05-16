@@ -244,7 +244,7 @@ describe("clawpatch regression coverage", () => {
     expect((await fs.stat(failedDir)).isDirectory()).toBe(true);
   });
 
-  it.runIf(process.platform !== "win32")("allows durable queue dirs below a symlinked missing prefix", async () => {
+  it.runIf(process.platform === "darwin")("allows durable queue dirs below a symlinked missing prefix", async () => {
     const prefix = "/tmp";
     if (!(await fs.lstat(prefix)).isSymbolicLink()) {
       return;
