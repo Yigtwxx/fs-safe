@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## 0.2.5 - 2026-05-16
 
 ### Security and Correctness
