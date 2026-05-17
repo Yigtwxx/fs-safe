@@ -10,6 +10,7 @@ import {
 } from "../src/pinned-python-config.js";
 import {
   __resetPinnedPythonWorkerForTest,
+  isPinnedHelperUnavailable,
   runPinnedPythonOperation,
 } from "../src/pinned-python.js";
 import * as configSubpath from "../src/config.js";
@@ -278,5 +279,41 @@ describe("persistent Python helper worker", () => {
     oldChild.emit("close", 1, null);
 
     await expect(second).resolves.toEqual({ ok: true });
+  });
+
+  it("classifies helper unavailable errors", () => {
+    expect(isPinnedHelperUnavailable(Object.assign(new Error("missing"), {
+      code: "helper-unavailable",
+    }))).toBe(true);
+    expect(isPinnedHelperUnavailable(Object.assign(new Error("other"), {
+      code: "helper-failed",
+    }))).toBe(false);
+  });
+
+  it("maps root identity mismatches", async () => {
+    const child = makeChild((line) => {
+      const request = JSON.parse(line) as { id: number };
+      queueMicrotask(() => {
+        child.stdout.emit(
+          "data",
+          `${JSON.stringify({
+            code: "RuntimeError",
+            id: request.id,
+            message: "fs-safe-root-mismatch",
+            ok: false,
+          })}\n`,
+        );
+      });
+    });
+    spawnMock.mockReturnValue(child);
+    configureFsSafePython({ mode: "auto", pythonPath: "/tmp/fake-python" });
+
+    await expect(
+      runPinnedPythonOperation({
+        operation: "stat",
+        rootPath: "/tmp/root",
+        payload: { relativePath: "" },
+      }),
+    ).rejects.toMatchObject({ code: "path-mismatch" });
   });
 });

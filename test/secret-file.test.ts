@@ -102,6 +102,23 @@ describe("secret file helpers", () => {
     }
   });
 
+  it.runIf(process.platform !== "win32")("keeps private secret file mode under restrictive umask", async () => {
+    const root = await tempRoot("fs-safe-secret-umask-");
+    const filePath = path.join(root, "token.txt");
+    const oldUmask = process.umask(0o777);
+    try {
+      await writeSecretFileAtomic({
+        rootDir: root,
+        filePath,
+        content: "secret\n",
+      });
+    } finally {
+      process.umask(oldUmask);
+    }
+
+    expect((await fs.stat(filePath)).mode & 0o777).toBe(PRIVATE_SECRET_FILE_MODE);
+  });
+
   it("accepts stricter private secret file and directory modes", async () => {
     const root = await tempRoot("fs-safe-secret-");
     const filePath = path.join(root, "nested", "token.txt");

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { isNotFoundPathError, isPathInside } from "./path.js";
+import { isNotFoundPathError, isPathInside, isPathRelativeEscape } from "./path.js";
 
 type RootPathIntent = "read" | "write" | "create" | "delete" | "stat";
 
@@ -770,7 +770,7 @@ function relativeInsideRoot(rootPath: string, targetPath: string): string {
   if (!relative || relative === ".") {
     return "";
   }
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  if (isPathRelativeEscape(relative)) {
     return "";
   }
   return relative;

@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
+import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Transform, type Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import { createNearestExistingDirectoryGuard } from "./directory-guard.js";
+import type { Readable } from "node:stream";
+import { createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
+import { sameFileIdentity } from "./file-identity.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
+import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { canFallbackFromPythonError, getFsSafePythonConfig } from "./pinned-python-config.js";
 import {
   assertPinnedPythonOperationAvailable,
@@ -46,39 +48,29 @@ function assertWithinMaxBytes(bytes: number, maxBytes: number | undefined): void
   }
 }
 
-function createMaxBytesTransform(maxBytes: number | undefined): Transform | undefined {
-  if (maxBytes === undefined) {
-    return undefined;
-  }
-  let bytes = 0;
-  return new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      bytes += chunk.byteLength;
-      if (bytes > maxBytes) {
-        callback(
-          new FsSafeError(
-            "too-large",
-            `file exceeds limit of ${maxBytes} bytes (got at least ${bytes})`,
-          ),
-        );
-        return;
-      }
-      callback(null, chunk);
-    },
-  });
-}
-
-async function pipelineWithMaxBytes(
+async function writeStreamToHandle(
   stream: Readable,
-  destination: NodeJS.WritableStream,
+  handle: FileHandle,
   maxBytes: number | undefined,
 ): Promise<void> {
-  const limiter = createMaxBytesTransform(maxBytes);
-  if (limiter) {
-    await pipeline(stream, limiter, destination);
-    return;
+  let bytes = 0;
+  for await (const chunk of stream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+    bytes += buffer.byteLength;
+    assertWithinMaxBytes(bytes, maxBytes);
+    let offset = 0;
+    while (offset < buffer.byteLength) {
+      const { bytesWritten } = await handle.write(
+        buffer,
+        offset,
+        buffer.byteLength - offset,
+      );
+      if (bytesWritten <= 0) {
+        throw new FsSafeError("helper-failed", "fallback stream write made no progress");
+      }
+      offset += bytesWritten;
+    }
   }
-  await pipeline(stream, destination);
 }
 
 async function inputToBase64(
@@ -113,20 +105,21 @@ export async function runPinnedWriteHelper(params: {
   overwrite?: boolean;
   maxBytes?: number;
   input: PinnedWriteInput;
+  rootIdentity?: FileIdentityStat;
 }): Promise<FileIdentityStat> {
   assertSafeBasename(params.basename);
   validatePinnedOperationPayload({
     relativeParentPath: params.relativeParentPath,
   });
   if (getFsSafePythonConfig().mode === "off") {
-    return await runPinnedWriteFallback(params);
+    return await runPinnedWriteFallbackOrThrow(params);
   }
   if (params.input.kind === "stream") {
     try {
       assertPinnedPythonOperationAvailable();
     } catch (error) {
       if (canFallbackFromPythonError(error)) {
-        return await runPinnedWriteFallback(params);
+        return await runPinnedWriteFallbackOrThrow(params, error);
       }
       throw error;
     }
@@ -139,6 +132,7 @@ export async function runPinnedWriteHelper(params: {
     mode: params.mode || 0o600,
     overwrite: params.overwrite !== false,
     relativeParentPath: params.relativeParentPath,
+    ...(params.rootIdentity ? { rootDev: params.rootIdentity.dev, rootIno: params.rootIdentity.ino } : {}),
   };
   try {
     return await runPinnedPythonOperation<FileIdentityStat>({
@@ -148,7 +142,7 @@ export async function runPinnedWriteHelper(params: {
     });
   } catch (error) {
     if (canFallbackFromPythonError(error)) {
-      return await runPinnedWriteFallback(params);
+      return await runPinnedWriteFallbackOrThrow(params, error);
     }
     throw error;
   }
@@ -164,6 +158,7 @@ export async function runPinnedCopyHelper(params: {
   maxBytes?: number;
   sourcePath: string;
   sourceIdentity: FileIdentityStat;
+  rootIdentity?: FileIdentityStat;
 }): Promise<FileIdentityStat> {
   assertSafeBasename(params.basename);
   validatePinnedOperationPayload({
@@ -179,11 +174,26 @@ export async function runPinnedCopyHelper(params: {
       mode: params.mode || 0o600,
       overwrite: params.overwrite !== false,
       relativeParentPath: params.relativeParentPath,
+      ...(params.rootIdentity ? { rootDev: params.rootIdentity.dev, rootIno: params.rootIdentity.ino } : {}),
       sourceDev: params.sourceIdentity.dev,
       sourceIno: params.sourceIdentity.ino,
       sourcePath: params.sourcePath,
     },
   });
+}
+
+async function runPinnedWriteFallbackOrThrow(
+  params: Parameters<typeof runPinnedWriteFallback>[0],
+  cause?: unknown,
+): Promise<FileIdentityStat> {
+  if (process.platform !== "win32") {
+    throw new FsSafeError(
+      "helper-unavailable",
+      "Python helper is required for pinned writes on this platform",
+      { cause },
+    );
+  }
+  return await runPinnedWriteFallback(params);
 }
 
 async function runPinnedWriteFallback(params: {
@@ -199,12 +209,12 @@ async function runPinnedWriteFallback(params: {
   const parentPath = params.relativeParentPath
     ? path.join(params.rootPath, ...params.relativeParentPath.split("/"))
     : params.rootPath;
-  const parentGuard = await createNearestExistingDirectoryGuard(params.rootPath, parentPath);
   if (params.mkdir) {
-    await withAsyncDirectoryGuards([parentGuard], async () => {
-      await fs.mkdir(parentPath, { recursive: true });
-    });
+    await mkdirPathComponentsWithGuards({ rootReal: params.rootPath, targetPath: parentPath });
   }
+  const parentGuard = params.mkdir
+    ? await createAsyncDirectoryGuard(parentPath)
+    : await createNearestExistingDirectoryGuard(params.rootPath, parentPath);
   const targetPath = path.join(parentPath, params.basename);
   if (params.overwrite === false) {
     let handle = await withAsyncDirectoryGuards(
@@ -236,11 +246,7 @@ async function runPinnedWriteFallback(params: {
           await handle.writeFile(params.input.data);
         }
       } else {
-        await pipelineWithMaxBytes(
-          params.input.stream,
-          handle.createWriteStream(),
-          params.maxBytes,
-        );
+        await writeStreamToHandle(params.input.stream, handle, params.maxBytes);
       }
       const stat = await handle.stat();
       created = false;
@@ -262,7 +268,9 @@ async function runPinnedWriteFallback(params: {
       ? fsSync.constants.O_NOFOLLOW
       : 0);
   let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
-  let handleClosedByStream = false;
+  let tempStat: Awaited<ReturnType<NonNullable<typeof handle>["stat"]>> | undefined;
+  let targetStat: Awaited<ReturnType<typeof fs.lstat>> | undefined;
+  let renamed = false;
   try {
     handle = await fs.open(tempPath, tempFlags, params.mode);
     if (params.input.kind === "buffer") {
@@ -276,26 +284,33 @@ async function runPinnedWriteFallback(params: {
         await handle.writeFile(params.input.data);
       }
     } else {
-      const writable = handle.createWriteStream();
-      writable.once("close", () => {
-        handleClosedByStream = true;
-      });
-      await pipelineWithMaxBytes(params.input.stream, writable, params.maxBytes);
+      await writeStreamToHandle(params.input.stream, handle, params.maxBytes);
     }
-    if (!handleClosedByStream) {
-      await handle.close().catch(() => undefined);
-      handle = undefined;
+    tempStat = await handle.stat();
+    const tempPathStat = await fs.lstat(tempPath);
+    if (tempPathStat.isSymbolicLink() || !sameFileIdentity(tempPathStat, tempStat)) {
+      throw new FsSafeError("path-mismatch", "fallback temp path changed during write");
     }
+    const expectedTempStat = tempStat;
+    await handle.close().catch(() => undefined);
+    handle = undefined;
     await withAsyncDirectoryGuards([parentGuard], async () => {
       await fs.rename(tempPath, targetPath);
+      renamed = true;
+      targetStat = await fs.lstat(targetPath);
+      if (targetStat.isSymbolicLink() || !sameFileIdentity(targetStat, expectedTempStat)) {
+        throw new FsSafeError("path-mismatch", "fallback target changed during write");
+      }
     });
   } catch (error) {
-    if (handle && !handleClosedByStream) {
-      await handle.close().catch(() => undefined);
+    await handle?.close().catch(() => undefined);
+    if (!renamed) {
+      await fs.rm(tempPath, { force: true }).catch(() => undefined);
     }
-    await fs.rm(tempPath, { force: true }).catch(() => undefined);
     throw error;
   }
-  const stat = await fs.stat(targetPath);
-  return { dev: stat.dev, ino: stat.ino };
+  if (!targetStat) {
+    throw new FsSafeError("path-mismatch", "fallback target was not verified");
+  }
+  return { dev: targetStat.dev, ino: targetStat.ino };
 }

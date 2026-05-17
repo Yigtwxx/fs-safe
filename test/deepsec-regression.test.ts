@@ -3,11 +3,15 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileStore } from "../src/file-store.js";
+import { configureFsSafePython, root as openRoot } from "../src/index.js";
 import { loadPendingJsonDurableQueueEntries } from "../src/json-durable-queue.js";
 import { readLocalFileFromRoots, resolveLocalPathFromRootsSync } from "../src/local-roots.js";
+import { __resetPinnedPythonWorkerForTest, runPinnedPythonOperation } from "../src/pinned-python.js";
 import { replaceFileAtomic } from "../src/replace-file.js";
+import { resolveRootPath } from "../src/root-path.js";
+import { writeSecretFileAtomic } from "../src/secret-file.js";
 import { writeViaSiblingTempPath } from "../src/sibling-temp.js";
-import { buildRandomTempFilePath } from "../src/temp-target.js";
+import { buildRandomTempFilePath, tempFile } from "../src/temp-target.js";
 
 const tempDirs: string[] = [];
 
@@ -19,6 +23,8 @@ async function tempRoot(prefix: string): Promise<string> {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  __resetPinnedPythonWorkerForTest();
+  configureFsSafePython({ mode: "auto", pythonPath: undefined });
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { recursive: true, force: true })));
 });
 
@@ -57,6 +63,47 @@ describe("deepsec regressions", () => {
       }),
     ).resolves.toBeUndefined();
     await expect(fsp.readFile(target, "utf8")).resolves.toBe("ok");
+  });
+
+  it("preserves dot-prefixed relative paths in root path results", async () => {
+    const rootDir = await tempRoot("fs-safe-dot-relative-");
+
+    await expect(
+      resolveRootPath({
+        rootPath: rootDir,
+        absolutePath: path.join(rootDir, "..data", "file.txt"),
+        boundaryLabel: "root",
+      }),
+    ).resolves.toMatchObject({
+      relativePath: path.join("..data", "file.txt"),
+    });
+  });
+
+  it("normalizes caller-provided temp roots to absolute paths", async () => {
+    const base = await tempRoot("fs-safe-relative-temp-root-");
+    const oldCwd = process.cwd();
+    process.chdir(base);
+    try {
+      const built = buildRandomTempFilePath({
+        rootDir: "relative-temp",
+        prefix: "payload",
+        now: 1,
+        uuid: "abc",
+      });
+      expect(path.isAbsolute(built)).toBe(true);
+      expect(built.endsWith(path.join("relative-temp", "payload-1-abc"))).toBe(true);
+
+      await fsp.mkdir("relative-temp");
+      const tmp = await tempFile({ rootDir: "relative-temp", prefix: "payload" });
+      try {
+        expect(path.isAbsolute(tmp.dir)).toBe(true);
+        expect(path.isAbsolute(tmp.path)).toBe(true);
+      } finally {
+        await tmp.cleanup();
+      }
+    } finally {
+      process.chdir(oldCwd);
+    }
   });
 
   it.runIf(process.platform !== "win32")(
@@ -154,5 +201,163 @@ describe("deepsec regressions", () => {
     await expect(
       loadPendingJsonDurableQueueEntries({ queueDir, tempPrefix: "queue", maxBytes: 4 }),
     ).resolves.toEqual([]);
+  });
+
+  it.runIf(process.platform !== "win32")("rejects fallback writes when a missing parent is raced to a symlink", async () => {
+    configureFsSafePython({ mode: "off" });
+    const base = await tempRoot("fs-safe-fallback-mkdir-symlink-");
+    const rootDir = path.join(base, "root");
+    const outside = path.join(base, "outside");
+    await fsp.mkdir(rootDir);
+    await fsp.mkdir(outside);
+    const racedParent = path.join(rootDir, "link");
+    const realMkdir = fsp.mkdir;
+    let raced = false;
+    vi.spyOn(fsp, "mkdir").mockImplementation(async (target, options) => {
+      if (!raced && String(target).endsWith(path.join("root", "link"))) {
+        raced = true;
+        await fsp.symlink(outside, racedParent, "dir");
+      }
+      return await realMkdir(target, options as never);
+    });
+    const scoped = await openRoot(rootDir, { mkdir: true });
+
+    await expect(scoped.write("link/nested/payload.txt", "payload")).rejects.toBeTruthy();
+    await expect(fsp.lstat(path.join(outside, "nested"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.runIf(process.platform !== "win32")("rejects private secret writes when the root path is swapped", async () => {
+    const base = await tempRoot("fs-safe-secret-root-swap-");
+    const rootDir = path.join(base, "root");
+    const originalRoot = path.join(base, "root-original");
+    const outside = path.join(base, "outside");
+    await fsp.mkdir(rootDir);
+    await fsp.mkdir(outside);
+    const secretPath = path.join(rootDir, "nested", "secret.txt");
+    const realRealpath = fsp.realpath;
+    let swapped = false;
+    vi.spyOn(fsp, "realpath").mockImplementation(async (target, options) => {
+      if (!swapped && target === path.join(rootDir, "nested")) {
+        swapped = true;
+        await fsp.rename(rootDir, originalRoot);
+        await fsp.symlink(outside, rootDir, "dir");
+      }
+      return await realRealpath(target, options as never);
+    });
+
+    await expect(
+      writeSecretFileAtomic({ rootDir, filePath: secretPath, content: "secret" }),
+    ).rejects.toBeTruthy();
+    await expect(fsp.lstat(path.join(outside, "nested"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.runIf(process.platform !== "win32")("rejects private secret writes without the pinned helper", async () => {
+    configureFsSafePython({ mode: "off" });
+    const base = await tempRoot("fs-safe-secret-helper-required-");
+    const rootDir = path.join(base, "root");
+    await fsp.mkdir(rootDir);
+    const secretPath = path.join(rootDir, "secret.txt");
+
+    await expect(
+      writeSecretFileAtomic({ rootDir, filePath: secretPath, content: "secret" }),
+    ).rejects.toMatchObject({ code: "helper-unavailable" });
+    await expect(fsp.lstat(secretPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.runIf(process.platform !== "win32")("rejects private secret writes when the pinned parent is swapped", async () => {
+    const base = await tempRoot("fs-safe-secret-parent-swap-");
+    const rootDir = path.join(base, "root");
+    const outside = path.join(base, "outside");
+    const movedParent = path.join(base, "nested-original");
+    await fsp.mkdir(path.join(rootDir, "nested"), { recursive: true });
+    await fsp.mkdir(outside);
+    const secretPath = path.join(rootDir, "nested", "secret.txt");
+    const realLstat = fsp.lstat;
+    let swapped = false;
+    vi.spyOn(fsp, "lstat").mockImplementation(async (target, options) => {
+      if (!swapped && String(target).endsWith(path.join("nested", "secret.txt"))) {
+        swapped = true;
+        await fsp.rename(path.join(rootDir, "nested"), movedParent);
+        await fsp.symlink(outside, path.join(rootDir, "nested"), "dir");
+      }
+      return await realLstat(target, options as never);
+    });
+
+    await expect(
+      writeSecretFileAtomic({ rootDir, filePath: secretPath, content: "secret" }),
+    ).rejects.toBeTruthy();
+    await expect(fsp.lstat(path.join(outside, "secret.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.runIf(process.platform !== "win32")("rejects private secret writes when the parent is swapped after commit", async () => {
+    const base = await tempRoot("fs-safe-secret-parent-post-swap-");
+    const rootDir = path.join(base, "root");
+    const outside = path.join(base, "outside");
+    const movedParent = path.join(base, "nested-original");
+    const parentDir = path.join(rootDir, "nested");
+    await fsp.mkdir(parentDir, { recursive: true });
+    await fsp.mkdir(outside);
+    const secretPath = path.join(parentDir, "secret.txt");
+    const realLstat = fsp.lstat;
+    let swapped = false;
+    vi.spyOn(fsp, "lstat").mockImplementation(async (target, options) => {
+      if (!swapped && target === rootDir) {
+        try {
+          await realLstat(secretPath);
+          swapped = true;
+          await fsp.rename(parentDir, movedParent);
+          await fsp.symlink(outside, parentDir, "dir");
+        } catch {
+          // Wait until the helper has committed the file in the pinned parent.
+        }
+      }
+      return await realLstat(target, options as never);
+    });
+
+    await expect(
+      writeSecretFileAtomic({ rootDir, filePath: secretPath, content: "secret" }),
+    ).rejects.toBeTruthy();
+    await expect(fsp.lstat(path.join(outside, "secret.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.runIf(process.platform !== "win32")("rejects private secret writes when the final path is swapped after commit", async () => {
+    const base = await tempRoot("fs-safe-secret-final-post-swap-");
+    const rootDir = path.join(base, "root");
+    const outside = path.join(base, "outside");
+    const outsideFile = path.join(outside, "outside.txt");
+    await fsp.mkdir(rootDir);
+    await fsp.mkdir(outside);
+    await fsp.writeFile(outsideFile, "outside");
+    await fsp.chmod(outsideFile, 0o600);
+    const secretPath = path.join(rootDir, "secret.txt");
+    const finalSecretPath = path.join(await fsp.realpath(rootDir), "secret.txt");
+    const realOpen = fsp.open;
+    let swapped = false;
+    vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
+      if (!swapped && args[0] === finalSecretPath) {
+        swapped = true;
+        await fsp.rm(finalSecretPath, { force: true });
+        await fsp.symlink(outsideFile, finalSecretPath, "file");
+      }
+      return await realOpen(...args);
+    });
+
+    await expect(
+      writeSecretFileAtomic({ rootDir, filePath: secretPath, content: "secret" }),
+    ).rejects.toBeTruthy();
+    expect((await fsp.stat(outsideFile)).mode & 0o777).toBe(0o600);
+  });
+
+  it.runIf(process.platform !== "win32")("rejects pinned helper operations after root swaps", async () => {
+    const rootDir = await tempRoot("fs-safe-helper-root-identity-");
+    const stat = await fsp.lstat(rootDir);
+
+    await expect(
+      runPinnedPythonOperation({
+        operation: "stat",
+        rootPath: rootDir,
+        payload: { relativePath: "", rootDev: stat.dev + 1, rootIno: stat.ino },
+      }),
+    ).rejects.toMatchObject({ code: "path-mismatch" });
   });
 });

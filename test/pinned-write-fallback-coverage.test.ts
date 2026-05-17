@@ -23,6 +23,7 @@ vi.mock("node:child_process", () => {
 });
 
 const tempDirs = new Set<string>();
+const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
 
 async function tempRoot(prefix: string): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -31,6 +32,9 @@ async function tempRoot(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+  if (originalPlatform) {
+    Object.defineProperty(process, "platform", originalPlatform);
+  }
   for (const dir of tempDirs) {
     await fs.rm(dir, { recursive: true, force: true });
   }
@@ -39,8 +43,9 @@ afterEach(async () => {
 
 describe("pinned write fallback coverage", () => {
   it.runIf(process.platform !== "win32")(
-    "writes buffers, creates only when missing, streams, and enforces limits",
+    "writes buffers, creates only when missing, streams, and enforces limits on fallback platforms",
     async () => {
+      Object.defineProperty(process, "platform", { value: "win32" });
       const { runPinnedWriteHelper } = await import("../src/pinned-write.js");
       const root = await tempRoot("fs-safe-pinned-write-fallback-");
 
@@ -68,6 +73,25 @@ describe("pinned write fallback coverage", () => {
           input: { kind: "buffer", data: "again" },
         }),
       ).rejects.toMatchObject({ code: "EEXIST" });
+
+      const realOpen = fs.open;
+      vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+        const handle = await realOpen(...args);
+        if (String(args[0]).includes("streamed.txt")) {
+          const realWrite = handle.write.bind(handle);
+          vi.spyOn(handle, "write").mockImplementation((async (
+            buffer: Buffer,
+            offset = 0,
+            length = buffer.byteLength - offset,
+            position?: number | null,
+          ) => {
+            const partialLength = Math.max(1, Math.ceil(length / 2));
+            const result = await realWrite(buffer, offset, partialLength, position);
+            return { bytesWritten: result.bytesWritten, buffer };
+          }) as typeof handle.write);
+        }
+        return handle;
+      });
 
       const streamed = await runPinnedWriteHelper({
         rootPath: root,
@@ -101,6 +125,24 @@ describe("pinned write fallback coverage", () => {
       });
     },
   );
+
+  it.runIf(process.platform !== "win32")("fails closed on POSIX when helper fallback is needed", async () => {
+    const { runPinnedWriteHelper } = await import("../src/pinned-write.js");
+    const root = await tempRoot("fs-safe-pinned-write-no-fallback-");
+
+    await expect(runPinnedWriteHelper({
+      rootPath: root,
+      relativeParentPath: "",
+      basename: "created.txt",
+      mkdir: true,
+      mode: 0o600,
+      overwrite: true,
+      input: { kind: "buffer", data: "created", encoding: "utf8" },
+    })).rejects.toMatchObject({ code: "helper-unavailable" });
+    await expect(fs.stat(path.join(root, "created.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 
   it.runIf(process.platform === "win32")(
     "falls back on windows",

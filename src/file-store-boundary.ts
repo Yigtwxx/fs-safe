@@ -9,7 +9,7 @@ import {
   type SyncDirectoryGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { isPathInside } from "./path.js";
+import { isPathInside, isPathRelativeEscape } from "./path.js";
 import { resolveOpenedFileRealPathForHandle, root, type Root } from "./root.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 
@@ -162,7 +162,7 @@ export function ensureParentSync(params: {
   const rootDir = path.resolve(params.rootDir);
   const dir = path.dirname(path.resolve(params.filePath));
   const relative = path.relative(rootDir, dir);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  if (isPathRelativeEscape(relative)) {
     throw new FsSafeError("outside-workspace", "file path escapes store root");
   }
 

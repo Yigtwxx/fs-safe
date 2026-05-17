@@ -4,26 +4,20 @@ import { FsSafeError } from "./errors.js";
 import { getFsSafePythonConfig } from "./pinned-python-config.js";
 
 const PINNED_PYTHON_WORKER_SOURCE = String.raw`
-import base64
-import errno
-import json
-import os
-import secrets
-import stat
-import sys
-
+import base64, errno, json, os, secrets, stat, sys
 DIR_FLAGS = os.O_RDONLY
 if hasattr(os, "O_DIRECTORY"):
     DIR_FLAGS |= os.O_DIRECTORY
 if hasattr(os, "O_NOFOLLOW"):
     DIR_FLAGS |= os.O_NOFOLLOW
 READ_FLAGS = os.O_RDONLY
+if hasattr(os, "O_NONBLOCK"):
+    READ_FLAGS |= os.O_NONBLOCK
 if hasattr(os, "O_NOFOLLOW"):
     READ_FLAGS |= os.O_NOFOLLOW
 WRITE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL
 if hasattr(os, "O_NOFOLLOW"):
     WRITE_FLAGS |= os.O_NOFOLLOW
-
 def split_relative(value):
     if value in ("", "."):
         return []
@@ -36,10 +30,8 @@ def split_relative(value):
         if part == "..":
             raise OSError(errno.EPERM, "path traversal is not allowed")
     return parts
-
 def open_dir(path_value, dir_fd=None):
     return os.open(path_value, DIR_FLAGS, dir_fd=dir_fd)
-
 def walk_dir(root_fd, segments, mkdir_enabled=False):
     current_fd = os.dup(root_fd)
     try:
@@ -57,14 +49,12 @@ def walk_dir(root_fd, segments, mkdir_enabled=False):
     except Exception:
         os.close(current_fd)
         raise
-
 def parent_and_basename(root_fd, relative):
     segments = split_relative(relative)
     if not segments:
         raise OSError(errno.EPERM, "operation requires a non-root path")
     parent_fd = walk_dir(root_fd, segments[:-1])
     return parent_fd, segments[-1]
-
 def encode_stat(st):
     mode = st.st_mode
     return {
@@ -80,14 +70,12 @@ def encode_stat(st):
         "size": st.st_size,
         "uid": st.st_uid,
     }
-
 def reject_unsafe_endpoint(st):
     mode = st.st_mode
     if stat.S_ISLNK(mode):
         raise OSError(errno.ELOOP, "symlink endpoint is not allowed")
     if stat.S_ISREG(mode) and st.st_nlink > 1:
         raise OSError(errno.EPERM, "hardlinked file endpoint is not allowed")
-
 def copy_bytes(source_fd, dest_fd):
     while True:
         chunk = os.read(source_fd, 65536)
@@ -99,7 +87,6 @@ def copy_bytes(source_fd, dest_fd):
             if written <= 0:
                 raise OSError(errno.EIO, "short write")
             view = view[written:]
-
 def write_all(fd, data):
     view = memoryview(data)
     while view:
@@ -107,11 +94,9 @@ def write_all(fd, data):
         if written <= 0:
             raise OSError(errno.EIO, "short write")
         view = view[written:]
-
 def link_unsupported(exc):
     unsupported = (errno.EPERM, errno.EOPNOTSUPP, getattr(errno, "ENOTSUP", errno.EOPNOTSUPP))
     return getattr(exc, "errno", None) in unsupported
-
 def link_no_replace(name, new_name, source_fd, target_fd):
     linked = False
     try:
@@ -126,11 +111,9 @@ def link_no_replace(name, new_name, source_fd, target_fd):
     os.fsync(source_fd)
     if source_fd != target_fd:
         os.fsync(target_fd)
-
 def copy_file_no_replace(source_parent_fd, source_name, target_parent_fd, basename, mode, expected=None, unlink_source=False):
     source_fd = os.open(source_name, READ_FLAGS, dir_fd=source_parent_fd)
-    dest_fd = None
-    success = False
+    dest_fd = None; success = False; dest_stat = None
     try:
         if expected is not None:
             source_stat = os.fstat(source_fd)
@@ -139,6 +122,7 @@ def copy_file_no_replace(source_parent_fd, source_name, target_parent_fd, basena
         dest_fd = os.open(basename, WRITE_FLAGS, mode, dir_fd=target_parent_fd)
         copy_bytes(source_fd, dest_fd)
         os.fsync(dest_fd)
+        dest_stat = os.fstat(dest_fd)
         success = True
     finally:
         os.close(source_fd)
@@ -154,19 +138,40 @@ def copy_file_no_replace(source_parent_fd, source_name, target_parent_fd, basena
             try: os.unlink(basename, dir_fd=target_parent_fd)
             except FileNotFoundError: pass
             raise
-
-def commit_temp_file(parent_fd, temp_name, basename, overwrite, mode):
+    return dest_stat
+def same_identity(left, right):
+    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+def verify_temp_name(parent_fd, temp_name, expected_stat):
+    current_stat = os.lstat(temp_name, dir_fd=parent_fd)
+    if stat.S_ISLNK(current_stat.st_mode) or not same_identity(current_stat, expected_stat):
+        raise RuntimeError("fs-safe-temp-mismatch")
+def verify_committed_temp(parent_fd, basename, expected_stat):
+    final_stat = os.lstat(basename, dir_fd=parent_fd)
+    if not stat.S_ISLNK(final_stat.st_mode) and same_identity(final_stat, expected_stat):
+        return final_stat
+    try: os.unlink(basename, dir_fd=parent_fd)
+    except FileNotFoundError: pass
+    raise RuntimeError("fs-safe-temp-mismatch")
+def commit_temp_file(parent_fd, temp_name, basename, overwrite, mode, expected_stat):
+    verify_temp_name(parent_fd, temp_name, expected_stat)
     if overwrite:
         os.replace(temp_name, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        return verify_committed_temp(parent_fd, basename, expected_stat)
     else:
         try:
             os.link(temp_name, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+            final_stat = verify_committed_temp(parent_fd, basename, expected_stat)
             os.unlink(temp_name, dir_fd=parent_fd)
+            return final_stat
         except OSError as exc:
             if not link_unsupported(exc):
                 raise
-            copy_file_no_replace(parent_fd, temp_name, parent_fd, basename, mode, unlink_source=True)
-
+            return copy_file_no_replace(parent_fd, temp_name, parent_fd, basename, mode, expected_stat, True)
+def assert_expected_root(root_fd, payload):
+    if "rootDev" in payload or "rootIno" in payload:
+        root_stat = os.fstat(root_fd)
+        if root_stat.st_dev != int(payload["rootDev"]) or root_stat.st_ino != int(payload["rootIno"]):
+            raise RuntimeError("fs-safe-root-mismatch")
 def stat_path(root_fd, payload):
     relative = payload.get("relativePath", "")
     segments = split_relative(relative)
@@ -180,7 +185,6 @@ def stat_path(root_fd, payload):
         return encode_stat(st)
     finally:
         os.close(parent_fd)
-
 def readdir_path(root_fd, payload):
     dir_fd = walk_dir(root_fd, split_relative(payload.get("relativePath", "")))
     try:
@@ -196,12 +200,9 @@ def readdir_path(root_fd, payload):
         return entries
     finally:
         os.close(dir_fd)
-
 def mkdirp_path(root_fd, payload):
     dir_fd = walk_dir(root_fd, split_relative(payload.get("relativePath", "")), mkdir_enabled=True)
-    os.close(dir_fd)
-    return None
-
+    os.close(dir_fd); return None
 def remove_tree(parent_fd, basename):
     st = os.lstat(basename, dir_fd=parent_fd)
     if stat.S_ISDIR(st.st_mode) and not stat.S_ISLNK(st.st_mode):
@@ -214,7 +215,6 @@ def remove_tree(parent_fd, basename):
         os.rmdir(basename, dir_fd=parent_fd)
     else:
         os.unlink(basename, dir_fd=parent_fd)
-
 def remove_path(root_fd, payload):
     parent_fd, basename = parent_and_basename(root_fd, payload.get("relativePath", ""))
     try:
@@ -297,14 +297,15 @@ def write_path(root_fd, payload):
             except FileNotFoundError:
                 pass
         temp_name, temp_fd = create_temp_file(parent_fd, basename, mode)
+        os.fchmod(temp_fd, mode)
         write_all(temp_fd, data)
         os.fsync(temp_fd)
+        temp_stat = os.fstat(temp_fd)
         os.close(temp_fd)
         temp_fd = None
-        commit_temp_file(parent_fd, temp_name, basename, overwrite, mode)
+        result_stat = commit_temp_file(parent_fd, temp_name, basename, overwrite, mode, temp_stat)
         temp_name = None
         os.fsync(parent_fd)
-        result_stat = os.stat(basename, dir_fd=parent_fd, follow_symlinks=False)
         return {"dev": result_stat.st_dev, "ino": result_stat.st_ino}
     finally:
         if temp_fd is not None:
@@ -335,6 +336,7 @@ def copy_path(root_fd, payload):
             raise RuntimeError("fs-safe-too-large:%d:%d" % (max_bytes, source_stat.st_size))
         parent_fd = walk_dir(root_fd, split_relative(payload.get("relativeParentPath", "")), bool(payload.get("mkdir", True)))
         temp_name, temp_fd = create_temp_file(parent_fd, basename, mode)
+        os.fchmod(temp_fd, mode)
         written_bytes = 0
         while True:
             chunk = os.read(source_fd, 65536)
@@ -350,12 +352,12 @@ def copy_path(root_fd, payload):
                     raise OSError(errno.EIO, "short write")
                 view = view[written:]
         os.fsync(temp_fd)
+        temp_stat = os.fstat(temp_fd)
         os.close(temp_fd)
         temp_fd = None
-        commit_temp_file(parent_fd, temp_name, basename, overwrite, mode)
+        result_stat = commit_temp_file(parent_fd, temp_name, basename, overwrite, mode, temp_stat)
         temp_name = None
         os.fsync(parent_fd)
-        result_stat = os.stat(basename, dir_fd=parent_fd, follow_symlinks=False)
         return {"dev": result_stat.st_dev, "ino": result_stat.st_ino}
     finally:
         os.close(source_fd)
@@ -372,6 +374,7 @@ def copy_path(root_fd, payload):
 def run_operation(operation, root_path, payload):
     root_fd = open_dir(root_path)
     try:
+        assert_expected_root(root_fd, payload)
         if operation == "stat":
             return stat_path(root_fd, payload)
         if operation == "readdir":
@@ -509,6 +512,12 @@ function mapWorkerError(response: Record<string, unknown>): Error {
   }
   if (message.includes("fs-safe-source-mismatch")) {
     return new FsSafeError("path-mismatch", "source path changed during copy");
+  }
+  if (message.includes("fs-safe-temp-mismatch")) {
+    return new FsSafeError("path-mismatch", "temp path changed during write");
+  }
+  if (message.includes("fs-safe-root-mismatch")) {
+    return new FsSafeError("path-mismatch", "root path changed during operation");
   }
   if (message.includes("fs-safe-directory-noreplace-unsupported")) {
     return new FsSafeError("invalid-path", "directory moves require overwrite: true");
@@ -714,11 +723,8 @@ export function validatePinnedOperationPayload(payload: Record<string, unknown>)
 }
 
 export function isPinnedHelperUnavailable(error: unknown): boolean {
-  return error instanceof Error &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "helper-unavailable";
+  return error instanceof Error && "code" in error && (error as { code?: unknown }).code === "helper-unavailable";
 }
-
 function validatePinnedRelativePath(relativePath: string): void {
   if (relativePath.length === 0 || relativePath === ".") {
     return;

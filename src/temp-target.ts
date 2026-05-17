@@ -75,7 +75,7 @@ async function cleanupTempDir(dir: string, onCleanupError?: (error: unknown) => 
 }
 
 function resolveTempRoot(rootDir?: string): string {
-  return rootDir ?? resolveSecureTempRoot({ fallbackPrefix: "fs-safe" });
+  return path.resolve(rootDir ?? resolveSecureTempRoot({ fallbackPrefix: "fs-safe" }));
 }
 
 export async function tempFile(params: {

@@ -47,6 +47,7 @@ const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "pla
 
 describe("guarded fallback write cleanup", () => {
   it.runIf(process.platform !== "win32")("closes pinned no-overwrite handles when post guards fail", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     configureFsSafePython({ mode: "off" });
     const base = await tempRoot("fs-safe-pinned-post-guard-");
     const parentPath = path.join(base, "nested");

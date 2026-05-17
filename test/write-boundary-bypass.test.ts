@@ -240,12 +240,15 @@ describe("write, move, and delete boundary bypass attempts", () => {
     await expectNoOutsideWrite(layout);
   }, 15000);
 
-  it.runIf(process.platform !== "win32")("keeps literal '..'-prefixed paths available when the helper is disabled", async () => {
+  it.runIf(process.platform !== "win32")("keeps literal '..'-prefixed read paths available when the helper is disabled", async () => {
     configureFsSafePython({ mode: "off" });
     const layout = await makeTempLayout("fs-safe-write-helper-off-literal");
     const safeRoot = await openRoot(layout.root);
+    await fsp.writeFile(path.join(layout.root, "..%2fpwned.txt"), "literal");
 
-    await safeRoot.write("..%2fpwned.txt", "literal");
+    await expect(safeRoot.write("..%2fpwned-2.txt", "literal")).rejects.toMatchObject({
+      code: "helper-unavailable",
+    });
     await expect(safeRoot.stat("..%2fpwned.txt")).resolves.toMatchObject({ isFile: true });
     await safeRoot.remove("..%2fpwned.txt");
     await expect(fsp.stat(path.join(layout.root, "..%2fpwned.txt"))).rejects.toMatchObject({

@@ -102,15 +102,14 @@ operations that Node's `fs` API does not expose ergonomically.
 ```ts
 import { configureFsSafePython } from "@openclaw/fs-safe/config";
 
-configureFsSafePython({ mode: "off" });     // Node-only fallback path
+configureFsSafePython({ mode: "off" });     // disable helper; some writes fail closed
 configureFsSafePython({ mode: "require" }); // fail if fd-relative helper unavailable
 ```
 
-`auto` is the default. Configure the mode before creating roots. Without the
-helper, root methods still run, but same-UID races that swap parent directories
-between validation and mutation are harder to close completely. Use `require`
-when that downgrade should be treated as a deployment failure. See
-[Python helper policy](python-helper.md) for deployment guidance.
+`auto` is the default. Configure the mode before creating roots. On POSIX,
+write methods that require fd-relative parent commits fail closed without the
+helper. Use `require` when any helper loss should be treated as a deployment
+failure. See [Python helper policy](python-helper.md) for deployment guidance.
 
 ### Properties
 

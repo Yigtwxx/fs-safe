@@ -23,6 +23,7 @@ import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { movePathToTrash } from "../src/trash.js";
 
 const tempDirs: string[] = [];
+const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
 
 async function tempRoot(prefix: string): Promise<string> {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -38,6 +39,7 @@ async function writeOldFile(filePath: string, content = "old"): Promise<void> {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  Object.defineProperty(process, "platform", originalPlatformDescriptor);
   configureFsSafePython({ mode: "auto", pythonPath: undefined });
   __setFsSafeTestHooksForTest(undefined);
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { recursive: true, force: true })));
@@ -145,6 +147,7 @@ describe("security finding regressions", () => {
   });
 
   it.runIf(process.platform !== "win32")("uses unguessable no-follow temp files in pinned write fallback", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     configureFsSafePython({ mode: "off" });
     const base = await tempRoot("fs-safe-pinned-write-fallback-");
     const outside = await tempRoot("fs-safe-pinned-write-outside-");

@@ -66,18 +66,15 @@ before first use when you need a strict environment policy:
 import { configureFsSafePython } from "@openclaw/fs-safe";
 
 configureFsSafePython({ mode: "auto" });    // default: use helper, fall back if unavailable
-configureFsSafePython({ mode: "off" });     // never spawn Python; use Node fallbacks
+configureFsSafePython({ mode: "off" });     // never spawn Python; writes that need it fail closed
 configureFsSafePython({ mode: "require" }); // fail closed if helper cannot start
 ```
 
 Equivalent env vars: `FS_SAFE_PYTHON_MODE=auto|off|require` and
-`FS_SAFE_PYTHON=/path/to/python3`. Without Python, `fs-safe` keeps lexical and
-canonical root checks, no-follow opens, atomic temp+rename writes, and
-post-write identity verification. What you lose is the strongest POSIX
-fd-relative protection against a same-process-user racer swapping parent
-directories between validation and mutation. Windows already uses the Node
-fallback path. See the [Python helper policy](docs/python-helper.md) for
-deployment guidance.
+`FS_SAFE_PYTHON=/path/to/python3`. On POSIX, disabling or losing the helper now
+fails closed for root write paths that require fd-relative parent commits.
+Windows already uses the Node fallback path. See the
+[Python helper policy](docs/python-helper.md) for deployment guidance.
 
 ## Quick start
 
@@ -435,7 +432,7 @@ Current `FsSafeErrorCode` values are `already-exists`, `hardlink`, `helper-faile
 - root-bounded APIs resolve paths against a configured root and reject canonical escapes
 - reads open with `O_NOFOLLOW` where available, then verify fd identity matches the path identity before returning the buffer or handle
 - writes use pinned parent-directory helpers and atomic replacement on POSIX, with verified post-write identity
-- `remove`, `mkdir`, `move`, `stat`, `list`, and parent-fd writes use one persistent fd-relative Python helper on POSIX, with Node fallbacks when the helper is disabled or unavailable
+- `remove`, `mkdir`, `move`, `stat`, `list`, and parent-fd writes use one persistent fd-relative Python helper on POSIX; security-sensitive writes fail closed when that helper is disabled or unavailable
 - archive extraction stages into a private directory and merges through the same boundary checks used by direct writes
 
 ## Limitations

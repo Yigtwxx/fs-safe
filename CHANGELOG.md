@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security and Correctness
+
+- Harden DeepSec-reported temp path handling, private secret writes, pinned helper commits, fallback mkdir writes, and dot-prefixed root relative paths against symlink, race, and relative-path edge cases.
+
 ## 0.2.5 - 2026-05-16
 
 ### Security and Correctness

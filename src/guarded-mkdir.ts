@@ -2,13 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import { isPathRelativeEscape } from "./path.js";
 
 function isSameOrChildPath(candidate: string, parent: string): boolean {
-  return candidate === parent || candidate.startsWith(`${parent}${path.sep}`);
-}
-
-function isPathEscape(relativePath: string): boolean {
-  return relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath);
+  const parentPrefix = parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`;
+  return candidate === parent || candidate.startsWith(parentPrefix);
 }
 
 export async function mkdirPathComponentsWithGuards(params: {
@@ -17,9 +15,10 @@ export async function mkdirPathComponentsWithGuards(params: {
   beforeComponent?: (componentPath: string) => Promise<void> | void;
 }): Promise<void> {
   const root = path.resolve(params.rootReal);
+  const rootCanonical = path.resolve(await fs.realpath(root));
   const target = path.resolve(params.targetPath);
   const relative = path.relative(root, target);
-  if (isPathEscape(relative)) {
+  if (isPathRelativeEscape(relative)) {
     throw new FsSafeError("outside-workspace", "directory is outside workspace root");
   }
   let current = root;
@@ -41,7 +40,7 @@ export async function mkdirPathComponentsWithGuards(params: {
     }
     // Node's recursive mkdir follows symlinks in missing components. Build one
     // segment at a time and realpath-check each segment before descending.
-    if (!isSameOrChildPath(path.resolve(await fs.realpath(next)), root)) {
+    if (!isSameOrChildPath(path.resolve(await fs.realpath(next)), rootCanonical)) {
       throw new FsSafeError("outside-workspace", "directory escaped workspace root");
     }
     await createAsyncDirectoryGuard(next);

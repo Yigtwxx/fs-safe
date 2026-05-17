@@ -65,7 +65,7 @@ describe("@openclaw/fs-safe", () => {
     });
   });
 
-  it.skipIf(skipOnWindows)("can disable the Python helper and keep root operations available", async () => {
+  it.skipIf(skipOnWindows)("can disable the Python helper while writes fail closed", async () => {
     configureFsSafePython({ mode: "off" });
     const rootPath = await tempRoot("fs-safe-python-off-");
     const sourceRoot = await tempRoot("fs-safe-python-off-source-");
@@ -74,8 +74,11 @@ describe("@openclaw/fs-safe", () => {
     await writeFile(sourcePath, "copied");
 
     await root.mkdir("nested");
-    await root.write("nested/file.txt", "hello");
+    await expect(root.write("nested/file.txt", "hello")).rejects.toMatchObject({
+      code: "helper-unavailable",
+    });
     await root.copyIn("nested/copied.txt", sourcePath, { maxBytes: 16 });
+    await writeFile(path.join(rootPath, "nested", "file.txt"), "hello");
     await expect(root.stat("nested/file.txt")).resolves.toMatchObject({ isFile: true });
     await expect(root.list("nested")).resolves.toEqual(["copied.txt", "file.txt"]);
     await root.move("nested/file.txt", "nested/moved.txt");

@@ -73,6 +73,10 @@ export function isPathInside(root: string, target: string): boolean {
   return relative === "" || (firstSegment !== ".." && !path.isAbsolute(relative));
 }
 
+export function isPathRelativeEscape(relativePath: string): boolean {
+  return relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath);
+}
+
 export function resolveSafeBaseDir(rootDir: string): string {
   const resolved = path.resolve(rootDir);
   return resolved.endsWith(path.sep) ? resolved : `${resolved}${path.sep}`;
