@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { readLocalFileFromRoots, resolveLocalPathFromRootsSync } from "../src/local-roots.js";
 import {
+  ensureDirectoryWithinRoot,
   pathScope,
   resolveExistingPathsWithinRoot,
   resolvePathWithinRoot,
@@ -119,6 +120,34 @@ describe("root path list helpers", () => {
       });
 
       expect(result).toEqual({ ok: true, path: path.join(uploadsDir, "fallback.txt") });
+    });
+  });
+
+  it("rejects escaping default names for blank scoped paths", async () => {
+    await withFixtureRoot(async ({ uploadsDir }) => {
+      expect(
+        resolvePathWithinRoot({
+          rootDir: uploadsDir,
+          requestedPath: " ",
+          scopeLabel: "uploads directory",
+          defaultFileName: "../escape.txt",
+        }),
+      ).toEqual({
+        ok: false,
+        error: "Invalid path: must stay within uploads directory",
+      });
+
+      await expect(
+        ensureDirectoryWithinRoot({
+          rootDir: uploadsDir,
+          requestedPath: " ",
+          scopeLabel: "uploads directory",
+          defaultDirName: "../escape",
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        error: "Invalid path: must stay within uploads directory",
+      });
     });
   });
 

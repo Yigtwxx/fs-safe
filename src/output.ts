@@ -69,6 +69,7 @@ export async function writeExternalFileWithinRoot<T = void>(
   if (requestedTargetPath.length === 0) {
     throw new FsSafeError("invalid-path", "target path is required");
   }
+  assertFileTargetPath(requestedTargetPath);
   const targetPath = toRootPathInput({
     rootDir: targetRoot.rootDir,
     rootReal: targetRoot.rootReal,

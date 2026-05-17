@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { isNotFoundPathError } from "./path.js";
+import { isNotFoundPathError, isPathRelativeEscape } from "./path.js";
 
 export type AssertNoSymlinkParentsOptions = {
   rootDir: string;
@@ -20,7 +20,7 @@ function resolvePathWalk(params: AssertNoSymlinkParentsOptions): {
   const root = path.resolve(params.rootDir);
   const target = path.resolve(params.targetPath);
   const relative = path.relative(root, target);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  if (isPathRelativeEscape(relative)) {
     if (params.allowOutsideRoot) {
       return null;
     }

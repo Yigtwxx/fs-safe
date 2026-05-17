@@ -15,6 +15,7 @@ export const PRIVATE_SECRET_FILE_MODE = 0o600;
 export type SecretFileReadOptions = {
   maxBytes?: number;
   rejectSymlink?: boolean;
+  rejectHardlinks?: boolean;
 };
 
 type SecretFileReadOutcome =
@@ -23,6 +24,11 @@ type SecretFileReadOutcome =
 
 function normalizeSecretReadError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function secretPathErrorCode(error: unknown): FsSafeErrorCode {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR" ? "not-found" : "invalid-path";
 }
 
 function resolveUserPath(input: string): string {
@@ -49,7 +55,7 @@ function readSecretFileOutcomeSync(
     const normalized = normalizeSecretReadError(error);
     return {
       ok: false,
-      code: (error as NodeJS.ErrnoException).code === "ENOENT" ? "not-found" : "invalid-path",
+      code: secretPathErrorCode(error),
       error: normalized,
       message: `Failed to inspect ${label} file at ${resolvedPath}: ${String(normalized)}`,
     };
@@ -63,7 +69,7 @@ function readSecretFileOutcomeSync(
         const normalized = normalizeSecretReadError(error);
         return {
           ok: false,
-          code: (error as NodeJS.ErrnoException).code === "ENOENT" ? "not-found" : "invalid-path",
+          code: secretPathErrorCode(error),
           error: normalized,
           message: `Failed to inspect ${label} file at ${resolvedPath}: ${String(normalized)}`,
         };
@@ -83,6 +89,13 @@ function readSecretFileOutcomeSync(
       message: `${label} file at ${resolvedPath} must be a regular file.`,
     };
   }
+  if (options.rejectHardlinks !== false && previewStat.nlink > 1) {
+    return {
+      ok: false,
+      code: "hardlink",
+      message: `${label} file at ${resolvedPath} must not be hardlinked.`,
+    };
+  }
   if (previewStat.size > maxBytes) {
     return {
       ok: false,
@@ -94,6 +107,7 @@ function readSecretFileOutcomeSync(
   const opened = openPinnedFileSync({
     filePath: resolvedPath,
     rejectPathSymlink: options.rejectSymlink,
+    rejectHardlinks: options.rejectHardlinks !== false,
     maxBytes,
   });
   if (!opened.ok) {
@@ -155,7 +169,15 @@ export function tryReadSecretFileSync(
     return undefined;
   }
   const result = readSecretFileOutcomeSync(filePath, label, options);
-  return result.ok ? result.secret : undefined;
+  if (result.ok) {
+    return result.secret;
+  }
+  if (result.code === "not-found") {
+    return undefined;
+  }
+  throw new FsSafeError(result.code, result.message, {
+    cause: result.error,
+  });
 }
 
 function isRelativeEscape(relativePath: string): boolean {

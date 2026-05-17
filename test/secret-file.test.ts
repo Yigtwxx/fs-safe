@@ -80,7 +80,33 @@ describe("secret file helpers", () => {
     expect(() => readSecretFileSync(link, "API token", { rejectSymlink: true })).toThrow(
       `API token file at ${link} must not be a symlink.`,
     );
-    expect(tryReadSecretFileSync(link, "API token", { rejectSymlink: true })).toBeUndefined();
+    expect(() => tryReadSecretFileSync(link, "API token", { rejectSymlink: true })).toThrow(
+      `API token file at ${link} must not be a symlink.`,
+    );
+  });
+
+  it.runIf(process.platform !== "win32")("rejects hardlinked secret files by default", async () => {
+    const root = await tempRoot("fs-safe-secret-hardlink-");
+    const target = path.join(root, "target.txt");
+    const link = path.join(root, "alias.txt");
+    await fs.writeFile(target, "secret", "utf8");
+    await fs.link(target, link);
+
+    expectSecretReadCode(() => readSecretFileSync(link, "API token"), "hardlink");
+    expect(() => tryReadSecretFileSync(link, "API token")).toThrow(
+      `API token file at ${link} must not be hardlinked.`,
+    );
+    expect(readSecretFileSync(link, "API token", { rejectHardlinks: false })).toBe("secret");
+  });
+
+  it("treats ENOTDIR optional secret paths as missing", async () => {
+    const root = await tempRoot("fs-safe-secret-enotdir-");
+    const parentFile = path.join(root, "parent");
+    const missingChild = path.join(parentFile, "token.txt");
+    await fs.writeFile(parentFile, "not a directory", "utf8");
+
+    expect(tryReadSecretFileSync(missingChild, "API token")).toBeUndefined();
+    expectSecretReadCode(() => readSecretFileSync(missingChild, "API token"), "not-found");
   });
 
   it("writes private secret files under a non-symlink root", async () => {

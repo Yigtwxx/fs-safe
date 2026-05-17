@@ -288,6 +288,9 @@ async function readBoundedUtf8File(params: {
   if (initialStat.isSymbolicLink() || !initialStat.isFile()) {
     throw new Error("queue entry is not a regular file");
   }
+  if (initialStat.nlink > 1) {
+    throw new Error("queue entry hardlinks are not allowed");
+  }
   if (initialStat.size > params.maxBytes) {
     throw new Error(`queue entry exceeds ${params.maxBytes} bytes`);
   }
@@ -303,6 +306,8 @@ async function readBoundedUtf8File(params: {
       !openedStat.isFile() ||
       pathStat.isSymbolicLink() ||
       !pathStat.isFile() ||
+      openedStat.nlink > 1 ||
+      pathStat.nlink > 1 ||
       !sameFileIdentity(initialStat, openedStat) ||
       !sameFileIdentity(pathStat, openedStat)
     ) {

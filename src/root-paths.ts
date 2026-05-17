@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
-import { isNotFoundPathError, isPathInside } from "./path.js";
+import { isNotFoundPathError, isPathInside, isPathRelativeEscape } from "./path.js";
 import { root as openRoot } from "./root.js";
 
 type InvalidPathResult = { ok: false; error: string };
@@ -42,6 +42,11 @@ function invalidPath(scopeLabel: string): InvalidPathResult {
     ok: false,
     error: `Invalid path: must stay within ${scopeLabel}`,
   };
+}
+
+function pathStaysWithinRoot(rootDir: string, candidatePath: string): boolean {
+  const relative = path.relative(rootDir, candidatePath);
+  return Boolean(relative) && !isPathRelativeEscape(relative);
 }
 
 async function resolveRealPathIfExists(targetPath: string): Promise<string | undefined> {
@@ -102,11 +107,14 @@ export function resolvePathWithinRoot(params: {
     if (!params.defaultFileName) {
       return { ok: false, error: "path is required" };
     }
-    return { ok: true, path: path.join(root, params.defaultFileName) };
+    const defaultPath = path.resolve(root, params.defaultFileName);
+    if (!pathStaysWithinRoot(root, defaultPath)) {
+      return { ok: false, error: `Invalid path: must stay within ${params.scopeLabel}` };
+    }
+    return { ok: true, path: defaultPath };
   }
   const resolved = path.resolve(root, raw);
-  const rel = path.relative(root, resolved);
-  if (!rel || rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+  if (!pathStaysWithinRoot(root, resolved)) {
     return { ok: false, error: `Invalid path: must stay within ${params.scopeLabel}` };
   }
   return { ok: true, path: resolved };
@@ -177,7 +185,7 @@ async function assertNoSymlinkSegments(params: {
   scopeLabel: string;
 }): Promise<void> {
   const relative = path.relative(params.rootDir, params.targetPath);
-  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+  if (isPathRelativeEscape(relative)) {
     throw new Error(`Invalid path: must stay within ${params.scopeLabel}`);
   }
   let current = params.rootDir;
@@ -260,6 +268,10 @@ export async function ensureDirectoryWithinRoot(params: {
             throw mkdirErr;
           }
         }
+      }
+      const currentReal = await fs.realpath(current);
+      if (!isPathInside(rootReal, currentReal)) {
+        return invalidPath(params.scopeLabel);
       }
     }
     const targetReal = await fs.realpath(targetPath);

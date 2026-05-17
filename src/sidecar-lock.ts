@@ -124,8 +124,11 @@ async function readLockSnapshot(lockPath: string): Promise<LockSnapshot | null> 
     } catch {
       return { raw, payload: null, stat };
     }
-  } catch {
-    return null;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw err;
   }
 }
 
@@ -194,7 +197,10 @@ async function removeStaleLockIfAllowed(params: {
   }
   try {
     await fs.rm(params.lockPath, { force: true });
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return "changed";
+    }
     return "not-approved";
   }
   return "removed";

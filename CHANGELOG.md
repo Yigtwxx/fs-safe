@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security and Correctness
+
+- Harden DeepSec-reported archive staging and input pinning, secret and queue hardlink rejection, absolute output file validation, sidecar lock read failures, ClawSweeper dispatch trust checks, and scoped path defaults.
+
 ## 0.2.6 - 2026-05-17
 
 ### Security and Correctness

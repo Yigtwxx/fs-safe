@@ -206,6 +206,24 @@ describe("writeExternalFileWithinRoot", () => {
     expect(called).toBe(false);
   });
 
+  it("rejects absolute in-root trailing-separator targets before normalization", async () => {
+    const rootDir = await tempRoot("fs-safe-output-absolute-dir-target-");
+    let called = false;
+
+    await expect(
+      writeExternalFileWithinRoot({
+        rootDir,
+        path: path.join(rootDir, "nested") + path.sep,
+        write: async (candidate) => {
+          called = true;
+          await fs.writeFile(candidate, "not a file target", "utf8");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "invalid-path" });
+
+    expect(called).toBe(false);
+  });
+
   it.runIf(process.platform !== "win32")(
     "does not let symlinked target parents redirect the external temp write",
     async () => {

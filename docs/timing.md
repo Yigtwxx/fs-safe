@@ -102,7 +102,7 @@ await extractArchive({
 });
 ```
 
-`extractArchive` already takes `timeoutMs` and uses `withTimeout` internally — you don't need to wrap it. Reach for `withTimeout` for operations that don't carry their own timeout knob.
+`extractArchive` already takes `timeoutMs` and carries its own abort signal/deadline checks — you don't need to wrap it. Reach for `withTimeout` for operations that don't carry their own timeout knob.
 
 ### Disable in tests
 

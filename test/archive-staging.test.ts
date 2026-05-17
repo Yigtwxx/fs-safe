@@ -148,6 +148,27 @@ describe("archive-staging helpers", () => {
     });
   });
 
+  it("rejects archive staging prefixes that escape the temp root", async () => {
+    await withTempDir("fs-safe-archive-staging-prefix-", async (rootDir) => {
+      const destDir = path.join(rootDir, "dest");
+      await fs.mkdir(destDir, { recursive: true });
+      const destinationRealDir = await prepareArchiveDestinationDir(destDir);
+      let called = false;
+
+      await expect(
+        withStagedArchiveDestination({
+          destinationRealDir,
+          stagingDirPrefix: "../escape-",
+          run: async () => {
+            called = true;
+          },
+        }),
+      ).rejects.toThrow("archive staging prefix must be a single path segment");
+
+      expect(called).toBe(false);
+    });
+  });
+
   it.runIf(process.platform !== "win32")(
     "merges staged trees and rejects symlink entries from the source",
     async () => {
@@ -177,6 +198,29 @@ describe("archive-staging helpers", () => {
             sourceDir,
             destinationDir: destDir,
             destinationRealDir,
+          }),
+        ).rejects.toMatchObject({
+          code: "destination-symlink-traversal",
+        } satisfies Partial<ArchiveSecurityError>);
+      });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "reports dangling staged symlinks as archive security errors",
+    async () => {
+      await withTempDir("fs-safe-archive-staging-dangling-", async (rootDir) => {
+        const sourceDir = path.join(rootDir, "source");
+        const destDir = path.join(rootDir, "dest");
+        await fs.mkdir(sourceDir, { recursive: true });
+        await fs.mkdir(destDir, { recursive: true });
+        await fs.symlink(path.join(rootDir, "missing"), path.join(sourceDir, "dangling"));
+
+        await expect(
+          mergeExtractedTreeIntoDestination({
+            sourceDir,
+            destinationDir: destDir,
+            destinationRealDir: await prepareArchiveDestinationDir(destDir),
           }),
         ).rejects.toMatchObject({
           code: "destination-symlink-traversal",

@@ -262,6 +262,15 @@ async function removeExtractedDestinationFile(params: {
   relPath: string;
 }): Promise<void> {
   const destinationPath = path.join(params.destinationRealDir, params.relPath);
+  let stat: Awaited<ReturnType<typeof fs.lstat>>;
+  try {
+    stat = await fs.lstat(destinationPath);
+  } catch {
+    return;
+  }
+  if (!stat.isFile()) {
+    return;
+  }
   let resolved: string;
   try {
     resolved = await fs.realpath(destinationPath);
@@ -271,7 +280,22 @@ async function removeExtractedDestinationFile(params: {
   if (!isPathInside(params.destinationRealDir, resolved)) {
     return;
   }
-  await fs.rm(destinationPath, { force: true }).catch(() => undefined);
+  const targetRoot = await root(params.destinationRealDir);
+  await targetRoot.remove(params.relPath).catch(() => undefined);
+}
+
+function assertSafeArchiveStagingPrefix(prefix: string): string {
+  if (
+    !prefix ||
+    prefix === "." ||
+    prefix === ".." ||
+    prefix.includes("/") ||
+    prefix.includes("\\") ||
+    path.basename(prefix) !== prefix
+  ) {
+    throw new Error("archive staging prefix must be a single path segment");
+  }
+  return prefix;
 }
 
 export async function withStagedArchiveDestination<T>(params: {
@@ -287,14 +311,25 @@ export async function withStagedArchiveDestination<T>(params: {
   if (isPathInside(params.destinationRealDir, stagingRoot)) {
     throw new Error(`archive staging root must be outside destination: ${stagingRoot}`);
   }
-  const stagingDir = await fs.mkdtemp(
-    path.join(stagingRoot, params.stagingDirPrefix ?? "fs-safe-archive-"),
+  const stagingPrefix = assertSafeArchiveStagingPrefix(
+    params.stagingDirPrefix ?? "fs-safe-archive-",
   );
+  const stagingDir = await fs.mkdtemp(
+    path.join(stagingRoot, stagingPrefix),
+  );
+  const stagingGuard = await createDirectoryIdentityGuard(stagingDir);
   try {
     await fs.chmod(stagingDir, ARCHIVE_STAGING_MODE).catch(() => undefined);
+    await assertDirectoryIdentityGuard(stagingGuard);
     return await params.run(stagingDir);
   } finally {
-    await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+    try {
+      await assertDirectoryIdentityGuard(stagingGuard);
+      await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+    } catch {
+      // The staging path identity changed; deleting by name could target data
+      // outside the private temp tree, so fail closed and leave it for OS cleanup.
+    }
   }
 }
 
@@ -304,16 +339,23 @@ export async function mergeExtractedTreeIntoDestination(params: {
   destinationRealDir: string;
 }): Promise<void> {
   const targetRoot = await root(params.destinationRealDir);
+  const sourceRootGuard = await createDirectoryIdentityGuard(params.sourceDir);
+  const sourceRootReal = sourceRootGuard.realPath;
   const walk = async (currentSourceDir: string): Promise<void> => {
+    await assertDirectoryIdentityGuard(sourceRootGuard);
     const entries = await fs.readdir(currentSourceDir, { withFileTypes: true });
     for (const entry of entries) {
+      await assertDirectoryIdentityGuard(sourceRootGuard);
       const sourcePath = path.join(currentSourceDir, entry.name);
       const relPath = path.relative(params.sourceDir, sourcePath);
       const originalPath = relPath.split(path.sep).join("/");
       const destinationPath = path.join(params.destinationDir, relPath);
       const sourceStat = await fs.lstat(sourcePath);
-
       if (sourceStat.isSymbolicLink()) {
+        throw symlinkTraversalError(originalPath);
+      }
+      const sourceReal = await fs.realpath(sourcePath);
+      if (!isPathInside(sourceRootReal, sourceReal)) {
         throw symlinkTraversalError(originalPath);
       }
 

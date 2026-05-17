@@ -10,6 +10,13 @@ import {
   validateArchiveEntryPath,
 } from "./archive-entry.js";
 import {
+  createPipelineTimeoutError,
+  waitForDeadline,
+  withExtractionDeadline,
+  type ExtractionDeadline,
+} from "./archive-deadline.js";
+import { writeFileHandleFully } from "./archive-file-io.js";
+import {
   ARCHIVE_LIMIT_ERROR_CODE,
   ArchiveLimitError,
   assertArchiveEntryCountWithinLimit,
@@ -31,8 +38,9 @@ import {
   type TarEntryInfo,
 } from "./archive-tar.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
+import { sameFileIdentity } from "./file-identity.js";
 import { writeSiblingTempFile } from "./sibling-temp.js";
-import { withTimeout } from "./timing.js";
+import { tempFile } from "./temp-target.js";
 
 export type ArchiveLogger = {
   info?: (message: string) => void;
@@ -88,12 +96,14 @@ type ZipEntry = {
 };
 
 type ZipExtractBudget = ReturnType<typeof createByteBudgetTracker>;
+type StagedArchiveFile = { path: string; cleanup: () => Promise<void> };
 type TarModule = {
   x(options: {
     file: string;
     cwd: string;
     strip: number;
     gzip?: boolean;
+    signal?: AbortSignal;
     preservePaths: false;
     strict: true;
     onReadEntry(this: unknown, entry: unknown): void;
@@ -108,6 +118,96 @@ function isZipSymlinkEntry(entry: ZipEntry): boolean {
     typeof entry.unixPermissions === "number" &&
     (entry.unixPermissions & ZIP_UNIX_FILE_TYPE_MASK) === ZIP_UNIX_SYMLINK_TYPE
   );
+}
+
+function zipEntryFileMode(entry: ZipEntry): number | undefined {
+  if (typeof entry.unixPermissions !== "number") {
+    return undefined;
+  }
+  const mode = entry.unixPermissions & 0o777;
+  return mode === 0 ? undefined : mode;
+}
+
+async function cleanupStagedArchiveFile(staged: StagedArchiveFile | undefined): Promise<void> {
+  if (staged) {
+    await staged.cleanup().catch(() => undefined);
+  }
+}
+
+async function closeFileHandle(handle: FileHandle | undefined): Promise<void> {
+  if (handle) {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+async function stageArchiveFileForExtraction(params: {
+  archivePath: string;
+  limits: ReturnType<typeof resolveExtractLimits>;
+  deadline: ExtractionDeadline;
+}): Promise<StagedArchiveFile> {
+  params.deadline.check();
+  const sourcePath = path.resolve(params.archivePath);
+  const initialStat = await fs.lstat(sourcePath);
+  if (initialStat.isSymbolicLink() || !initialStat.isFile()) {
+    throw new Error(`archive is not a regular file: ${params.archivePath}`);
+  }
+  if (initialStat.size > params.limits.maxArchiveBytes) {
+    throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT);
+  }
+
+  const noFollow =
+    process.platform !== "win32" && "O_NOFOLLOW" in fsConstants ? fsConstants.O_NOFOLLOW : 0;
+  const handle = await fs.open(sourcePath, fsConstants.O_RDONLY | noFollow);
+  let staged: StagedArchiveFile | undefined;
+  let output: FileHandle | undefined;
+  try {
+    staged = await tempFile({
+      prefix: "fs-safe-archive-input",
+      fileName: path.basename(sourcePath),
+    });
+    const openedStat = await handle.stat();
+    const pathStat = await fs.lstat(sourcePath);
+    if (
+      !openedStat.isFile() ||
+      pathStat.isSymbolicLink() ||
+      !pathStat.isFile() ||
+      !sameFileIdentity(initialStat, openedStat) ||
+      !sameFileIdentity(pathStat, openedStat)
+    ) {
+      throw new Error("archive changed during validation");
+    }
+
+    output = await fs.open(staged.path, OPEN_WRITE_CREATE_FLAGS, 0o600);
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let written = 0;
+    while (true) {
+      params.deadline.check();
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) {
+        break;
+      }
+      written += bytesRead;
+      if (written > params.limits.maxArchiveBytes) {
+        throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT);
+      }
+      await writeFileHandleFully({
+        handle: output,
+        buffer,
+        bytes: bytesRead,
+        deadline: params.deadline,
+      });
+      params.deadline.check();
+    }
+    await output.close();
+    output = undefined;
+    return staged;
+  } catch (err) {
+    await closeFileHandle(output);
+    await cleanupStagedArchiveFile(staged);
+    throw err;
+  } finally {
+    await closeFileHandle(handle);
+  }
 }
 
 async function readZipEntryStream(entry: ZipEntry): Promise<NodeJS.ReadableStream> {
@@ -155,7 +255,9 @@ async function writeZipFileEntry(params: {
   entry: ZipEntry;
   outPath: string;
   budget: ZipExtractBudget;
+  deadline: ExtractionDeadline;
 }): Promise<void> {
+  params.deadline.check();
   params.budget.startEntry();
   const readable = await readZipEntryStream(params.entry);
   const destinationPath = params.outPath;
@@ -168,6 +270,7 @@ async function writeZipFileEntry(params: {
       dir: path.dirname(destinationPath),
       tempPrefix: `.${path.basename(destinationPath)}.fs-safe-archive`,
       chmodDir: false,
+      mode: zipEntryFileMode(params.entry),
       writeTemp: async (tempPath) => {
         tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o666);
         const writable = tempHandle.createWriteStream();
@@ -175,11 +278,17 @@ async function writeZipFileEntry(params: {
           handleClosedByStream = true;
         });
 
-        await pipeline(
-          readable,
-          createExtractBudgetTransform({ onChunkBytes: params.budget.addBytes }),
-          writable,
-        );
+        try {
+          await pipeline(
+            readable,
+            createExtractBudgetTransform({ onChunkBytes: params.budget.addBytes }),
+            writable,
+            { signal: params.deadline.signal },
+          );
+        } catch (err) {
+          throw createPipelineTimeoutError(err, params.deadline);
+        }
+        params.deadline.check();
         if (!handleClosedByStream) {
           await tempHandle.close().catch(() => undefined);
           handleClosedByStream = true;
@@ -189,14 +298,6 @@ async function writeZipFileEntry(params: {
       },
       resolveFinalPath: (filePath) => filePath,
     });
-
-    // Best-effort permission restore for zip entries created on unix.
-    if (typeof params.entry.unixPermissions === "number") {
-      const mode = params.entry.unixPermissions & 0o777;
-      if (mode !== 0) {
-        await fs.chmod(destinationPath, mode).catch(() => undefined);
-      }
-    }
   } catch (err) {
     // Failures here happen before the temp has been committed. The destination
     // parent may already be untrusted, so cleanup must stay limited to temp state.
@@ -214,66 +315,78 @@ async function extractZip(params: {
   destDir: string;
   stripComponents?: number;
   limits?: ArchiveExtractLimits;
+  deadline: ExtractionDeadline;
 }): Promise<void> {
   const limits = resolveExtractLimits(params.limits);
-  const destinationRealDir = await prepareArchiveDestinationDir(params.destDir);
-  const stat = await fs.stat(params.archivePath);
-  if (stat.size > limits.maxArchiveBytes) {
-    throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT);
-  }
-
-  const buffer = await fs.readFile(params.archivePath);
-  const zip = await loadZipArchiveWithPreflight(buffer, limits);
-  const entries = Object.values(zip.files) as ZipEntry[];
-  const strip = Math.max(0, Math.floor(params.stripComponents ?? 0));
-
-  assertArchiveEntryCountWithinLimit(entries.length, limits);
-
-  const budget = createByteBudgetTracker(limits);
-
-  await withStagedArchiveDestination({
-    destinationRealDir,
-    run: async (stagingDir) => {
-      const stagingRealDir = await fs.realpath(stagingDir);
-      for (const entry of entries) {
-        const output = resolveZipOutputPath({
-          entryPath: entry.name,
-          strip,
-          destinationDir: stagingRealDir,
-        });
-        if (!output) {
-          continue;
-        }
-
-        await prepareZipOutputPath({
-          destinationDir: stagingRealDir,
-          destinationRealDir: stagingRealDir,
-          relPath: output.relPath,
-          outPath: output.outPath,
-          originalPath: entry.name,
-          isDirectory: entry.dir,
-        });
-        if (entry.dir) {
-          continue;
-        }
-        if (isZipSymlinkEntry(entry)) {
-          throw new Error(`zip entry is a link: ${entry.name}`);
-        }
-
-        await writeZipFileEntry({
-          entry,
-          outPath: output.outPath,
-          budget,
-        });
-      }
-
-      await mergeExtractedTreeIntoDestination({
-        sourceDir: stagingRealDir,
-        destinationDir: params.destDir,
-        destinationRealDir,
-      });
-    },
+  const stagedArchive = await stageArchiveFileForExtraction({
+    archivePath: params.archivePath,
+    limits,
+    deadline: params.deadline,
   });
+  try {
+    const destinationRealDir = await prepareArchiveDestinationDir(params.destDir);
+    params.deadline.check();
+    const buffer = await fs.readFile(stagedArchive.path, { signal: params.deadline.signal });
+    params.deadline.check();
+    const zip = await waitForDeadline(loadZipArchiveWithPreflight(buffer, limits), params.deadline);
+    params.deadline.check();
+    const entries = Object.values(zip.files) as ZipEntry[];
+    const strip = Math.max(0, Math.floor(params.stripComponents ?? 0));
+
+    assertArchiveEntryCountWithinLimit(entries.length, limits);
+
+    const budget = createByteBudgetTracker(limits);
+
+    await withStagedArchiveDestination({
+      destinationRealDir,
+      run: async (stagingDir) => {
+        const stagingRealDir = await fs.realpath(stagingDir);
+        for (const entry of entries) {
+          params.deadline.check();
+          const output = resolveZipOutputPath({
+            entryPath: entry.name,
+            strip,
+            destinationDir: stagingRealDir,
+          });
+          if (!output) {
+            continue;
+          }
+
+          await prepareZipOutputPath({
+            destinationDir: stagingRealDir,
+            destinationRealDir: stagingRealDir,
+            relPath: output.relPath,
+            outPath: output.outPath,
+            originalPath: entry.name,
+            isDirectory: entry.dir,
+          });
+          if (entry.dir) {
+            continue;
+          }
+          if (isZipSymlinkEntry(entry)) {
+            throw new Error(`zip entry is a link: ${entry.name}`);
+          }
+
+          await writeZipFileEntry({
+            entry,
+            outPath: output.outPath,
+            budget,
+            deadline: params.deadline,
+          });
+        }
+
+        params.deadline.check();
+        await mergeExtractedTreeIntoDestination({
+          sourceDir: stagingRealDir,
+          destinationDir: params.destDir,
+          destinationRealDir,
+        });
+        params.deadline.check();
+      },
+    });
+  } finally {
+    await stagedArchive.cleanup();
+  }
 }
 
 export async function extractArchive(params: {
@@ -293,19 +406,20 @@ export async function extractArchive(params: {
 
   const label = kind === "zip" ? "extract zip" : "extract tar";
   if (kind === "tar") {
-    await withTimeout(
-      (async () => {
-        const tar = await importOptionalTar();
-        const limits = resolveExtractLimits(params.limits);
-        const stat = await fs.stat(params.archivePath);
-        if (stat.size > limits.maxArchiveBytes) {
-          throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT);
-        }
-
+    await withExtractionDeadline(params.timeoutMs, label, async (deadline) => {
+      const tar = await importOptionalTar();
+      const limits = resolveExtractLimits(params.limits);
+      const stagedArchive = await stageArchiveFileForExtraction({
+        archivePath: params.archivePath,
+        limits,
+        deadline,
+      });
+      try {
         const destinationRealDir = await prepareArchiveDestinationDir(params.destDir);
         await withStagedArchiveDestination({
           destinationRealDir,
           run: async (stagingDir) => {
+            deadline.check();
             const checkTarEntrySafety = createTarEntryPreflightChecker({
               rootDir: destinationRealDir,
               stripComponents: params.stripComponents,
@@ -316,14 +430,16 @@ export async function extractArchive(params: {
             // Extract into a private staging dir first, then merge through
             // the same safe-open boundary checks used by direct file writes.
             await tar.x({
-              file: params.archivePath,
+              file: stagedArchive.path,
               cwd: stagingDir,
               strip: Math.max(0, Math.floor(params.stripComponents ?? 0)),
               gzip: params.tarGzip,
+              signal: deadline.signal,
               preservePaths: false,
               strict: true,
               onReadEntry(entry) {
                 try {
+                  deadline.check();
                   checkTarEntrySafety(readTarEntryInfo(entry));
                 } catch (err) {
                   const error = err instanceof Error ? err : new Error(String(err));
@@ -334,29 +450,30 @@ export async function extractArchive(params: {
                 }
               },
             });
+            deadline.check();
             await mergeExtractedTreeIntoDestination({
               sourceDir: stagingDir,
               destinationDir: params.destDir,
               destinationRealDir,
             });
+            deadline.check();
           },
         });
-      })(),
-      params.timeoutMs,
-      label,
-    );
+      } finally {
+        await stagedArchive.cleanup();
+      }
+    });
     return;
   }
 
-  await withTimeout(
+  await withExtractionDeadline(params.timeoutMs, label, async (deadline) =>
     extractZip({
       archivePath: params.archivePath,
       destDir: params.destDir,
       stripComponents: params.stripComponents,
       limits: params.limits,
+      deadline,
     }),
-    params.timeoutMs,
-    label,
   );
 }
 

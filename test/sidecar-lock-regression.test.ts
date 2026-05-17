@@ -1,7 +1,7 @@
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileStore } from "../src/file-store.js";
 import { acquireFileLock } from "../src/file-lock.js";
 import { configureFsSafeLocks, getFsSafeLockConfig } from "../src/lock-config.js";
@@ -16,6 +16,7 @@ async function tempRoot(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   configureFsSafeLocks({
     retry: undefined,
     staleMs: undefined,
@@ -262,6 +263,32 @@ describe("sidecar lock regressions", () => {
       }),
     ).rejects.toMatchObject({ code: "file_lock_stale" });
     await expect(fsp.readFile(lockPath, "utf8")).resolves.toBe("{");
+  });
+
+  it("fails closed when an existing sidecar cannot be read", async () => {
+    const base = await tempRoot("fs-safe-sidecar-unreadable-");
+    const targetPath = path.join(base, "state.json");
+    const lockPath = `${targetPath}.lock`;
+    const manager = createSidecarLockManager(`fs-safe-unreadable-test-${Date.now()}`);
+    await fsp.writeFile(lockPath, JSON.stringify({ createdAt: "2000-01-01T00:00:00.000Z" }));
+    const realReadFile = fsp.readFile.bind(fsp);
+    vi.spyOn(fsp, "readFile").mockImplementation(async (...args) => {
+      if (String(args[0]) === lockPath) {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      }
+      return await realReadFile(...args);
+    });
+
+    await expect(
+      manager.acquire({
+        targetPath,
+        lockPath,
+        staleMs: 1,
+        timeoutMs: 1,
+        retry: { retries: 0 },
+        payload: async () => ({ createdAt: new Date().toISOString() }),
+      }),
+    ).rejects.toMatchObject({ code: "EACCES" });
   });
 
   it("keeps lock config as explicit defaults, not global auto-locking", async () => {

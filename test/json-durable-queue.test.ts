@@ -94,4 +94,17 @@ describe("durable JSON queues", () => {
     expect(() => resolveJsonDurableQueueEntryPaths(queueDir, "job ")).toThrow();
     expect(() => resolveJsonDurableQueueEntryPaths(queueDir, " job")).toThrow();
   });
+
+  it.runIf(process.platform !== "win32")("skips hardlinked pending entries", async () => {
+    const queueDir = path.join(root, "queue");
+    const failedDir = path.join(root, "failed");
+    await ensureJsonDurableQueueDirs({ queueDir, failedDir });
+    const outside = path.join(root, "outside.json");
+    await fs.writeFile(outside, JSON.stringify({ leaked: true }), "utf8");
+    await fs.link(outside, path.join(queueDir, "leak.json"));
+
+    await expect(
+      loadPendingJsonDurableQueueEntries<{ leaked: boolean }>({ queueDir, tempPrefix: "queue" }),
+    ).resolves.toEqual([]);
+  });
 });

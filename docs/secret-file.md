@@ -36,7 +36,7 @@ The 16 KiB cap is intentionally aggressive — credentials should be small. If y
 
 ### `tryReadSecretFileSync(filePath, label, options?)`
 
-The lenient reader. Returns the trimmed secret string, or `undefined` when the path is missing, empty, unreadable, too large, or rejected by the validation checks.
+The lenient reader. Returns the trimmed secret string, or `undefined` when the path is missing or blank. Validation failures, unreadable files, oversized files, symlinks, and hardlinks throw `FsSafeError` so callers fail closed on suspicious credential state.
 
 ```ts
 import { tryReadSecretFileSync } from "@openclaw/fs-safe/secret";
@@ -63,10 +63,11 @@ const token = readSecretFileSync("/var/lib/app/auth.token");
 type SecretFileReadOptions = {
   maxBytes?: number;         // default DEFAULT_SECRET_FILE_MAX_BYTES (16 KiB)
   rejectSymlink?: boolean;
+  rejectHardlinks?: boolean; // default true
 };
 ```
 
-The reader trims the file content and rejects empty results. `rejectSymlink` blocks a symlink path before the pinned read.
+The reader trims the file content and rejects empty results. `rejectSymlink` blocks a symlink path before the pinned read. Hardlinks are rejected by default so another in-tree name cannot alias the credential; pass `rejectHardlinks: false` only when you explicitly trust that layout.
 
 ## Writing
 

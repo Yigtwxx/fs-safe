@@ -9,6 +9,7 @@ import { readLocalFileFromRoots, resolveLocalPathFromRootsSync } from "../src/lo
 import { __resetPinnedPythonWorkerForTest, runPinnedPythonOperation } from "../src/pinned-python.js";
 import { replaceFileAtomic } from "../src/replace-file.js";
 import { resolveRootPath } from "../src/root-path.js";
+import { assertNoSymlinkParents } from "../src/symlink-parents.js";
 import { writeSecretFileAtomic } from "../src/secret-file.js";
 import { writeViaSiblingTempPath } from "../src/sibling-temp.js";
 import { buildRandomTempFilePath, tempFile } from "../src/temp-target.js";
@@ -77,6 +78,12 @@ describe("deepsec regressions", () => {
     ).resolves.toMatchObject({
       relativePath: path.join("..data", "file.txt"),
     });
+    await expect(
+      assertNoSymlinkParents({
+        rootDir,
+        targetPath: path.join(rootDir, "..data", "file.txt"),
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("normalizes caller-provided temp roots to absolute paths", async () => {

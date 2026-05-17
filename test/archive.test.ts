@@ -1,3 +1,5 @@
+import { constants as fsConstants } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +11,8 @@ import {
   extractArchive,
   resolvePackedRootDir,
 } from "../src/archive.js";
+import { withExtractionDeadline } from "../src/archive-deadline.js";
+import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import {
   buildRandomTempFilePath,
   sanitizeTempFileName,
@@ -67,10 +71,26 @@ async function withRealpathSymlinkRebindRace<T>(params: {
 }
 
 afterEach(async () => {
+  __setFsSafeTestHooksForTest(undefined);
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { force: true, recursive: true })));
 });
 
 describe("archive extraction", () => {
+  it("enforces deadlines around non-cooperative archive awaits", async () => {
+    let finished = false;
+    const startedAt = Date.now();
+
+    await expect(
+      withExtractionDeadline(1, "extract tar", async () => {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        finished = true;
+      }),
+    ).rejects.toThrow("extract tar timed out after 1ms");
+
+    expect(Date.now() - startedAt).toBeLessThan(75);
+    expect(finished).toBe(false);
+  });
+
   it("extracts zip archives through safe destination checks", async () => {
     const root = await tempRoot("fs-safe-archive-");
     const archivePath = path.join(root, "pkg.zip");
@@ -86,6 +106,98 @@ describe("archive extraction", () => {
     const packageDir = await resolvePackedRootDir(destDir);
     await expect(fs.readFile(path.join(packageDir, "hello.txt"), "utf8")).resolves.toBe("hi");
     await expect(fs.readFile(path.join(packageDir, "my file.txt"), "utf8")).resolves.toBe("space");
+  });
+
+  it("copies every byte when staging archive input after short writes", async () => {
+    const root = await tempRoot("fs-safe-archive-short-write-");
+    const archivePath = path.join(root, "pkg.zip");
+    const destDir = path.join(root, "dest");
+    await fs.mkdir(destDir, { recursive: true });
+
+    const zip = new JSZip();
+    zip.file("package/hello.txt", "hi");
+    await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+    const realOpen = fs.open.bind(fs);
+    let shortened = false;
+    const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await realOpen(...args);
+      const flags = Number(args[1]);
+      if (!shortened && (flags & fsConstants.O_WRONLY) !== 0) {
+        const realWrite = handle.write.bind(handle);
+        vi.spyOn(handle, "write").mockImplementation(
+          (async (
+            buffer: Buffer,
+            offset?: number,
+            length?: number,
+            position?: number | null,
+          ) => {
+            if (
+              !shortened &&
+              typeof offset === "number" &&
+              typeof length === "number" &&
+              length > 1
+            ) {
+              shortened = true;
+              return await realWrite(buffer, offset, Math.max(1, Math.floor(length / 2)), position);
+            }
+            return await realWrite(buffer, offset, length, position);
+          }) as FileHandle["write"],
+        );
+      }
+      return handle;
+    });
+
+    try {
+      await extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 });
+    } finally {
+      openSpy.mockRestore();
+    }
+
+    expect(shortened).toBe(true);
+    await expect(fs.readFile(path.join(destDir, "package", "hello.txt"), "utf8")).resolves.toBe(
+      "hi",
+    );
+  });
+
+  it.runIf(process.platform !== "win32")("preserves executable zip entry modes", async () => {
+    const root = await tempRoot("fs-safe-archive-mode-");
+    const archivePath = path.join(root, "pkg.zip");
+    const destDir = path.join(root, "dest");
+    await fs.mkdir(destDir, { recursive: true });
+
+    const zip = new JSZip();
+    zip.file("bin/tool", "#!/bin/sh\n", { unixPermissions: 0o100755 });
+    await fs.writeFile(
+      archivePath,
+      await zip.generateAsync({ type: "nodebuffer", platform: "UNIX" }),
+    );
+
+    await extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 });
+    const mode = (await fs.stat(path.join(destDir, "bin", "tool"))).mode & 0o777;
+    expect(mode).toBe(0o755);
+  });
+
+  it("rejects zip extraction when the deadline elapses before file writes", async () => {
+    const root = await tempRoot("fs-safe-archive-timeout-");
+    const archivePath = path.join(root, "pkg.zip");
+    const destDir = path.join(root, "dest");
+    await fs.mkdir(destDir, { recursive: true });
+
+    const zip = new JSZip();
+    zip.file("package/hello.txt", "hi");
+    await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+    __setFsSafeTestHooksForTest({
+      async beforeArchiveOutputMutation() {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      },
+    });
+
+    await expect(
+      extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 1 }),
+    ).rejects.toThrow("extract zip timed out after 1ms");
+    await expect(fs.readdir(destDir)).resolves.toEqual([]);
   });
 
   it("does not truncate existing destination files when zip extraction fails", async () => {
@@ -113,6 +225,23 @@ describe("archive extraction", () => {
     await expect(fs.readFile(path.join(destDir, "keep.txt"), "utf8")).resolves.toBe(
       "old-content",
     );
+  });
+
+  it("does not remove existing destination directories when zip extraction fails", async () => {
+    const root = await tempRoot("fs-safe-archive-dir-conflict-");
+    const archivePath = path.join(root, "pkg.zip");
+    const destDir = path.join(root, "dest");
+    const conflictDir = path.join(destDir, "conflict");
+    await fs.mkdir(conflictDir, { recursive: true });
+
+    const zip = new JSZip();
+    zip.file("conflict", "file-over-dir");
+    await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+
+    await expect(
+      extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 }),
+    ).rejects.toBeTruthy();
+    await expect(fs.stat(conflictDir)).resolves.toSatisfy((stat) => stat.isDirectory());
   });
 
   it.runIf(process.platform !== "win32")("rejects zip symlink entries", async () => {
@@ -242,6 +371,44 @@ describe("archive extraction", () => {
 
       await expect(fs.readFile(outsideAlias, "utf8")).resolves.toBe("owned");
       await expect(fs.stat(extractedPath)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "pins the archive file before extraction",
+    async () => {
+      const root = await tempRoot("fs-safe-archive-input-race-");
+      const archivePath = path.join(root, "pkg.zip");
+      const replacementPath = path.join(root, "replacement.zip");
+      const destDir = path.join(root, "dest");
+      await fs.mkdir(destDir, { recursive: true });
+
+      const zip = new JSZip();
+      zip.file("safe.txt", "safe");
+      await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+      const replacement = new JSZip();
+      replacement.file("owned.txt", "owned");
+      await fs.writeFile(replacementPath, await replacement.generateAsync({ type: "nodebuffer" }));
+
+      const realLstat = fs.lstat.bind(fs);
+      let swapped = false;
+      const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+        const stat = await realLstat(...args);
+        if (!swapped && String(args[0]) === archivePath) {
+          swapped = true;
+          await fs.rename(replacementPath, archivePath);
+        }
+        return stat;
+      });
+
+      try {
+        await expect(
+          extractArchive({ archivePath, destDir, kind: "zip", timeoutMs: 15_000 }),
+        ).rejects.toThrow("archive changed during validation");
+      } finally {
+        lstatSpy.mockRestore();
+      }
+      await expect(fs.readdir(destDir)).resolves.toEqual([]);
     },
   );
 });

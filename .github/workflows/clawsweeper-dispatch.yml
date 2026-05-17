@@ -28,9 +28,36 @@ jobs:
         if: ${{ github.event.action == 'labeled' || github.event.action == 'unlabeled' }}
         run: sleep 20
 
+      - name: Require trusted issue command source
+        id: trust
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          COMMENT_AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association || '' }}
+          ISSUE_AUTHOR_ASSOCIATION: ${{ github.event.issue.author_association || '' }}
+          PR_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association || '' }}
+        run: |
+          case "$EVENT_NAME" in
+            issue_comment) author_association="$COMMENT_AUTHOR_ASSOCIATION" ;;
+            issues) author_association="$ISSUE_AUTHOR_ASSOCIATION" ;;
+            pull_request_target) author_association="$PR_AUTHOR_ASSOCIATION" ;;
+            *) author_association="" ;;
+          esac
+          case "$EVENT_NAME:$EVENT_ACTION:$author_association" in
+            pull_request_target:*:*) allowed=true ;;
+            issues:labeled:*|issues:unlabeled:*) allowed=true ;;
+            issues:*:OWNER|issues:*:MEMBER|issues:*:COLLABORATOR) allowed=true ;;
+            issue_comment:*:OWNER|issue_comment:*:MEMBER|issue_comment:*:COLLABORATOR) allowed=true ;;
+            *) allowed=false ;;
+          esac
+          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
+          if [ "$allowed" != "true" ]; then
+            echo "::notice::Skipping ClawSweeper dispatch for untrusted $EVENT_NAME author association."
+          fi
+
       - name: Create ClawSweeper dispatch token
         id: token
-        if: ${{ env.HAS_CLAWSWEEPER_APP_PRIVATE_KEY == 'true' }}
+        if: ${{ steps.trust.outputs.allowed == 'true' && env.HAS_CLAWSWEEPER_APP_PRIVATE_KEY == 'true' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ env.CLAWSWEEPER_APP_CLIENT_ID }}
@@ -41,7 +68,7 @@ jobs:
 
       - name: Create target comment token
         id: target_token
-        if: ${{ github.event_name == 'issue_comment' && env.HAS_CLAWSWEEPER_APP_PRIVATE_KEY == 'true' }}
+        if: ${{ steps.trust.outputs.allowed == 'true' && github.event_name == 'issue_comment' && env.HAS_CLAWSWEEPER_APP_PRIVATE_KEY == 'true' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ env.CLAWSWEEPER_APP_CLIENT_ID }}
@@ -52,7 +79,7 @@ jobs:
           permission-pull-requests: read
 
       - name: Dispatch exact ClawSweeper review
-        if: ${{ github.event_name != 'issue_comment' }}
+        if: ${{ steps.trust.outputs.allowed == 'true' && github.event_name != 'issue_comment' }}
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           TARGET_REPO: ${{ github.repository }}
@@ -78,7 +105,7 @@ jobs:
             --input - <<< "$payload"
 
       - name: Acknowledge and dispatch ClawSweeper comment
-        if: ${{ github.event_name == 'issue_comment' }}
+        if: ${{ steps.trust.outputs.allowed == 'true' && github.event_name == 'issue_comment' }}
         env:
           DISPATCH_TOKEN: ${{ steps.token.outputs.token }}
           TARGET_TOKEN: ${{ steps.target_token.outputs.token }}
