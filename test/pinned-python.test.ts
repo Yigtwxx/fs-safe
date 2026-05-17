@@ -314,6 +314,8 @@ describe("persistent Python helper worker", () => {
         rootPath: "/tmp/root",
         payload: { relativePath: "" },
       }),
-    ).rejects.toMatchObject({ code: "path-mismatch" });
+    ).rejects.toMatchObject({
+      code: process.platform === "win32" ? "unsupported-platform" : "path-mismatch",
+    });
   });
 });
