@@ -43,10 +43,11 @@ afterEach(async () => {
 
 describe("pinned write fallback coverage", () => {
   it.runIf(process.platform !== "win32")(
-    "writes buffers, creates only when missing, streams, and enforces limits on fallback platforms",
+    "writes buffers, creates only when missing, streams, and enforces limits when Python is off",
     async () => {
-      Object.defineProperty(process, "platform", { value: "win32" });
+      const { configureFsSafePython } = await import("../src/pinned-python-config.js");
       const { runPinnedWriteHelper } = await import("../src/pinned-write.js");
+      configureFsSafePython({ mode: "off" });
       const root = await tempRoot("fs-safe-pinned-write-fallback-");
 
       const created = await runPinnedWriteHelper({
@@ -126,22 +127,26 @@ describe("pinned write fallback coverage", () => {
     },
   );
 
-  it.runIf(process.platform !== "win32")("fails closed on POSIX when helper fallback is needed", async () => {
+  it.runIf(process.platform !== "win32")("falls back on POSIX when the helper is unavailable in auto mode", async () => {
+    const { configureFsSafePython } = await import("../src/pinned-python-config.js");
     const { runPinnedWriteHelper } = await import("../src/pinned-write.js");
-    const root = await tempRoot("fs-safe-pinned-write-no-fallback-");
+    configureFsSafePython({ mode: "auto", pythonPath: "/missing/fs-safe-python" });
+    const root = await tempRoot("fs-safe-pinned-write-fallback-");
 
-    await expect(runPinnedWriteHelper({
-      rootPath: root,
-      relativeParentPath: "",
-      basename: "created.txt",
-      mkdir: true,
-      mode: 0o600,
-      overwrite: true,
-      input: { kind: "buffer", data: "created", encoding: "utf8" },
-    })).rejects.toMatchObject({ code: "helper-unavailable" });
-    await expect(fs.stat(path.join(root, "created.txt"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    await expect(
+      runPinnedWriteHelper({
+        rootPath: root,
+        relativeParentPath: "",
+        basename: "created.txt",
+        mkdir: true,
+        mode: 0o600,
+        overwrite: true,
+        input: { kind: "buffer", data: "created", encoding: "utf8" },
+      }),
+    ).resolves.toMatchObject({ dev: expect.any(Number), ino: expect.any(Number) });
+    await expect(fs.readFile(path.join(root, "created.txt"), "utf8")).resolves.toBe(
+      "created",
+    );
   });
 
   it.runIf(process.platform === "win32")(

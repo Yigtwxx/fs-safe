@@ -258,7 +258,7 @@ describe("deepsec regressions", () => {
     await expect(fsp.lstat(path.join(outside, "nested"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("rejects private secret writes without the pinned helper", async () => {
+  it.runIf(process.platform !== "win32")("uses best-effort private secret writes without the pinned helper", async () => {
     configureFsSafePython({ mode: "off" });
     const base = await tempRoot("fs-safe-secret-helper-required-");
     const rootDir = path.join(base, "root");
@@ -267,8 +267,9 @@ describe("deepsec regressions", () => {
 
     await expect(
       writeSecretFileAtomic({ rootDir, filePath: secretPath, content: "secret" }),
-    ).rejects.toMatchObject({ code: "helper-unavailable" });
-    await expect(fsp.lstat(secretPath)).rejects.toMatchObject({ code: "ENOENT" });
+    ).resolves.toBeUndefined();
+    await expect(fsp.readFile(secretPath, "utf8")).resolves.toBe("secret");
+    expect((await fsp.stat(secretPath)).mode & 0o777).toBe(0o600);
   });
 
   it.runIf(process.platform !== "win32")("rejects private secret writes when the pinned parent is swapped", async () => {

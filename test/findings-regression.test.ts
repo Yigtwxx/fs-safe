@@ -147,7 +147,6 @@ describe("security finding regressions", () => {
   });
 
   it.runIf(process.platform !== "win32")("uses unguessable no-follow temp files in pinned write fallback", async () => {
-    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     configureFsSafePython({ mode: "off" });
     const base = await tempRoot("fs-safe-pinned-write-fallback-");
     const outside = await tempRoot("fs-safe-pinned-write-outside-");

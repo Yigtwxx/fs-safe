@@ -246,9 +246,10 @@ describe("write, move, and delete boundary bypass attempts", () => {
     const safeRoot = await openRoot(layout.root);
     await fsp.writeFile(path.join(layout.root, "..%2fpwned.txt"), "literal");
 
-    await expect(safeRoot.write("..%2fpwned-2.txt", "literal")).rejects.toMatchObject({
-      code: "helper-unavailable",
-    });
+    await expect(safeRoot.write("..%2fpwned-2.txt", "literal")).resolves.toBeUndefined();
+    await expect(fsp.readFile(path.join(layout.root, "..%2fpwned-2.txt"), "utf8")).resolves.toBe(
+      "literal",
+    );
     await expect(safeRoot.stat("..%2fpwned.txt")).resolves.toMatchObject({ isFile: true });
     await safeRoot.remove("..%2fpwned.txt");
     await expect(fsp.stat(path.join(layout.root, "..%2fpwned.txt"))).rejects.toMatchObject({

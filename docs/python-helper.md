@@ -62,12 +62,12 @@ Node-only mode still keeps the important application-level guardrails:
 - root-relative path validation;
 - canonical root checks;
 - no-follow opens where Node/platform support exists;
-- file identity checks around reads and writes where a safe Node fallback exists;
-- atomic sibling-temp replacement on fallback platforms;
+- file identity checks around reads and writes;
+- atomic sibling-temp replacement;
 - hardlink/symlink policy checks where the API requests them;
 - byte limits and structured `FsSafeError` failures.
 
-What gets weaker is the POSIX defense against another same-UID process swapping a parent directory between validation and mutation. Write paths that need fd-relative parent commits now fail closed when the helper is disabled or unavailable; other operations such as `root().move()`, `root().remove()`, and `root().mkdir()` may still rely on Node path operations plus pre/post checks instead of parent-fd syscalls.
+What gets weaker is the POSIX defense against another same-UID process swapping a parent directory between validation and mutation. Without fd-relative mutation, `root().move()`, `root().remove()`, `root().mkdir()`, and some write paths rely on Node path operations plus pre/post checks instead of parent-fd syscalls.
 
 That is usually acceptable when the root directory is only writable by the trusted application user. It is not the right posture if untrusted local processes can race writes in the same tree and you are relying on `fs-safe` as part of the security boundary.
 

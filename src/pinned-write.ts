@@ -112,14 +112,14 @@ export async function runPinnedWriteHelper(params: {
     relativeParentPath: params.relativeParentPath,
   });
   if (getFsSafePythonConfig().mode === "off") {
-    return await runPinnedWriteFallbackOrThrow(params);
+    return await runPinnedWriteFallback(params);
   }
   if (params.input.kind === "stream") {
     try {
       assertPinnedPythonOperationAvailable();
     } catch (error) {
       if (canFallbackFromPythonError(error)) {
-        return await runPinnedWriteFallbackOrThrow(params, error);
+        return await runPinnedWriteFallback(params);
       }
       throw error;
     }
@@ -142,7 +142,7 @@ export async function runPinnedWriteHelper(params: {
     });
   } catch (error) {
     if (canFallbackFromPythonError(error)) {
-      return await runPinnedWriteFallbackOrThrow(params, error);
+      return await runPinnedWriteFallback(params);
     }
     throw error;
   }
@@ -180,20 +180,6 @@ export async function runPinnedCopyHelper(params: {
       sourcePath: params.sourcePath,
     },
   });
-}
-
-async function runPinnedWriteFallbackOrThrow(
-  params: Parameters<typeof runPinnedWriteFallback>[0],
-  cause?: unknown,
-): Promise<FileIdentityStat> {
-  if (process.platform !== "win32") {
-    throw new FsSafeError(
-      "helper-unavailable",
-      "Python helper is required for pinned writes on this platform",
-      { cause },
-    );
-  }
-  return await runPinnedWriteFallback(params);
 }
 
 async function runPinnedWriteFallback(params: {
