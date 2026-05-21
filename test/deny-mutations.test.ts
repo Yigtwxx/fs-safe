@@ -116,9 +116,9 @@ describe("root denyMutations policies", () => {
     ).rejects.toMatchObject({ code: "invalid-path" });
   });
 
-  it("preserves trailing whitespace in denied paths", async () => {
-    const rootPath = await tempRoot("fs-safe-deny-whitespace-");
-    const deniedName = "secret\t";
+  it.skipIf(skipOnWindows)("preserves trailing whitespace in denied paths", async () => {
+    const rootPath = await tempRoot("fs-safe-deny-space-");
+    const deniedName = "secret ";
     const trimmedName = "secret";
     const root = await openRoot(rootPath, {
       denyMutations: { paths: [path.join(rootPath, deniedName)] },
@@ -131,9 +131,9 @@ describe("root denyMutations policies", () => {
     await expect(readFile(path.join(rootPath, trimmedName), "utf8")).resolves.toBe("allowed");
   });
 
-  it("preserves trailing whitespace in denied prefixes", async () => {
-    const rootPath = await tempRoot("fs-safe-deny-prefix-whitespace-");
-    const deniedDir = path.join(rootPath, "private\t");
+  it.skipIf(skipOnWindows)("preserves trailing whitespace in denied prefixes", async () => {
+    const rootPath = await tempRoot("fs-safe-deny-prefix-space-");
+    const deniedDir = path.join(rootPath, "private ");
     const trimmedDir = path.join(rootPath, "private");
     await mkdir(deniedDir, { recursive: true });
     await mkdir(trimmedDir, { recursive: true });
@@ -141,7 +141,7 @@ describe("root denyMutations policies", () => {
       denyMutations: { prefixes: [deniedDir] },
     });
 
-    await expect(root.write("private\t/file.txt", "blocked")).rejects.toMatchObject({
+    await expect(root.write("private /file.txt", "blocked")).rejects.toMatchObject({
       code: "denied-path",
     });
     await expect(root.write("private/file.txt", "allowed")).resolves.toBeUndefined();
