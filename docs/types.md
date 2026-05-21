@@ -82,6 +82,7 @@ type ReadResult = {
 
 ```ts
 type RootDefaults = {
+  denyMutations?: DenyMutationPolicy;
   hardlinks?: "reject" | "allow";
   maxBytes?: number;
   mkdir?: boolean;
@@ -90,26 +91,31 @@ type RootDefaults = {
   symlinks?: "reject" | "follow-within-root";
 };
 
+type DenyMutationPolicy = {
+  paths?: readonly string[];
+  prefixes?: readonly string[];
+};
+
 type RootOptions = {
   rootDir: string;
   defaults?: RootDefaults;
 };
 ```
 
-`RootDefaults` is what `root(rootDir, defaults)` accepts. See [`root()`](root.md) for the per-method options that override these.
+`RootDefaults` is what `root(rootDir, defaults)` accepts. See [`root()`](root.md) for the per-method options that override these. `denyMutations` is the exception: root and per-call deny entries are merged.
 
 ## `RootReadOptions` / `RootWriteOptions` / `RootCopyOptions`
 
 ```ts
 type RootReadOptions = Pick<RootDefaults, "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks">;
-type RootWriteOptions = Pick<RootDefaults, "mkdir" | "mode"> & {
+type RootWriteOptions = Pick<RootDefaults, "denyMutations" | "mkdir" | "mode"> & {
   encoding?: BufferEncoding;
   overwrite?: boolean;
 };
-type RootCopyOptions = Pick<RootDefaults, "maxBytes" | "mkdir" | "mode"> & {
+type RootCopyOptions = Pick<RootDefaults, "denyMutations" | "maxBytes" | "mkdir" | "mode"> & {
   sourceHardlinks?: "reject" | "allow";
 };
-type RootOpenWritableOptions = Pick<RootDefaults, "mkdir" | "mode"> & {
+type RootOpenWritableOptions = Pick<RootDefaults, "denyMutations" | "mkdir" | "mode"> & {
   writeMode?: "replace" | "append" | "update";
 };
 type RootWriteJsonOptions = RootWriteOptions & {
@@ -120,6 +126,11 @@ type RootWriteJsonOptions = RootWriteOptions & {
 type RootAppendOptions = RootWriteOptions & {
   prependNewlineIfNeeded?: boolean;
 };
+type RootMoveOptions = Pick<RootDefaults, "denyMutations"> & {
+  overwrite?: boolean;
+};
+type RootRemoveOptions = Pick<RootDefaults, "denyMutations">;
+type RootMkdirOptions = Pick<RootDefaults, "denyMutations">;
 ```
 
 Per-method option shapes. Each picks the `RootDefaults` keys that apply, plus method-specific extras.
@@ -137,11 +148,12 @@ The two policy unions you'll see throughout. `"reject"` is conservative; `"follo
 
 ```ts
 type FsSafeErrorCode =
-  | "already-exists" | "hardlink" | "helper-failed" | "helper-unavailable"
-  | "insecure-permissions" | "invalid-path" | "not-empty" | "not-file"
-  | "not-found" | "not-owned" | "not-removable" | "outside-workspace"
-  | "path-alias" | "path-mismatch" | "permission-unverified"
-  | "symlink" | "timeout" | "too-large" | "unsupported-platform";
+  | "already-exists" | "denied-path" | "hardlink" | "helper-failed"
+  | "helper-unavailable" | "insecure-permissions" | "invalid-path"
+  | "not-empty" | "not-file" | "not-found" | "not-owned"
+  | "not-removable" | "outside-workspace" | "path-alias"
+  | "path-mismatch" | "permission-unverified" | "symlink"
+  | "timeout" | "too-large" | "unsupported-platform";
 ```
 
 Closed union you switch on. See the [Errors](errors.md) reference for what each one means.

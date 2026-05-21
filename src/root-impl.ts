@@ -11,6 +11,12 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
+import {
+  assertMutationNotDenied,
+  mergeDenyMutationPolicies,
+  type DenyMutationPolicy,
+} from "./deny-mutations.js";
+import { resolveOpenedFileRealPathForHandle } from "./opened-realpath.js";
 import { isPinnedPathHelperSpawnError, runPinnedPathHelper } from "./pinned-path.js";
 import { runPinnedCopyHelper, runPinnedWriteHelper } from "./pinned-write.js";
 import { canFallbackFromPythonError, getFsSafePythonConfig } from "./pinned-python-config.js";
@@ -22,6 +28,7 @@ import {
   isPathInside,
   isSymlinkOpenError,
 } from "./path.js";
+import { readOpenedFileSafely, type ReadResult } from "./read-opened-file.js";
 import {
   helperReaddir,
   helperStat,
@@ -48,17 +55,15 @@ import type { DirEntry, PathStat } from "./types.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 import { serializePathWrite } from "./write-queue.js";
 
+export type { DenyMutationPolicy } from "./deny-mutations.js";
+export { resolveOpenedFileRealPathForHandle } from "./opened-realpath.js";
+export type { ReadResult } from "./read-opened-file.js";
+
 export type OpenResult = {
   handle: FileHandle;
   realPath: string;
   stat: Stats;
   [Symbol.asyncDispose](): Promise<void>;
-};
-
-export type ReadResult = {
-  buffer: Buffer;
-  realPath: string;
-  stat: Stats;
 };
 
 export type RootOptions = {
@@ -75,6 +80,7 @@ export type RootDefaults = {
   maxBytes?: number;
   mkdir?: boolean;
   mode?: number;
+  denyMutations?: DenyMutationPolicy;
   nonBlockingRead?: boolean;
   symlinks?: SymlinkPolicy;
 };
@@ -86,16 +92,16 @@ export type RootReadOptions = Pick<
 
 export type RootOpenOptions = Omit<RootReadOptions, "maxBytes">;
 
-export type RootWriteOptions = Pick<RootDefaults, "mkdir" | "mode"> & {
+export type RootWriteOptions = Pick<RootDefaults, "denyMutations" | "mkdir" | "mode"> & {
   encoding?: BufferEncoding;
   overwrite?: boolean;
 };
 
-export type RootOpenWritableOptions = Pick<RootDefaults, "mkdir" | "mode"> & {
+export type RootOpenWritableOptions = Pick<RootDefaults, "denyMutations" | "mkdir" | "mode"> & {
   writeMode?: WritableOpenMode;
 };
 
-export type RootCopyOptions = Pick<RootDefaults, "maxBytes" | "mkdir" | "mode"> & {
+export type RootCopyOptions = Pick<RootDefaults, "denyMutations" | "maxBytes" | "mkdir" | "mode"> & {
   sourceHardlinks?: HardlinkPolicy;
 };
 
@@ -111,6 +117,13 @@ export type RootCreateJsonOptions = Omit<RootWriteJsonOptions, "overwrite">;
 export type RootAppendOptions = RootWriteOptions & {
   prependNewlineIfNeeded?: boolean;
 };
+
+export type RootMoveOptions = Pick<RootDefaults, "denyMutations"> & {
+  overwrite?: boolean;
+};
+
+export type RootRemoveOptions = Pick<RootDefaults, "denyMutations">;
+export type RootMkdirOptions = Pick<RootDefaults, "denyMutations">;
 
 type RootReadParams = RootReadOptions;
 
@@ -293,9 +306,9 @@ export interface Root {
     data: string | Buffer,
     options?: RootAppendOptions,
   ): Promise<void>;
-  remove(relativePath: string): Promise<void>;
-  mkdir(relativePath: string): Promise<void>;
-  ensureRoot(): Promise<void>;
+  remove(relativePath: string, options?: RootRemoveOptions): Promise<void>;
+  mkdir(relativePath: string, options?: RootMkdirOptions): Promise<void>;
+  ensureRoot(options?: RootMkdirOptions): Promise<void>;
   write(
     relativePath: string,
     data: string | Buffer,
@@ -324,7 +337,7 @@ export interface Root {
   move(
     fromRelative: string,
     toRelative: string,
-    options?: { overwrite?: boolean },
+    options?: RootMoveOptions,
   ): Promise<void>;
 }
 
@@ -418,6 +431,7 @@ class RootHandle implements Root {
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...options,
+      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
       append: writeMode === "append",
       truncateExisting: writeMode === "replace",
     });
@@ -434,21 +448,32 @@ class RootHandle implements Root {
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...options,
+      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
     });
   }
 
-  async remove(relativePath: string): Promise<void> {
+  async remove(relativePath: string, options: RootRemoveOptions = {}): Promise<void> {
     assertValidRootRelativePath(relativePath);
-    await removePathInRoot(this.context, relativePath);
+    await removePathInRoot(this.context, {
+      relativePath,
+      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
+    });
   }
 
-  async mkdir(relativePath: string): Promise<void> {
+  async mkdir(relativePath: string, options: RootMkdirOptions = {}): Promise<void> {
     assertValidRootRelativePath(relativePath);
-    await mkdirPathInRoot(this.context, { relativePath });
+    await mkdirPathInRoot(this.context, {
+      relativePath,
+      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
+    });
   }
 
-  async ensureRoot(): Promise<void> {
-    await mkdirPathInRoot(this.context, { relativePath: "", allowRoot: true });
+  async ensureRoot(options: RootMkdirOptions = {}): Promise<void> {
+    await mkdirPathInRoot(this.context, {
+      relativePath: "",
+      allowRoot: true,
+      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
+    });
   }
 
   async write(
@@ -462,6 +487,7 @@ class RootHandle implements Root {
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...options,
+      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
     });
   }
 
@@ -476,6 +502,7 @@ class RootHandle implements Root {
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...options,
+      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
       overwrite: false,
     });
   }
@@ -513,6 +540,7 @@ class RootHandle implements Root {
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...options,
+      denyMutations: mergeDenyMutationPolicies(this.defaults.denyMutations, options.denyMutations),
     });
   }
 
@@ -562,10 +590,19 @@ class RootHandle implements Root {
   async move(
     fromRelative: string,
     toRelative: string,
-    options: { overwrite?: boolean } = {},
+    options: RootMoveOptions = {},
   ): Promise<void> {
     assertValidRootRelativePath(fromRelative);
     assertValidRootRelativePath(toRelative);
+    const denyMutations = mergeDenyMutationPolicies(
+      this.defaults.denyMutations,
+      options.denyMutations,
+    );
+    await assertMoveMutationAllowed(this.context, {
+      fromRelative,
+      toRelative,
+      denyMutations,
+    });
     try {
       await runPinnedHelper<void>("rename", this.rootReal, {
         from: fromRelative,
@@ -576,6 +613,7 @@ class RootHandle implements Root {
       if (canFallbackFromPythonError(error)) {
         await movePathFallback(this.context, {
           fromRelative,
+          denyMutations,
           overwrite: options.overwrite ?? false,
           toRelative,
         });
@@ -698,30 +736,6 @@ export async function openLocalFileSafely(params: { filePath: string }): Promise
   return await openVerifiedLocalFile(params.filePath);
 }
 
-async function readOpenedFileSafely(params: {
-  opened: OpenResult;
-  maxBytes?: number;
-}): Promise<ReadResult> {
-  if (params.maxBytes !== undefined && params.opened.stat.size > params.maxBytes) {
-    throw new FsSafeError(
-      "too-large",
-      `file exceeds limit of ${params.maxBytes} bytes (got ${params.opened.stat.size})`,
-    );
-  }
-  const buffer = await params.opened.handle.readFile();
-  if (params.maxBytes !== undefined && buffer.byteLength > params.maxBytes) {
-    throw new FsSafeError(
-      "too-large",
-      `file exceeds limit of ${params.maxBytes} bytes (got ${buffer.byteLength})`,
-    );
-  }
-  return {
-    buffer,
-    realPath: params.opened.realPath,
-    stat: params.opened.stat,
-  };
-}
-
 export type WritableOpenResult = {
   handle: FileHandle;
   createdForWrite: boolean;
@@ -781,93 +795,13 @@ async function verifyAtomicWriteResult(params: {
   }
 }
 
-export async function resolveOpenedFileRealPathForHandle(
-  handle: FileHandle,
-  ioPath: string,
-): Promise<string> {
-  const handleStat = await handle.stat();
-  const fdCandidates =
-    process.platform === "linux"
-      ? [`/proc/self/fd/${handle.fd}`, `/dev/fd/${handle.fd}`]
-      : process.platform === "win32"
-        ? []
-        : [`/dev/fd/${handle.fd}`];
-  for (const fdPath of fdCandidates) {
-    try {
-      const fdRealPath = await fs.realpath(fdPath);
-      const fdRealStat = await fs.stat(fdRealPath);
-      if (sameFileIdentity(handleStat, fdRealStat)) {
-        return fdRealPath;
-      }
-    } catch {
-      // try next fd path
-    }
-  }
-
-  try {
-    const ioRealPath = await fs.realpath(ioPath);
-    const ioRealStat = await fs.stat(ioRealPath);
-    if (sameFileIdentity(handleStat, ioRealStat)) {
-      return ioRealPath;
-    }
-  } catch (err) {
-    if (!isNotFoundPathError(err)) {
-      throw err;
-    }
-  }
-  const parentResolved = await resolveOpenedFileRealPathFromParent(handleStat, ioPath);
-  if (parentResolved) {
-    return parentResolved;
-  }
-  throw new FsSafeError("path-mismatch", "unable to resolve opened file path");
-}
-
-async function resolveOpenedFileRealPathFromParent(
-  handleStat: Stats,
-  ioPath: string,
-): Promise<string | null> {
-  let parentReal: string;
-  try {
-    parentReal = await fs.realpath(path.dirname(ioPath));
-  } catch (err) {
-    if (isNotFoundPathError(err)) {
-      return null;
-    }
-    throw err;
-  }
-
-  let entries: string[];
-  try {
-    entries = await fs.readdir(parentReal);
-  } catch (err) {
-    if (isNotFoundPathError(err)) {
-      return null;
-    }
-    throw err;
-  }
-
-  for (const entry of entries.toSorted()) {
-    const candidatePath = path.join(parentReal, entry);
-    try {
-      const candidateStat = await fs.lstat(candidatePath);
-      if (candidateStat.isFile() && sameFileIdentity(handleStat, candidateStat)) {
-        return await fs.realpath(candidatePath);
-      }
-    } catch (err) {
-      if (!isNotFoundPathError(err)) {
-        throw err;
-      }
-    }
-  }
-  return null;
-}
-
 async function openWritableFileInRoot(
   root: RootContext,
   params: {
     relativePath: string;
     mkdir?: boolean;
     mode?: number;
+    denyMutations?: DenyMutationPolicy;
     truncateExisting?: boolean;
     append?: boolean;
   },
@@ -876,6 +810,7 @@ async function openWritableFileInRoot(
     root,
     params.relativePath,
   );
+  await assertMutationNotDenied(resolved, params.denyMutations);
   try {
     await assertNoPathAliasEscape({
       absolutePath: resolved,
@@ -1010,6 +945,7 @@ async function appendFileInRoot(
     encoding?: BufferEncoding;
     mkdir?: boolean;
     mode?: number;
+    denyMutations?: DenyMutationPolicy;
     prependNewlineIfNeeded?: boolean;
   },
 ): Promise<void> {
@@ -1017,6 +953,7 @@ async function appendFileInRoot(
     relativePath: params.relativePath,
     mkdir: params.mkdir,
     mode: params.mode,
+    denyMutations: params.denyMutations,
     truncateExisting: false,
     append: true,
   });
@@ -1049,8 +986,15 @@ async function appendFileInRoot(
   }
 }
 
-async function removePathInRoot(root: RootContext, relativePath: string): Promise<void> {
-  const resolved = await resolvePinnedRemovePathInRoot(root, relativePath);
+async function removePathInRoot(
+  root: RootContext,
+  params: { relativePath: string; denyMutations?: DenyMutationPolicy },
+): Promise<void> {
+  const resolved = await resolvePinnedRemovePathInRoot(
+    root,
+    params.relativePath,
+    params.denyMutations,
+  );
   if (process.platform === "win32") {
     await removePathFallback(resolved);
     return;
@@ -1075,6 +1019,7 @@ async function mkdirPathInRoot(
   params: {
     relativePath: string;
     allowRoot?: boolean;
+    denyMutations?: DenyMutationPolicy;
   },
 ): Promise<void> {
   const resolved = await resolvePinnedPathInRoot(root, params);
@@ -1105,6 +1050,7 @@ async function writeFileInRoot(
     encoding?: BufferEncoding;
     mkdir?: boolean;
     mode?: number;
+    denyMutations?: DenyMutationPolicy;
     overwrite?: boolean;
   },
 ): Promise<void> {
@@ -1115,7 +1061,12 @@ async function writeFileInRoot(
     return;
   }
 
-  const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath, params.mode);
+  const pinned = await resolvePinnedWriteTargetInRoot(
+    root,
+    params.relativePath,
+    params.mode,
+    params.denyMutations,
+  );
 
   await serializePathWrite(pinned.targetPath, async () => {
     let identity;
@@ -1163,6 +1114,7 @@ async function copyFileInRoot(
     maxBytes?: number;
     mkdir?: boolean;
     mode?: number;
+    denyMutations?: DenyMutationPolicy;
     sourceHardlinks?: HardlinkPolicy;
   },
 ): Promise<void> {
@@ -1187,7 +1139,12 @@ async function copyFileInRoot(
       return;
     }
 
-    const pinned = await resolvePinnedWriteTargetInRoot(root, params.relativePath, params.mode);
+    const pinned = await resolvePinnedWriteTargetInRoot(
+      root,
+      params.relativePath,
+      params.mode,
+      params.denyMutations,
+    );
     await serializePathWrite(pinned.targetPath, async () => {
       let identity;
       try {
@@ -1233,6 +1190,7 @@ async function resolvePinnedWriteTargetInRoot(
   root: RootContext,
   relativePath: string,
   requestedMode?: number,
+  denyMutations?: DenyMutationPolicy,
 ): Promise<{
   rootReal: string;
   targetPath: string;
@@ -1241,6 +1199,7 @@ async function resolvePinnedWriteTargetInRoot(
   mode: number;
 }> {
   const { rootReal, rootWithSep, resolved } = await resolvePathInRoot(root, relativePath);
+  await assertMutationNotDenied(resolved, denyMutations);
   try {
     await assertNoPathAliasEscape({
       absolutePath: resolved,
@@ -1300,10 +1259,13 @@ async function resolvePinnedPathInRoot(
   params: {
     relativePath: string;
     allowRoot?: boolean;
+    denyMutations?: DenyMutationPolicy;
   },
 ): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
   return await resolvePinnedOperationPathInRoot(root, {
     allowRoot: params.allowRoot,
+    denyMutations: params.denyMutations,
+    protectDenyMutationAncestors: false,
     relativePath: params.relativePath,
     policy: PATH_ALIAS_POLICIES.strict,
   });
@@ -1312,8 +1274,11 @@ async function resolvePinnedPathInRoot(
 async function resolvePinnedRemovePathInRoot(
   root: RootContext,
   relativePath: string,
+  denyMutations?: DenyMutationPolicy,
 ): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
   return await resolvePinnedOperationPathInRoot(root, {
+    denyMutations,
+    protectDenyMutationAncestors: true,
     relativePath,
     policy: PATH_ALIAS_POLICIES.unlinkTarget,
   });
@@ -1325,6 +1290,8 @@ async function resolvePinnedOperationPathInRoot(
     relativePath: string;
     policy: (typeof PATH_ALIAS_POLICIES)[keyof typeof PATH_ALIAS_POLICIES];
     allowRoot?: boolean;
+    denyMutations?: DenyMutationPolicy;
+    protectDenyMutationAncestors: boolean;
   },
 ): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
   const resolved = await resolvePinnedRootPathInRoot(root, {
@@ -1333,6 +1300,7 @@ async function resolvePinnedOperationPathInRoot(
   });
   const relativeResolved = path.relative(resolved.rootReal, resolved.canonicalPath);
   if ((relativeResolved === "" || relativeResolved === ".") && params.allowRoot === true) {
+    await assertMutationNotDenied(resolved.canonicalPath, params.denyMutations);
     return { rootReal: resolved.rootReal, resolved: resolved.canonicalPath, relativePosix: "" };
   }
   const firstSegment = relativeResolved.split(path.sep)[0];
@@ -1348,6 +1316,9 @@ async function resolvePinnedOperationPathInRoot(
   if (!isPathInside(resolved.rootWithSep, resolved.canonicalPath)) {
     throw new FsSafeError("outside-workspace", "file is outside workspace root");
   }
+  await assertMutationNotDenied(resolved.canonicalPath, params.denyMutations, {
+    protectAncestors: params.protectDenyMutationAncestors,
+  });
 
   return { rootReal: resolved.rootReal, resolved: resolved.canonicalPath, relativePosix };
 }
@@ -1439,20 +1410,37 @@ async function listPathFallback(
   }
 }
 
+async function assertMoveMutationAllowed(
+  root: RootContext,
+  params: {
+    fromRelative: string;
+    toRelative: string;
+    denyMutations?: DenyMutationPolicy;
+  },
+): Promise<void> {
+  const source = await resolvePathInRoot(root, params.fromRelative);
+  await assertMutationNotDenied(source.resolved, params.denyMutations, { protectAncestors: true });
+  const target = await resolvePathInRoot(root, params.toRelative);
+  await assertMutationNotDenied(target.resolved, params.denyMutations, { protectAncestors: true });
+}
+
 async function movePathFallback(
   root: RootContext,
   params: {
     fromRelative: string;
+    denyMutations?: DenyMutationPolicy;
     toRelative: string;
     overwrite: boolean;
   },
 ): Promise<void> {
   const source = await resolvePathInRoot(root, params.fromRelative);
+  await assertMutationNotDenied(source.resolved, params.denyMutations, { protectAncestors: true });
   await resolvePinnedRootPathInRoot(root, {
     relativePath: params.fromRelative,
     policy: PATH_ALIAS_POLICIES.strict,
   });
   const target = await resolvePathInRoot(root, params.toRelative);
+  await assertMutationNotDenied(target.resolved, params.denyMutations, { protectAncestors: true });
   await resolvePinnedRootPathInRoot(root, {
     relativePath: params.toRelative,
     policy: PATH_ALIAS_POLICIES.unlinkTarget,
@@ -1534,6 +1522,7 @@ async function writeFileFallback(
     encoding?: BufferEncoding;
     mkdir?: boolean;
     mode?: number;
+    denyMutations?: DenyMutationPolicy;
     overwrite?: boolean;
   },
 ): Promise<void> {
@@ -1546,6 +1535,7 @@ async function writeFileFallback(
     relativePath: params.relativePath,
     mkdir: params.mkdir,
     mode: params.mode,
+    denyMutations: params.denyMutations,
     truncateExisting: false,
   });
   const destinationPath = target.realPath;
@@ -1596,9 +1586,11 @@ async function writeMissingFileFallback(
     encoding?: BufferEncoding;
     mkdir?: boolean;
     mode?: number;
+    denyMutations?: DenyMutationPolicy;
   },
 ): Promise<void> {
   const { rootReal, resolved } = await resolvePathInRoot(root, params.relativePath);
+  await assertMutationNotDenied(resolved, params.denyMutations);
   try {
     await assertNoPathAliasEscape({
       absolutePath: resolved,
@@ -1667,6 +1659,7 @@ async function copyFileFallback(
     maxBytes?: number;
     mkdir?: boolean;
     mode?: number;
+    denyMutations?: DenyMutationPolicy;
     sourceHardlinks?: HardlinkPolicy;
   },
   source: OpenResult,
@@ -1683,6 +1676,7 @@ async function copyFileFallback(
       relativePath: params.relativePath,
       mkdir: params.mkdir,
       mode: params.mode,
+      denyMutations: params.denyMutations,
       truncateExisting: false,
     });
     const destinationPath = target.realPath;

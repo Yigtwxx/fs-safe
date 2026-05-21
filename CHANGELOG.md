@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- Add opt-in `denyMutations` policies with exact `paths` and subtree `prefixes` so callers can protect application-sensitive files from root write, copy, move, remove, mkdir, and writable-open operations. (#20; thanks @amknight)
+
 ### Security and Correctness
 
 - Retry async JSON reads (`readJson`, `readJsonIfExists`, `tryReadJson`) up to five attempts with 50ms exponential backoff when the file is rotated mid-read by an atomic rename, and tag the underlying race as `FsSafeError("path-mismatch")` so callers can distinguish transient swaps from corruption. (#19; thanks @yetval)

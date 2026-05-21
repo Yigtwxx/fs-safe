@@ -50,6 +50,10 @@ When `hardlinks: "reject"` is set, reads stat the target and refuse if `nlink > 
 
 `resolve()`, `exists()`, `stat()`, and `list()` are explicitly **not** race-resistant — they answer a question and return. To act on a path with race resistance, use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()`. They re-pin the path identity at the point of use.
 
+### Denied mutations
+
+`denyMutations` is an opt-in application policy for `root()` mutation methods. It blocks exact absolute paths with `paths` and whole subtrees with `prefixes`, merging root defaults with per-call entries so a call cannot clear root-level denies. This is not an OS permission boundary: code with access to `node:fs`, a shell, or another process with the same filesystem privileges can bypass it.
+
 ### Atomic writes
 
 `replaceFileAtomic` writes to a sibling temp file in the destination directory, optionally `fsync`s it, optionally `fsync`s the parent directory after rename, and atomically renames over the destination. On failure mid-write, the destination is either the old contents (rename never happened) or the new contents (rename succeeded). There is no half-written intermediate state visible at the destination path.
