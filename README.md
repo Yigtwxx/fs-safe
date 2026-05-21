@@ -155,7 +155,7 @@ await using opened = await fs.openWritable("logs/current.log", { writeMode: "app
 }
 ```
 
-`nonBlockingRead` is the only I/O scheduling knob in `RootDefaults`; it applies to read/open operations because it changes how file descriptors are opened. Filesystem safety policy remains explicit through `hardlinks` and `symlinks`.
+`nonBlockingRead` is the only I/O scheduling knob in `RootDefaults`; it applies to read/open operations because it changes how file descriptors are opened. Filesystem safety policy remains explicit through `hardlinks`, `symlinks`, and mutation deny policies.
 
 `stat()`, `exists()`, and `list()` are boundary-checked, but they cannot pin a later operation to the same filesystem object. Use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()` for operations that must be race-resistant at the point of use.
 

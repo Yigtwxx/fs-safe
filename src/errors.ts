@@ -1,5 +1,6 @@
 export type FsSafeErrorCode =
   | "already-exists"
+  | "denied-path"
   | "hardlink"
   | "helper-failed"
   | "helper-unavailable"

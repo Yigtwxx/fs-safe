@@ -24,6 +24,24 @@ await fs.mkdir("snapshots/2026/05");
 
 A failure at any point either leaves the destination at its previous contents or surfaces an `FsSafeError` — never a partially-written file at the destination path.
 
+## Mutation deny policies
+
+All mutation verbs accept `mutationPolicy?: MutationPathPolicy`, either as a root default or per-call option:
+
+```ts
+const fs = await root("/srv/workspace", {
+  mutationPolicy: {
+    denyExact: ["/srv/workspace/.env"],
+    denyPrefixes: ["/srv/workspace/.ssh"],
+  },
+});
+
+await fs.write(".env", "x");       // throws FsSafeError code "denied-path"
+await fs.remove(".ssh/id_rsa");    // throws FsSafeError code "denied-path"
+```
+
+`denyExact` blocks one absolute path. `denyPrefixes` blocks the path and everything below it. fs-safe canonicalizes through existing ancestors before comparing, so a mutation through a symlinked ancestor to a denied path is still denied. Root-level and per-call policies are additive; per-call policy can add denies, but cannot clear root defaults.
+
 ## Write verbs
 
 ### `fs.write(rel, data, options?)`
@@ -35,7 +53,7 @@ await fs.write("state/last-run.json", JSON.stringify(run));
 await fs.write("notes/today.txt", "hello\n", { encoding: "utf8" });
 ```
 
-`data` accepts `string | Buffer`. `options` are `{ encoding?: BufferEncoding; mkdir?: boolean; mode?: number; overwrite?: boolean }`. `mode` sets the file's POSIX mode; if omitted, falls back to the `mode` from `RootDefaults` and then to umask. `overwrite` defaults to `true`; set it to `false` for the same no-clobber behavior as `create()`.
+`data` accepts `string | Buffer`. `options` are `{ encoding?: BufferEncoding; mkdir?: boolean; mode?: number; mutationPolicy?: MutationPathPolicy; overwrite?: boolean }`. `mode` sets the file's POSIX mode; if omitted, falls back to the `mode` from `RootDefaults` and then to umask. `overwrite` defaults to `true`; set it to `false` for the same no-clobber behavior as `create()`.
 
 ### `fs.create(rel, data, options?)`
 

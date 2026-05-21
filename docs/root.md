@@ -22,14 +22,20 @@ type RootDefaults = {
   maxBytes?: number;               // refuse reads larger than this many bytes; defaults to 16 MiB
   mkdir?: boolean;                 // create missing parent dirs on write/openWritable/append
   mode?: number;                   // file mode applied to new writes; per-call override available
+  mutationPolicy?: MutationPathPolicy; // exact/prefix paths that mutation methods may not change
   nonBlockingRead?: boolean;       // schedule reads on a worker; useful for large files
   symlinks?: "reject" | "follow-within-root"; // policy when a path component is a symlink
+};
+
+type MutationPathPolicy = {
+  denyExact?: readonly string[];
+  denyPrefixes?: readonly string[];
 };
 ```
 
 `root()` resolves the directory through the real filesystem. A symlinked input becomes the canonical path; a non-existent root throws `FsSafeError` with code `not-found`, and malformed or non-directory roots throw `invalid-path`.
 
-`defaults` apply to every method on the returned handle. Per-call options on individual methods override the defaults for that call only.
+`defaults` apply to every method on the returned handle. Per-call options on individual methods override the defaults for that call only, except `mutationPolicy`: root and per-call deny entries are merged so a call cannot clear a root-level deny.
 
 ## The `Root` interface
 
@@ -69,9 +75,9 @@ fs.append(rel, data, options?)           // append text/buffer; respects mkdir d
 fs.copyIn(rel, sourceAbsPath, options?)  // copy from outside the root, atomically, with size cap
 fs.openWritable(rel, options?)           // FileHandle for streaming writes; supports await using
 fs.move(from, to, options?)              // rename within the root; defaults to no clobber
-fs.remove(rel)                           // unlink file or rmdir empty directory
-fs.mkdir(rel)                            // mkdir -p (creates missing parents)
-fs.ensureRoot()                          // accepts "" / "." as the root itself
+fs.remove(rel, options?)                 // unlink file or rmdir empty directory
+fs.mkdir(rel, options?)                  // mkdir -p (creates missing parents)
+fs.ensureRoot(options?)                  // accepts "" / "." as the root itself
 ```
 
 `write`, `create`, `append`, `writeJson`, and `createJson` accept `mode?: number`; use `0o600` for credentials and other private state. `writeJson` also accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
@@ -79,6 +85,8 @@ fs.ensureRoot()                          // accepts "" / "." as the root itself
 `copyIn` is a one-shot ingest from a trusted absolute source path: it streams the source through the boundary, atomically renames into the root, and respects `maxBytes`.
 
 `openWritable` opens a writable file with options `mode?: number` and `writeMode?: "replace" | "append" | "update"`. `replace` truncates existing files and is the default; `update` keeps existing contents. Use it for streaming output. Prefer `await using` for cleanup.
+
+All mutation methods accept `mutationPolicy?: { denyExact?: string[]; denyPrefixes?: string[] }`. Paths are absolute paths; exact entries block that specific path, and prefixes block that path plus descendants. fs-safe canonicalizes through existing ancestors before comparing, so a symlinked ancestor to a denied location is still denied. Denied mutations throw `FsSafeError` with code `denied-path`. Use this for caller-specific sensitive paths, not as a replacement for the root boundary, symlink, or hardlink checks.
 
 ### Inspection (advisory)
 
@@ -132,6 +140,7 @@ Every method throws `FsSafeError` with a `code`. Branch on `err.code`, not messa
 | `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). |
 | `not-file` | A read or copy targeted a non-regular file (directory, FIFO, socket, …). |
 | `already-exists` | `create()` or `move()` without `overwrite` hit an existing target. |
+| `denied-path` | A mutation target matched `mutationPolicy.denyExact` or `mutationPolicy.denyPrefixes`. |
 | `symlink` | A path component is a symlink, and the call's `symlinks` policy is `reject`. |
 | `hardlink` | The target's `nlink > 1` and `hardlinks` policy is `reject`. |
 | `path-mismatch` | Post-open identity check failed — the opened fd does not match the resolved path. |

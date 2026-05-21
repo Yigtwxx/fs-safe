@@ -43,6 +43,11 @@ export {
   type FsSafeLockConfig,
 } from "./lock-config.js";
 export {
+  assertMutationPathAllowed,
+  mergeMutationPathPolicies,
+  type MutationPathPolicy,
+} from "./mutation-policy.js";
+export {
   assertNoHardlinkedFinalPath,
   assertNoPathAliasEscape,
   PATH_ALIAS_POLICIES,

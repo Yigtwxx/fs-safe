@@ -86,8 +86,14 @@ type RootDefaults = {
   maxBytes?: number;
   mkdir?: boolean;
   mode?: number;
+  mutationPolicy?: MutationPathPolicy;
   nonBlockingRead?: boolean;
   symlinks?: "reject" | "follow-within-root";
+};
+
+type MutationPathPolicy = {
+  denyExact?: readonly string[];
+  denyPrefixes?: readonly string[];
 };
 
 type RootOptions = {
@@ -96,20 +102,20 @@ type RootOptions = {
 };
 ```
 
-`RootDefaults` is what `root(rootDir, defaults)` accepts. See [`root()`](root.md) for the per-method options that override these.
+`RootDefaults` is what `root(rootDir, defaults)` accepts. See [`root()`](root.md) for the per-method options that override these. `mutationPolicy` is the exception: root and per-call deny entries are merged.
 
 ## `RootReadOptions` / `RootWriteOptions` / `RootCopyOptions`
 
 ```ts
 type RootReadOptions = Pick<RootDefaults, "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks">;
-type RootWriteOptions = Pick<RootDefaults, "mkdir" | "mode"> & {
+type RootWriteOptions = Pick<RootDefaults, "mkdir" | "mode" | "mutationPolicy"> & {
   encoding?: BufferEncoding;
   overwrite?: boolean;
 };
-type RootCopyOptions = Pick<RootDefaults, "maxBytes" | "mkdir" | "mode"> & {
+type RootCopyOptions = Pick<RootDefaults, "maxBytes" | "mkdir" | "mode" | "mutationPolicy"> & {
   sourceHardlinks?: "reject" | "allow";
 };
-type RootOpenWritableOptions = Pick<RootDefaults, "mkdir" | "mode"> & {
+type RootOpenWritableOptions = Pick<RootDefaults, "mkdir" | "mode" | "mutationPolicy"> & {
   writeMode?: "replace" | "append" | "update";
 };
 type RootWriteJsonOptions = RootWriteOptions & {
@@ -120,6 +126,11 @@ type RootWriteJsonOptions = RootWriteOptions & {
 type RootAppendOptions = RootWriteOptions & {
   prependNewlineIfNeeded?: boolean;
 };
+type RootMoveOptions = Pick<RootDefaults, "mutationPolicy"> & {
+  overwrite?: boolean;
+};
+type RootRemoveOptions = Pick<RootDefaults, "mutationPolicy">;
+type RootMkdirOptions = Pick<RootDefaults, "mutationPolicy">;
 ```
 
 Per-method option shapes. Each picks the `RootDefaults` keys that apply, plus method-specific extras.
