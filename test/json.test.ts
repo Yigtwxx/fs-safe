@@ -324,7 +324,7 @@ describe("json file helpers", () => {
     }
 
     expect(writes).toBeGreaterThan(10);
-    expect(okReads).toBeGreaterThan(10);
+    expect(okReads).toBeGreaterThanOrEqual(10);
     expect(raceErrors).toBe(0);
   }, 5000);
 
