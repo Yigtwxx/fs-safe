@@ -34,7 +34,7 @@ jobs:
           - 24
         os:
           - ubuntu-latest
-          - macos-latest
+          - macos-15
           - windows-latest
     steps:
       - name: Check out
