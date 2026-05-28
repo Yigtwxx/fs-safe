@@ -1,6 +1,6 @@
-![fs-safe banner](docs/assets/readme-banner.jpg)
-
 # 🛡️ @openclaw/fs-safe
+
+![fs-safe banner](docs/assets/readme-banner.jpg)
 
 [![npm](https://img.shields.io/npm/v/@openclaw/fs-safe.svg?color=10b981&label=npm)](https://www.npmjs.com/package/@openclaw/fs-safe)
 [![ci](https://github.com/openclaw/fs-safe/actions/workflows/ci.yml/badge.svg)](https://github.com/openclaw/fs-safe/actions/workflows/ci.yml)
