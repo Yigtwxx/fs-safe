@@ -8,6 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { createBoundedReadStream } from "./bounded-read-stream.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import { syncDirectoryBestEffort } from "./fsync.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
@@ -433,11 +434,7 @@ class RootHandle implements Root {
     });
   }
 
-  async append(
-    relativePath: string,
-    data: string | Buffer,
-    options: RootAppendOptions = {},
-  ): Promise<void> {
+  async append(relativePath: string, data: string | Buffer, options: RootAppendOptions = {}): Promise<void> {
     await appendFileInRoot(this.context, {
       relativePath,
       data,
@@ -754,6 +751,8 @@ function rootWriteQueueKey(root: RootContext, relativePath: string): string {
   return `${root.rootReal}\0${relativePath}`;
 }
 
+type PinnedWriteTarget = { rootReal: string; targetPath: string; relativeParentPath: string; basename: string; mode: number };
+
 async function writeTempFileForAtomicReplace(params: {
   tempPath: string;
   data: string | Buffer;
@@ -969,12 +968,15 @@ async function appendFileInRoot(
 
     if (typeof params.data === "string") {
       await target.handle.appendFile(`${prefix}${params.data}`, params.encoding ?? "utf8");
-      return;
+    } else {
+      const payload =
+        prefix.length > 0 ? Buffer.concat([Buffer.from(prefix, "utf8"), params.data]) : params.data;
+      await target.handle.appendFile(payload);
     }
-
-    const payload =
-      prefix.length > 0 ? Buffer.concat([Buffer.from(prefix, "utf8"), params.data]) : params.data;
-    await target.handle.appendFile(payload);
+    await target.handle.sync();
+    if (target.createdForWrite) {
+      await syncDirectoryBestEffort(path.dirname(target.realPath));
+    }
   } finally {
     await target.handle.close().catch(() => {});
   }
@@ -1063,41 +1065,49 @@ async function writeFileInRoot(
   );
 
   await serializePathWrite(pinned.targetPath, async () => {
-    let identity;
-    try {
-      identity = await runPinnedWriteHelper({
-        rootPath: pinned.rootReal,
-        relativeParentPath: pinned.relativeParentPath,
-        basename: pinned.basename,
-        mkdir: params.mkdir !== false,
-        mode: params.mode ?? pinned.mode,
-        overwrite: params.overwrite,
-        input: {
-          kind: "buffer",
-          data: params.data,
-          encoding: params.encoding,
-        },
-      });
-    } catch (error) {
-      if (params.overwrite === false && isAlreadyExistsError(error)) {
-        throw new FsSafeError("already-exists", "file already exists", {
-          cause: error instanceof Error ? error : undefined,
-        });
-      }
-      throw normalizePinnedWriteError(error);
-    }
-
-    try {
-      await verifyAtomicWriteResult({
-        root,
-        targetPath: pinned.targetPath,
-        expectedIdentity: identity,
-      });
-    } catch (err) {
-      emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);
-      throw err;
-    }
+    await commitPinnedWriteInRoot(root, pinned, params);
   });
+}
+
+async function commitPinnedWriteInRoot(
+  root: RootContext,
+  pinned: PinnedWriteTarget,
+  params: { data: string | Buffer; encoding?: BufferEncoding; mkdir?: boolean; mode?: number; overwrite?: boolean },
+): Promise<void> {
+  let identity;
+  try {
+    identity = await runPinnedWriteHelper({
+      rootPath: pinned.rootReal,
+      relativeParentPath: pinned.relativeParentPath,
+      basename: pinned.basename,
+      mkdir: params.mkdir !== false,
+      mode: params.mode ?? pinned.mode,
+      overwrite: params.overwrite,
+      input: {
+        kind: "buffer",
+        data: params.data,
+        encoding: params.encoding,
+      },
+    });
+  } catch (error) {
+    if (params.overwrite === false && isAlreadyExistsError(error)) {
+      throw new FsSafeError("already-exists", "file already exists", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    throw normalizePinnedWriteError(error);
+  }
+
+  try {
+    await verifyAtomicWriteResult({
+      root,
+      targetPath: pinned.targetPath,
+      expectedIdentity: identity,
+    });
+  } catch (err) {
+    emitWriteBoundaryWarning(`post-write verification failed: ${String(err)}`);
+    throw err;
+  }
 }
 
 async function copyFileInRoot(
@@ -1185,13 +1195,7 @@ async function resolvePinnedWriteTargetInRoot(
   relativePath: string,
   requestedMode?: number,
   denyMutations?: DenyMutationPolicy,
-): Promise<{
-  rootReal: string;
-  targetPath: string;
-  relativeParentPath: string;
-  basename: string;
-  mode: number;
-}> {
+): Promise<PinnedWriteTarget> {
   const { rootReal, rootWithSep, resolved } = await resolvePathInRoot(root, relativePath);
   await assertMutationNotDenied(resolved, denyMutations);
   try {

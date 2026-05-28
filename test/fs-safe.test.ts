@@ -1,5 +1,5 @@
 import { appendFileSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -82,6 +82,56 @@ describe("@openclaw/fs-safe", () => {
     await expect(root.readText("nested/moved.txt")).resolves.toBe("hello");
     await root.remove("nested/copied.txt");
     await expect(root.exists("nested/copied.txt")).resolves.toBe(false);
+  });
+
+  it.skipIf(skipOnWindows)("preserves concurrent append writes", async () => {
+    const rootPath = await tempRoot("fs-safe-append-concurrent-");
+    const root = await openRoot(rootPath);
+
+    await root.write("logs/today.log", "start");
+    await Promise.all(
+      Array.from({ length: 25 }, (_, index) =>
+        root.append("logs/today.log", `line ${index}`, { prependNewlineIfNeeded: true })
+      ),
+    );
+
+    const lines = (await root.readText("logs/today.log")).split("\n");
+    expect(lines[0]).toBe("start");
+    expect(new Set(lines.slice(1))).toEqual(
+      new Set(Array.from({ length: 25 }, (_, index) => `line ${index}`)),
+    );
+    expect(lines).toHaveLength(26);
+  });
+
+  it.skipIf(skipOnWindows)("preserves append mkdir and encoding semantics", async () => {
+    const rootPath = await tempRoot("fs-safe-append-semantics-");
+    const root = await openRoot(rootPath);
+
+    await expect(root.append("missing/file.txt", "x", { mkdir: false })).rejects.toMatchObject({
+      code: "not-found",
+    });
+    await expect(root.exists("missing")).resolves.toBe(false);
+
+    await root.write("utf16.txt", "alpha", { encoding: "utf16le" });
+    await root.append("utf16.txt", "beta", {
+      encoding: "utf16le",
+      prependNewlineIfNeeded: true,
+    });
+    await expect(root.readBytes("utf16.txt")).resolves.toEqual(
+      Buffer.from("alpha\nbeta", "utf16le"),
+    );
+  });
+
+  it.skipIf(skipOnWindows)("preserves existing file mode during append", async () => {
+    const rootPath = await tempRoot("fs-safe-append-mode-");
+    const filePath = path.join(rootPath, "secret.txt");
+    await writeFile(filePath, "alpha", { mode: 0o600 });
+    await chmod(filePath, 0o600);
+
+    const root = await openRoot(rootPath, { mode: 0o644 });
+    await root.append("secret.txt", "beta");
+
+    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
   });
 
   it("applies per-root defaults", async () => {

@@ -93,14 +93,14 @@ type RootWriteJsonOptions = {
 
 ### `fs.append(rel, data, options?)`
 
-Open in append mode, write, close. Honors `mkdir` for the parent directory. Pass `prependNewlineIfNeeded: true` to insert a `\n` if the file does not already end in one.
+Open in append mode, write, sync the file handle, and close. Honors `mkdir` for the parent directory and syncs the parent directory when the append creates the file. Pass `prependNewlineIfNeeded: true` to insert a `\n` if the file does not already end in one.
 
 ```ts
 await fs.append("logs/today.log", `[${ts}] ${line}\n`);
 await fs.append("notes/scratch.md", "* new bullet", { prependNewlineIfNeeded: true });
 ```
 
-For high-volume logging, consider [`openWritable`](#openwritable) and a long-lived append handle.
+For high-volume logging, consider [`openWritable`](#openwritable) and a long-lived append handle. Direct append-mode writes preserve kernel append semantics, but they are not atomic against external rotators that rename or unlink the target.
 
 ### `fs.copyIn(rel, sourceAbsPath, options?)`
 

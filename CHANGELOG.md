@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Sync `root.append` file handles before close and sync the parent directory when append creates a file, preserving append-mode concurrency while improving durability. (#21; thanks @KumarAnandSingh)
 - Reject known unsafe device and process-fd read paths before opening files, including `/dev/zero`, `/dev/random`, `/dev/fd/*`, `/proc/*/fd/*`, and Windows reserved device names.
 
 ## 0.3.0 - 2026-05-21

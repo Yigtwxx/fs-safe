@@ -6,6 +6,7 @@ import path from "node:path";
 import type { Readable } from "node:stream";
 import { createAsyncDirectoryGuard, createNearestExistingDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import { syncDirectoryBestEffort } from "./fsync.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
@@ -278,11 +279,13 @@ async function runPinnedWriteFallback(params: {
       throw new FsSafeError("path-mismatch", "fallback temp path changed during write");
     }
     const expectedTempStat = tempStat;
+    await handle.sync();
     await handle.close().catch(() => undefined);
     handle = undefined;
     await withAsyncDirectoryGuards([parentGuard], async () => {
       await fs.rename(tempPath, targetPath);
       renamed = true;
+      await syncDirectoryBestEffort(parentPath);
       targetStat = await fs.lstat(targetPath);
       if (targetStat.isSymbolicLink() || !sameFileIdentity(targetStat, expectedTempStat)) {
         throw new FsSafeError("path-mismatch", "fallback target changed during write");
