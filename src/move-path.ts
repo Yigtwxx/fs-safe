@@ -11,6 +11,22 @@ export type MovePathWithCopyFallbackOptions = {
   to: string;
 };
 
+type MoveCopyFallbackReason = "cross-device" | "windows-rename-denied";
+
+export function moveCopyFallbackReasonForRenameError(
+  error: unknown,
+  platform: NodeJS.Platform = process.platform,
+): MoveCopyFallbackReason | undefined {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  if (code === "EXDEV") {
+    return "cross-device";
+  }
+  if (code === "EPERM" && platform === "win32") {
+    return "windows-rename-denied";
+  }
+  return undefined;
+}
+
 type EntryIdentity = {
   ctimeMs: number;
   dev: number;
@@ -257,11 +273,13 @@ async function cleanupCopiedEntry(
 export async function movePathWithCopyFallback(
   options: MovePathWithCopyFallbackOptions,
 ): Promise<void> {
+  let fallbackReason: MoveCopyFallbackReason | undefined;
   try {
     await guardedRename({ from: options.from, to: options.to });
     return;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException | null)?.code !== "EXDEV") {
+    fallbackReason = moveCopyFallbackReasonForRenameError(error);
+    if (!fallbackReason) {
       throw error;
     }
   }
