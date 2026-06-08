@@ -1,6 +1,6 @@
 # Install
 
-`fs-safe` is published to npm as `@openclaw/fs-safe`. It targets Node 20.11 or newer, ships ESM only, and works on macOS, Linux, and Windows.
+`fs-safe` is published to npm as `@openclaw/fs-safe`. It targets Node 22 or newer, ships ESM only, and works on macOS, Linux, and Windows.
 
 ## Package managers
 
@@ -22,13 +22,13 @@ bun add @openclaw/fs-safe
 
 ## Node version
 
-Minimum **Node 20.11**. The package uses `fs.promises`, `fs.constants.O_NOFOLLOW` where available, and `node:stream/promises`. Earlier Node releases will fail at import time.
+Minimum **Node 22**. The package uses `fs.promises`, `fs.constants.O_NOFOLLOW` where available, and `node:stream/promises`. Earlier Node releases will fail at import time.
 
 Verify the runtime:
 
 ```bash
 node --version
-# v20.11.0 or newer
+# v22.0.0 or newer
 ```
 
 ## TypeScript

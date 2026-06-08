@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Compatibility
+
+- Require Node.js 22 or newer for the npm package and docs, matching the maintained CI matrix.
+
 ### Security and Correctness
 
 - Fall back to the existing copy/remove move path when Windows denies directory renames with `EPERM`, preserving skill updates while watched files are locked. (#27; thanks @liuxingwei0601)

@@ -10,7 +10,7 @@ cd fs-safe
 pnpm install
 ```
 
-Node 20.11 or newer. The dev toolchain uses pnpm; `npm install` works too but pnpm is what the lockfile is keyed against.
+Node 22 or newer. The dev toolchain uses pnpm; `npm install` works too but pnpm is what the lockfile is keyed against.
 
 ## Build
 
