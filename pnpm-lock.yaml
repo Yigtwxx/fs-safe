@@ -25,8 +25,8 @@ importers:
         specifier: ^3.10.1
         version: 3.10.1
       tar:
-        specifier: 7.5.13
-        version: 7.5.13
+        specifier: 7.5.16
+        version: 7.5.16
 
 packages:
 
@@ -585,8 +585,8 @@ packages:
     resolution: {integrity: sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==}
     engines: {node: '>=8'}
 
-  tar@7.5.13:
-    resolution: {integrity: sha512-tOG/7GyXpFevhXVh8jOPJrmtRpOTsYqUIkVdVooZYJS/z8WhfQUX8RJILmeuJNinGAMSu1veBr4asSHFt5/hng==}
+  tar@7.5.16:
+    resolution: {integrity: sha512-56adEpPMouktRlBLXiaYFFzZ/3+JXa8P9n7WbR+ibIjtviN55mEaOkiysCnPnWm+7kkui1Dn8J9l+g6zV8731w==}
     engines: {node: '>=18'}
 
   tinybench@2.9.0:
@@ -1173,7 +1173,7 @@ snapshots:
     dependencies:
       has-flag: 4.0.0
 
-  tar@7.5.13:
+  tar@7.5.16:
     dependencies:
       '@isaacs/fs-minipass': 4.0.1
       chownr: 3.0.0

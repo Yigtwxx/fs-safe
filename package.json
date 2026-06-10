@@ -117,7 +117,7 @@
   },
   "optionalDependencies": {
     "jszip": "^3.10.1",
-    "tar": "7.5.13"
+    "tar": "7.5.16"
   },
   "devDependencies": {
     "@types/node": "^22.19.20",
