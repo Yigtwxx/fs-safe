@@ -42,7 +42,11 @@ import {
   summarizeWindowsAcl,
 } from "../src/permissions.js";
 import { readSecureFile } from "../src/secure-file.js";
-import { walkDirectory, walkDirectorySync } from "../src/walk.js";
+import {
+  walkDirectory,
+  walkDirectorySync,
+  type WalkDirectoryResult,
+} from "../src/walk.js";
 
 let root: string;
 
@@ -490,6 +494,16 @@ describe("secure file reads", () => {
 });
 
 describe("directory walking", () => {
+  it("keeps the legacy result shape source-compatible", () => {
+    const result: WalkDirectoryResult = {
+      entries: [],
+      scannedEntryCount: 0,
+      truncated: false,
+    };
+
+    expect(result.failedDirs).toBeUndefined();
+  });
+
   it("walks bounded trees and reports truncation", async () => {
     await fs.mkdir(path.join(root, "a", "b"), { recursive: true });
     await fs.writeFile(path.join(root, "a", "one.txt"), "1");
@@ -524,6 +538,109 @@ describe("directory walking", () => {
       path.join("a", "loop"),
     ]);
   });
+
+  it("leaves failedDirs empty when every directory is readable", async () => {
+    await fs.mkdir(path.join(root, "a", "b"), { recursive: true });
+    await fs.writeFile(path.join(root, "a", "one.txt"), "1");
+
+    expect((await walkDirectory(root)).failedDirs).toEqual([]);
+    expect(walkDirectorySync(root).failedDirs).toEqual([]);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "reports an unreadable subtree in failedDirs without dropping readable siblings",
+    async () => {
+      await fs.mkdir(path.join(root, "readable"), { recursive: true });
+      await fs.writeFile(path.join(root, "readable", "ok.txt"), "1");
+      const blocked = path.join(root, "blocked");
+      await fs.mkdir(blocked, { recursive: true });
+      await fs.writeFile(path.join(blocked, "hidden.txt"), "secret");
+      await fs.chmod(blocked, 0o000);
+      try {
+        const scan = await walkDirectory(root, { include: (entry) => entry.kind === "file" });
+
+        // The readable sibling is still enumerated.
+        expect(scan.entries.map((entry) => entry.relativePath)).toContain(
+          path.join("readable", "ok.txt"),
+        );
+        // The unreadable subtree contributes no entries.
+        expect(scan.entries.map((entry) => entry.relativePath)).not.toContain(
+          path.join("blocked", "hidden.txt"),
+        );
+        // ...but the failure is reported, not silently swallowed.
+        expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual(["blocked"]);
+        expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 1 });
+        expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
+      } finally {
+        await fs.chmod(blocked, 0o755);
+      }
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "reports an unreadable walk root in failedDirs with an empty listing",
+    async () => {
+      const scanRoot = path.join(root, "scan");
+      await fs.mkdir(scanRoot, { recursive: true });
+      await fs.writeFile(path.join(scanRoot, "file.txt"), "1");
+      await fs.chmod(scanRoot, 0o000);
+      try {
+        const scan = await walkDirectory(scanRoot);
+
+        expect(scan.entries).toEqual([]);
+        expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual([""]);
+        expect(scan.failedDirs[0]).toMatchObject({ path: scanRoot, depth: 0 });
+        expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
+      } finally {
+        await fs.chmod(scanRoot, 0o755);
+      }
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "reports unreadable directories from the synchronous walk too",
+    async () => {
+      await fs.mkdir(path.join(root, "readable"), { recursive: true });
+      await fs.writeFile(path.join(root, "readable", "ok.txt"), "1");
+      const blocked = path.join(root, "blocked");
+      await fs.mkdir(blocked, { recursive: true });
+      await fs.chmod(blocked, 0o000);
+      try {
+        const scan = walkDirectorySync(root, { include: (entry) => entry.kind === "file" });
+
+        expect(scan.entries.map((entry) => entry.relativePath)).toContain(
+          path.join("readable", "ok.txt"),
+        );
+        expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual(["blocked"]);
+        expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 1 });
+        expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
+      } finally {
+        await fs.chmod(blocked, 0o755);
+      }
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "reports nested failed directory depth relative to the walk root",
+    async () => {
+      const parent = path.join(root, "parent");
+      const blocked = path.join(parent, "blocked");
+      await fs.mkdir(blocked, { recursive: true });
+      await fs.writeFile(path.join(blocked, "hidden.txt"), "secret");
+      await fs.chmod(blocked, 0o000);
+      try {
+        const scan = await walkDirectory(root);
+
+        expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual([
+          path.join("parent", "blocked"),
+        ]);
+        expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 2 });
+        expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
+      } finally {
+        await fs.chmod(blocked, 0o755);
+      }
+    },
+  );
 });
 
 describe("private file store mode", () => {

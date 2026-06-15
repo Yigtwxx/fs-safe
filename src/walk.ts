@@ -22,10 +22,24 @@ export type WalkDirectoryOptions = {
   descend?: (entry: WalkDirectoryEntry) => boolean;
 };
 
+export type WalkDirectoryFailure = {
+  path: string;
+  relativePath: string;
+  depth: number;
+  error: unknown;
+};
+
 export type WalkDirectoryResult = {
   entries: WalkDirectoryEntry[];
   scannedEntryCount: number;
   truncated: boolean;
+  // Always present on values returned by the walkers. Optional so existing
+  // callers can continue constructing the legacy result shape.
+  failedDirs?: WalkDirectoryFailure[];
+};
+
+type WalkDirectoryResultWithFailures = WalkDirectoryResult & {
+  failedDirs: WalkDirectoryFailure[];
 };
 
 function kindForDirent(dirent: fsSync.Dirent): WalkEntryKind {
@@ -56,6 +70,22 @@ function buildEntry(params: {
     kind: params.kind ?? kindForDirent(params.dirent),
     dirent: params.dirent,
   };
+}
+
+function recordFailedDir(
+  result: WalkDirectoryResultWithFailures,
+  root: string,
+  dir: string,
+  depth: number,
+  error: unknown,
+): void {
+  const relativePath = path.relative(root, dir);
+  result.failedDirs.push({
+    path: dir,
+    relativePath,
+    depth: relativePath === "" ? 0 : depth - 1,
+    error,
+  });
 }
 
 function resolveSyncKind(fullPath: string, dirent: fsSync.Dirent, symlinks: WalkSymlinkPolicy): WalkEntryKind | null {
@@ -91,10 +121,15 @@ async function resolveAsyncKind(fullPath: string, dirent: fsSync.Dirent, symlink
 export function walkDirectorySync(
   rootDir: string,
   options: WalkDirectoryOptions = {},
-): WalkDirectoryResult {
+): WalkDirectoryResultWithFailures {
   const root = path.resolve(rootDir);
   const symlinks = options.symlinks ?? "skip";
-  const result: WalkDirectoryResult = { entries: [], scannedEntryCount: 0, truncated: false };
+  const result: WalkDirectoryResultWithFailures = {
+    entries: [],
+    scannedEntryCount: 0,
+    truncated: false,
+    failedDirs: [],
+  };
   const visitedDirs = new Set<string>();
 
   function visit(dir: string, depth: number): void {
@@ -102,7 +137,8 @@ export function walkDirectorySync(
     let realDir: string;
     try {
       realDir = fsSync.realpathSync(dir);
-    } catch {
+    } catch (error) {
+      recordFailedDir(result, root, dir, depth, error);
       return;
     }
     if (visitedDirs.has(realDir)) return;
@@ -111,7 +147,8 @@ export function walkDirectorySync(
     let entries: fsSync.Dirent[];
     try {
       entries = fsSync.readdirSync(dir, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      recordFailedDir(result, root, dir, depth, error);
       return;
     }
     for (const dirent of entries) {
@@ -145,10 +182,15 @@ export function walkDirectorySync(
 export async function walkDirectory(
   rootDir: string,
   options: WalkDirectoryOptions = {},
-): Promise<WalkDirectoryResult> {
+): Promise<WalkDirectoryResultWithFailures> {
   const root = path.resolve(rootDir);
   const symlinks = options.symlinks ?? "skip";
-  const result: WalkDirectoryResult = { entries: [], scannedEntryCount: 0, truncated: false };
+  const result: WalkDirectoryResultWithFailures = {
+    entries: [],
+    scannedEntryCount: 0,
+    truncated: false,
+    failedDirs: [],
+  };
   const visitedDirs = new Set<string>();
 
   async function visit(dir: string, depth: number): Promise<void> {
@@ -156,7 +198,8 @@ export async function walkDirectory(
     let realDir: string;
     try {
       realDir = await fs.realpath(dir);
-    } catch {
+    } catch (error) {
+      recordFailedDir(result, root, dir, depth, error);
       return;
     }
     if (visitedDirs.has(realDir)) return;
@@ -165,7 +208,8 @@ export async function walkDirectory(
     let entries: fsSync.Dirent[];
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      recordFailedDir(result, root, dir, depth, error);
       return;
     }
     for (const dirent of entries) {
