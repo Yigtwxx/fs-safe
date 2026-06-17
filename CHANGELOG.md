@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-06-17
+
+### Features
+
+- Report unreadable walk roots and subdirectories through `failedDirs` from `walkDirectory()` and `walkDirectorySync()`, preserving readable results while letting destructive reconciliation distinguish incomplete scans from empty directories. (#29; thanks @amknight)
 
 ### Compatibility
 

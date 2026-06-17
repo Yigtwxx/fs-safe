@@ -293,6 +293,9 @@ describe("json file helpers", () => {
       while (!stop.value) {
         writes += 1;
         await writeTextAtomic(filePath, `{"v":${writes}}`);
+        // Leave a real stable window between atomic replacements so a bounded
+        // retry can recover instead of racing an intentionally nonstop writer.
+        await new Promise((resolve) => setTimeout(resolve, 1));
       }
     })();
 
