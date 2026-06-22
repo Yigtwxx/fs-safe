@@ -125,8 +125,12 @@ export async function runPinnedWriteHelper(params: {
       throw error;
     }
   }
+  const input =
+    params.input.kind === "stream"
+      ? { kind: "buffer" as const, data: Buffer.from(await inputToBase64(params.input, params.maxBytes), "base64") }
+      : params.input;
   const payload = {
-    base64: await inputToBase64(params.input, params.maxBytes),
+    base64: await inputToBase64(input, params.maxBytes),
     basename: params.basename,
     maxBytes: params.maxBytes ?? -1,
     mkdir: params.mkdir,
@@ -143,7 +147,7 @@ export async function runPinnedWriteHelper(params: {
     });
   } catch (error) {
     if (canFallbackFromPythonError(error)) {
-      return await runPinnedWriteFallback(params);
+      return await runPinnedWriteFallback({ ...params, input });
     }
     throw error;
   }
@@ -235,7 +239,10 @@ async function runPinnedWriteFallback(params: {
       } else {
         await writeStreamToHandle(params.input.stream, handle, params.maxBytes);
       }
+      await handle.sync();
       const stat = await handle.stat();
+      await handle.close().catch(() => undefined);
+      await syncDirectoryBestEffort(parentPath);
       created = false;
       return { dev: stat.dev, ino: stat.ino };
     } finally {

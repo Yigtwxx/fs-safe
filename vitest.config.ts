@@ -13,15 +13,7 @@ export default defineConfig({
       reportsDirectory: "coverage",
       include: ["src/**/*.ts"],
       exclude: [
-        "src/index.ts",
-        "src/advanced.ts",
-        "src/atomic.ts",
-        "src/permissions-public.ts",
-        "src/secret.ts",
-        "src/store.ts",
-        "src/temp.ts",
         "src/types.ts",
-        "src/file-url.ts",
         "src/test-hooks.ts",
       ],
       thresholds: {

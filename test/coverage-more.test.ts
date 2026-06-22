@@ -137,8 +137,10 @@ describe("secure temp root fallback coverage", () => {
 describe("small identity and lock wrappers", () => {
   it("compares file identities across POSIX and Windows zero-device stats", async () => {
     expect(sameFileIdentity({ dev: 1, ino: 2 }, { dev: 1, ino: 2 }, "linux")).toBe(true);
+    expect(sameFileIdentity({ dev: 1, ino: 2 }, { dev: 1n, ino: 2n }, "linux")).toBe(true);
     expect(sameFileIdentity({ dev: 1, ino: 2 }, { dev: 1, ino: 3 }, "linux")).toBe(false);
     expect(sameFileIdentity({ dev: 0, ino: 2 }, { dev: 99, ino: 2 }, "win32")).toBe(true);
+    expect(sameFileIdentity({ dev: 0, ino: 2 }, { dev: 99n, ino: 2n }, "win32")).toBe(true);
     expect(sameFileIdentity({ dev: 0n, ino: 2n }, { dev: 99n, ino: 2n }, "linux")).toBe(false);
 
     const root = await tempRoot("fs-safe-file-lock-wrapper-");
