@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.4.2 - Unreleased
+
 ## 0.4.1 - 2026-07-01
 
 ### Security and Correctness
