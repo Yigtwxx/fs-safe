@@ -2,12 +2,18 @@
 import { existsSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
 
 const require = createRequire(import.meta.url);
 
 function resolveTypeScriptCompiler() {
   try {
-    return require.resolve("typescript/bin/tsc");
+    const packageJsonPath = require.resolve("typescript/package.json");
+    const packageJson = require(packageJsonPath);
+    const compilerPath = packageJson.bin?.tsc;
+    return typeof compilerPath === "string"
+      ? resolve(dirname(packageJsonPath), compilerPath)
+      : undefined;
   } catch {
     return undefined;
   }
