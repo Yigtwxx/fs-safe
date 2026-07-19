@@ -1,8 +1,6 @@
 # Changelog
 
-## 0.4.2 - Unreleased
-
-- Treat `EPERM` from pinned-write file and directory `fsync` calls as best effort for filesystems that permit the write but reject explicit synchronization.
+## 0.4.2 - 2026-07-18
 
 ### Features
 
@@ -12,6 +10,10 @@
 
 - Make capped root, regular-file, secure-file, secret-file, structured JSON, and synchronous store reads incremental so a file that grows after validation cannot trigger an unbounded allocation.
 - Disable `remove-if-unchanged` stale sidecar deletion because a pathname identity check followed by unlink can delete a replacement lock; retain the deprecated recovery inputs for compatibility while all stale locks fail closed.
+
+### Compatibility
+
+- Treat `EPERM` from pinned-write file and directory `fsync` calls as best effort for filesystems that permit the write but reject explicit synchronization.
 
 ## 0.4.1 - 2026-07-01
 
