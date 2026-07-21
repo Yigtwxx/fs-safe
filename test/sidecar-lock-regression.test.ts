@@ -228,12 +228,13 @@ describe("sidecar lock regressions", () => {
       shouldReclaim: async ({ payload }) => payload?.createdAt === "2000-01-01T00:00:00.000Z",
       shouldRemoveStaleLock: secondRemoval,
     });
+    const secondAcquireResult = expect(secondAcquire).rejects.toMatchObject({ code: "file_lock_timeout" });
 
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(secondRemoval).not.toHaveBeenCalled();
     approveFirst();
     const firstLock = await firstAcquire;
-    await expect(secondAcquire).rejects.toMatchObject({ code: "file_lock_timeout" });
+    await secondAcquireResult;
     expect(secondRemoval).not.toHaveBeenCalled();
     await expect(fsp.readFile(lockPath, "utf8")).resolves.toContain("first");
     await firstLock.release();

@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.4.5 - Unreleased
+## 0.4.5 - 2026-07-20
+
+### Highlights
+
+- Preserve sidecar-lock ownership across filesystem identity drift without weakening legacy stale-lock checks.
 
 ### Security and Correctness
 
