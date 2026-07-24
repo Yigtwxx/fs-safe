@@ -33,8 +33,7 @@ function windowsOwnerQueryCommand(targetPath: string): string {
     "$ErrorActionPreference='Stop'",
     `$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))`,
     "$acl=Get-Acl -LiteralPath $p",
-    "$owner=$acl.Owner",
-    "$ownerSid=if($owner -match '^S-\\d+-\\d+(?:-\\d+)+$'){$owner}else{(New-Object System.Security.Principal.NTAccount($owner)).Translate([System.Security.Principal.SecurityIdentifier]).Value}",
+    "$ownerSid=$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
     "$currentSid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
     "$root=[IO.Path]::GetPathRoot($p)",
     "$extendedDrive=$p.Length -ge 7 -and $p.StartsWith('\\\\?\\') -and [char]::IsLetter($p[4]) -and $p[5] -eq ':' -and $p[6] -eq '\\'",
@@ -43,7 +42,7 @@ function windowsOwnerQueryCommand(targetPath: string): string {
     "$remote=($namespacePath -and -not $extendedDrive) -or ([IO.DriveInfo]::new($driveRoot).DriveType -eq [IO.DriveType]::Network)",
     "$principalTranslationFailed=$false",
     "$principalSids=@($acl.Access|ForEach-Object {$identity=$_.IdentityReference;try{$sid=if($identity -is [System.Security.Principal.SecurityIdentifier]){$identity.Value}else{$identity.Translate([System.Security.Principal.SecurityIdentifier]).Value};@{name=$identity.Value;sid=$sid}}catch{$principalTranslationFailed=$true}})",
-    "@{owner=$owner;ownerSid=$ownerSid;currentUserSid=$currentSid;principalSids=$principalSids;principalTranslationFailed=$principalTranslationFailed;remote=$remote}|ConvertTo-Json -Depth 4 -Compress",
+    "@{ownerSid=$ownerSid;currentUserSid=$currentSid;principalSids=$principalSids;principalTranslationFailed=$principalTranslationFailed;remote=$remote}|ConvertTo-Json -Depth 4 -Compress",
   ].join(";");
 }
 

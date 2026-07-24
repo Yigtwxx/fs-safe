@@ -627,6 +627,36 @@ describe("secure file reads", () => {
     },
   );
 
+  it("queries the canonical Windows owner SID without a friendly-name round trip", async () => {
+    const target = path.join(root, "windows-canonical-owner.txt");
+    await fs.writeFile(target, "secret", { mode: 0o600 });
+    const exec = vi.fn(async (command: string, _args: string[]) => {
+      if (command.toLowerCase().endsWith("powershell.exe")) {
+        return {
+          stdout: JSON.stringify({
+            ownerSid: "S-1-5-21-42",
+            currentUserSid: "S-1-5-21-42",
+          }),
+          stderr: "",
+        };
+      }
+      return { stdout: `${target} *S-1-5-21-42:(F)\n`, stderr: "" };
+    });
+
+    await inspectPathPermissions(target, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      exec,
+    });
+
+    const ownerArgs = exec.mock.calls[0]?.[1];
+    const ownerQuery = Buffer.from(ownerArgs?.[4] ?? "", "base64").toString("utf16le");
+    expect(ownerQuery).toContain(
+      "$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
+    );
+    expect(ownerQuery).not.toContain("$acl.Owner");
+  });
+
   it("leaves Windows ownership unverified when the owner query fails", async () => {
     const target = path.join(root, "windows-owner-query-failure.txt");
     await fs.writeFile(target, "secret", { mode: 0o600 });
