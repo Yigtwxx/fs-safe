@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import syncFs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendRegularFile,
@@ -49,6 +51,24 @@ import {
 } from "../src/walk.js";
 
 let root: string;
+const execFileAsync = promisify(execFile);
+
+async function secureWindowsTestFile(filePath: string): Promise<void> {
+  const username = os.userInfo().username;
+  const commandEnv = { SystemRoot: process.env.SystemRoot };
+  const userInfo = () => ({ username });
+  const principal = resolveWindowsUserPrincipal(commandEnv, userInfo);
+  const reset = createIcaclsResetCommand(filePath, {
+    isDir: false,
+    env: commandEnv,
+    userInfo,
+  });
+  if (!principal || !reset) {
+    throw new Error("Windows test principal could not be resolved");
+  }
+  await execFileAsync(reset.command, [filePath, "/setowner", principal], { windowsHide: true });
+  await execFileAsync(reset.command, reset.args, { windowsHide: true });
+}
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-new-"));
@@ -199,6 +219,7 @@ describe("secure file reads", () => {
     async () => {
       const filePath = path.join(root, "secret.json");
       await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
+      await secureWindowsTestFile(filePath);
 
       expect(await inspectPathPermissions(filePath)).toMatchObject({
         source: "windows-acl",
@@ -217,6 +238,7 @@ describe("secure file reads", () => {
         ownerTrusted: true,
       });
     },
+    15_000,
   );
 
   it.runIf(process.platform === "win32")(
@@ -224,6 +246,7 @@ describe("secure file reads", () => {
     async () => {
       const filePath = path.join(root, "extended-secret.json");
       await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
+      await secureWindowsTestFile(filePath);
       const extendedPath = `\\\\?\\${path.resolve(filePath)}`;
 
       expect(await inspectPathPermissions(extendedPath)).toMatchObject({
@@ -243,6 +266,7 @@ describe("secure file reads", () => {
         ownerTrusted: true,
       });
     },
+    15_000,
   );
 
   it("rejects symlinks and files outside trusted dirs", async () => {
