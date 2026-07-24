@@ -195,20 +195,43 @@ describe("secure file reads", () => {
   });
 
   it.runIf(process.platform === "win32")(
-    "fails closed on windows when ACL inspection is unavailable",
+    "reads from a validated Windows ACL and owner",
     async () => {
-      // See src/secure-file.ts:177 — readSecureFile throws permission-unverified
-      // on Windows because ACL inspection has no portable equivalent.
       const filePath = path.join(root, "secret.json");
       await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
 
-      await expect(
-        readSecureFile({
-          filePath,
-          label: "test secret",
-          io: { maxBytes: 1024 },
-        }),
-      ).rejects.toMatchObject({ code: "permission-unverified" });
+      const result = await readSecureFile({
+        filePath,
+        label: "test secret",
+        io: { maxBytes: 1024 },
+      });
+
+      expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
+      expect(result.permissions).toMatchObject({
+        source: "windows-acl",
+        ownerTrusted: true,
+      });
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "treats an extended-length local Windows path as local",
+    async () => {
+      const filePath = path.join(root, "extended-secret.json");
+      await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
+      const extendedPath = `\\\\?\\${path.resolve(filePath)}`;
+
+      const result = await readSecureFile({
+        filePath: extendedPath,
+        label: "extended-path secret",
+        io: { maxBytes: 1024 },
+      });
+
+      expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
+      expect(result.permissions).toMatchObject({
+        source: "windows-acl",
+        ownerTrusted: true,
+      });
     },
   );
 
@@ -287,10 +310,16 @@ describe("secure file reads", () => {
   it("uses Windows ACL permission checks for secure reads when requested", async () => {
     const filePath = path.join(root, "windows-secret.txt");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
-    const exec = vi.fn().mockResolvedValue({
-      stdout: "*S-1-5-18:(F)\n",
-      stderr: "",
-    });
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ownerSid: "S-1-5-21-42",
+          currentUserSid: "S-1-5-21-42",
+        }),
+        stderr: "",
+      })
+      .mockResolvedValueOnce({ stdout: "*S-1-5-18:(F)\n", stderr: "" });
 
     const result = await readSecureFile({
       filePath,
@@ -300,16 +329,41 @@ describe("secure file reads", () => {
     expect(result.buffer.toString("utf8")).toBe("secret");
     expect(result.permissions?.source).toBe("windows-acl");
 
-    const unsafeExec = vi.fn().mockResolvedValue({
-      stdout: "Everyone:(R)\n",
-      stderr: "",
-    });
+    const unsafeExec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ownerSid: "S-1-5-21-42",
+          currentUserSid: "S-1-5-21-42",
+          principalSids: [{ name: "Everyone", sid: "S-1-1-0" }],
+        }),
+        stderr: "",
+      })
+      .mockResolvedValueOnce({ stdout: "Everyone:(R)\n", stderr: "" });
     await expect(
       readSecureFile({
         filePath,
         inject: { platform: "win32", exec: unsafeExec },
       }),
     ).rejects.toMatchObject({ code: "insecure-permissions" });
+
+    const foreignOwnerExec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ownerSid: "S-1-5-21-999",
+          currentUserSid: "S-1-5-21-42",
+        }),
+        stderr: "",
+      })
+      .mockResolvedValueOnce({ stdout: "*S-1-5-21-999:(R)\n", stderr: "" });
+    await expect(
+      readSecureFile({
+        filePath,
+        inject: { platform: "win32", exec: foreignOwnerExec },
+        permissions: { allowReadableByOthers: true },
+      }),
+    ).rejects.toMatchObject({ code: "not-owned" });
 
     const failedExec = vi.fn().mockRejectedValue(new Error("icacls failed"));
     await expect(
@@ -344,7 +398,6 @@ describe("secure file reads", () => {
     expect(result.ok).toBe(true);
     expect(exec).toHaveBeenCalledWith("D:\\Windows\\System32\\icacls.exe", [
       String.raw`C:\Users\me\secret.txt`,
-      "/sid",
     ]);
 
     const fallbackExec = vi.fn().mockResolvedValue({
@@ -357,7 +410,6 @@ describe("secure file reads", () => {
     });
     expect(fallbackExec).toHaveBeenCalledWith("E:\\Windows\\System32\\icacls.exe", [
       String.raw`C:\Users\me\secret.txt`,
-      "/sid",
     ]);
 
     const command = createIcaclsResetCommand(String.raw`C:\Users\me\secret.txt`, {
@@ -473,12 +525,135 @@ describe("secure file reads", () => {
     expect(result.groupWritable).toBe(false);
   });
 
+  it("reports a foreign Windows owner even when the visible ACL is read-only", async () => {
+    const target = path.join(root, "windows-foreign-owner.txt");
+    await fs.writeFile(target, "secret", { mode: 0o600 });
+    const exec = vi.fn(async (command: string) => {
+      if (command.toLowerCase().endsWith("powershell.exe")) {
+        return {
+          stdout: JSON.stringify({
+            owner: "DOMAIN\\attacker",
+            ownerSid: "S-1-5-21-999",
+            currentUserSid: "S-1-5-21-42",
+          }),
+          stderr: "",
+        };
+      }
+      return {
+        stdout: `${target} *S-1-5-21-42:(RX)\n*S-1-5-18:(F)\n*S-1-5-32-544:(F)\n`,
+        stderr: "",
+      };
+    });
+
+    const result = await inspectPathPermissions(target, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      exec,
+    });
+
+    expect(result).toMatchObject({
+      source: "windows-acl",
+      groupWritable: false,
+      worldWritable: false,
+      ownerSid: "s-1-5-21-999",
+      ownerTrusted: false,
+    });
+  });
+
+  it.each(["S-1-5-21-42", "S-1-5-18", "S-1-5-32-544"])(
+    "trusts the supported Windows owner SID %s",
+    async (ownerSid) => {
+      const target = path.join(root, `windows-trusted-owner-${ownerSid}.txt`);
+      await fs.writeFile(target, "secret", { mode: 0o600 });
+      const exec = vi.fn(async (command: string) => {
+        if (command.toLowerCase().endsWith("powershell.exe")) {
+          return {
+            stdout: JSON.stringify({
+              owner: ownerSid,
+              ownerSid,
+              currentUserSid: "S-1-5-21-42",
+            }),
+            stderr: "",
+          };
+        }
+        return {
+          stdout: `${target} *S-1-5-21-42:(RX)\n*S-1-5-18:(F)\n*S-1-5-32-544:(F)\n`,
+          stderr: "",
+        };
+      });
+
+      const result = await inspectPathPermissions(target, {
+        platform: "win32",
+        env: { SystemRoot: "C:\\Windows" },
+        exec,
+      });
+
+      expect(result.ownerSid).toBe(ownerSid.toLowerCase());
+      expect(result.ownerTrusted).toBe(true);
+    },
+  );
+
+  it("leaves Windows ownership unverified when the owner query fails", async () => {
+    const target = path.join(root, "windows-owner-query-failure.txt");
+    await fs.writeFile(target, "secret", { mode: 0o600 });
+    const exec = vi.fn(async (command: string) => {
+      if (command.toLowerCase().endsWith("powershell.exe")) {
+        throw new Error("owner lookup failed");
+      }
+      return {
+        stdout: `${target} *S-1-5-21-42:(RX)\n`,
+        stderr: "",
+      };
+    });
+
+    const result = await inspectPathPermissions(target, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      exec,
+    });
+
+    expect(result.source).toBe("windows-acl");
+    expect(result.ownerSid).toBeUndefined();
+    expect(result.ownerTrusted).toBeUndefined();
+    expect(result.ownerError).toContain("owner lookup failed");
+  });
+
+  it("does not trust well-known local owners on remote Windows filesystems", async () => {
+    const target = path.join(root, "windows-remote-owner.txt");
+    await fs.writeFile(target, "secret", { mode: 0o600 });
+    const exec = vi.fn(async (command: string) => {
+      if (command.toLowerCase().endsWith("powershell.exe")) {
+        return {
+          stdout: JSON.stringify({
+            ownerSid: "S-1-5-32-544",
+            currentUserSid: "S-1-5-21-42",
+            remote: true,
+          }),
+          stderr: "",
+        };
+      }
+      return { stdout: `${target} *S-1-5-32-544:(F)\n`, stderr: "" };
+    });
+
+    const result = await inspectPathPermissions(target, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      exec,
+    });
+
+    expect(result.ownerTrusted).toBe(false);
+  });
+
   it("resolves the current user SID when ACL output only contains an unknown SID", async () => {
     const target = String.raw`C:\Secrets\token.txt`;
     const exec = vi
       .fn()
       .mockResolvedValueOnce({
         stdout: `${target} *S-1-5-21-42:(F)\nEveryone:(R)\n`,
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([{ name: "Everyone", sid: "S-1-1-0" }]),
         stderr: "",
       })
       .mockResolvedValueOnce({
@@ -489,7 +664,41 @@ describe("secure file reads", () => {
     const result = await inspectWindowsAcl(target, { exec, env: { SystemRoot: "C:\\Windows" } });
     expect(result.ok).toBe(true);
     expect(result.trusted.some((entry) => entry.principal === "*S-1-5-21-42")).toBe(true);
-    expect(exec).toHaveBeenCalledTimes(2);
+    expect(exec).toHaveBeenCalledTimes(3);
+  });
+
+  it("classifies friendly ACL names by authoritative SID instead of spoofed environment names", async () => {
+    const target = String.raw`C:\Secrets\token.txt`;
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: `${target} DOMAIN\\attacker:(F)\n`,
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([{ name: "DOMAIN\\attacker", sid: "S-1-5-21-999" }]),
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: '"USER","SID"\n"DOMAIN\\me","S-1-5-21-42"\n',
+        stderr: "",
+      });
+
+    const result = await inspectWindowsAcl(target, {
+      exec,
+      env: {
+        SystemRoot: "C:\\Windows",
+        USERDOMAIN: "DOMAIN",
+        USERNAME: "attacker",
+        USERSID: "S-1-5-21-999",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.trusted).toEqual([]);
+    expect(result.untrustedGroup).toMatchObject([
+      { principal: "DOMAIN\\attacker", sid: "s-1-5-21-999", canWrite: true },
+    ]);
   });
 });
 

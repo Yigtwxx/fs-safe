@@ -238,7 +238,8 @@ describe("sidecar lock ownership tokens", () => {
     await fsp.writeFile(lockPath, raw, "utf8");
     const stat = await fsp.lstat(lockPath);
     const driftedStat = Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, {
-      ino: typeof stat.ino === "bigint" ? stat.ino + 1n : stat.ino + 1,
+      // Windows file indexes can be above Number.MAX_SAFE_INTEGER; use a visible delta.
+      ino: typeof stat.ino === "bigint" ? stat.ino + 1024n : stat.ino + 1024,
     });
 
     expect(

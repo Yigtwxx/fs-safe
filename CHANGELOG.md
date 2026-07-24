@@ -2,6 +2,18 @@
 
 ## 0.4.6 - Unreleased
 
+### Security and Correctness
+
+- Report Windows owner SIDs and whether the owner is the current user,
+  LocalSystem, or built-in Administrators so credential-bearing executable
+  checks can reject foreign-owned paths even when their visible DACL is
+  read-only. Secure reads enforce the result and remote filesystems fail
+  closed.
+- Invoke `icacls.exe` with its supported path-only inspection syntax and use
+  the live Windows user/domain environment for named ACE classification, so
+  ACL verification works on supported Windows hosts instead of failing on the
+  invalid `/sid` argument.
+
 ## 0.4.5 - 2026-07-20
 
 ### Highlights

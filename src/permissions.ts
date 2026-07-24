@@ -5,6 +5,12 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
+import { resolveWindowsSystemCommand } from "./windows-command.js";
+import {
+  inspectWindowsOwner,
+  resolveWindowsCurrentUserSid,
+  resolveWindowsPrincipalSids,
+} from "./windows-owner.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -24,6 +30,12 @@ export type PermissionCheck = {
   groupWritable: boolean;
   worldReadable: boolean;
   groupReadable: boolean;
+  /** Canonical Windows owner SID when the owner query succeeds. */
+  ownerSid?: string;
+  /** Whether the Windows owner is the current user, LocalSystem, or Administrators. */
+  ownerTrusted?: boolean;
+  /** Owner-query failure detail when Windows ownership could not be verified. */
+  ownerError?: string;
   aclSummary?: string;
   error?: string;
 };
@@ -46,6 +58,8 @@ export type SafeStatResult = {
 
 export type WindowsAclEntry = {
   principal: string;
+  /** Canonical principal SID when resolved from Windows. */
+  sid?: string;
   rights: string[];
   rawRights: string;
   canRead: boolean;
@@ -172,7 +186,22 @@ export async function inspectPathPermissions(
   const bits = modeBits(effectiveMode);
   const platform = opts?.platform ?? process.platform;
   if (platform === "win32") {
-    const acl = await inspectWindowsAcl(targetPath, { env: opts?.env, exec: opts?.exec });
+    const owner = await inspectWindowsOwner({
+      targetPath,
+      env: opts?.env,
+      exec: opts?.exec ?? defaultPermissionExec,
+    });
+    const acl = await inspectWindowsAcl(targetPath, {
+      env: opts?.env,
+      exec: opts?.exec,
+      currentUserSid: owner.currentUserSid,
+      principalSids: owner.principalSids,
+    });
+    const ownerFields = {
+      ...(owner.sid ? { ownerSid: owner.sid } : {}),
+      ...(owner.trusted !== undefined ? { ownerTrusted: owner.trusted } : {}),
+      ...(owner.error ? { ownerError: owner.error } : {}),
+    };
     if (!acl.ok) {
       return {
         ok: true,
@@ -185,6 +214,7 @@ export async function inspectPathPermissions(
         groupWritable: false,
         worldReadable: false,
         groupReadable: false,
+        ...ownerFields,
         error: acl.error,
       };
     }
@@ -199,6 +229,7 @@ export async function inspectPathPermissions(
       groupWritable: acl.untrustedGroup.some((entry) => entry.canWrite),
       worldReadable: acl.untrustedWorld.some((entry) => entry.canRead),
       groupReadable: acl.untrustedGroup.some((entry) => entry.canRead),
+      ...ownerFields,
       aclSummary: formatWindowsAclSummary(acl),
     };
   }
@@ -298,42 +329,6 @@ function buildTrustedPrincipals(env?: NodeJS.ProcessEnv): Set<string> {
   return trusted;
 }
 
-function getEnvValueCaseInsensitive(env: NodeJS.ProcessEnv, name: string): string | undefined {
-  const direct = env[name];
-  if (direct !== undefined) {
-    return direct;
-  }
-  const lower = name.toLowerCase();
-  for (const [key, value] of Object.entries(env)) {
-    if (key.toLowerCase() === lower) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function normalizeWindowsInstallRoot(value: string | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed || !path.win32.isAbsolute(trimmed)) {
-    return null;
-  }
-  return trimmed.replace(/[\\/]+$/, "");
-}
-
-function resolveWindowsSystemRoot(env?: NodeJS.ProcessEnv): string {
-  const source = env ?? process.env;
-  return (
-    normalizeWindowsInstallRoot(getEnvValueCaseInsensitive(source, "SystemRoot")) ??
-    normalizeWindowsInstallRoot(getEnvValueCaseInsensitive(source, "WINDIR")) ??
-    "C:\\Windows"
-  );
-}
-
-function resolveWindowsSystemCommand(command: string, env?: NodeJS.ProcessEnv): string {
-  const root = resolveWindowsSystemRoot(env);
-  return path.win32.join(root, "System32", command);
-}
-
 function classifyPrincipal(
   principal: string,
   trustedPrincipals: Set<string>,
@@ -401,7 +396,14 @@ function parseAceEntry(entry: string): WindowsAclEntry | null {
   if (tokens.some((token) => token.toUpperCase() === "DENY")) return null;
   const rights = tokens.filter((token) => !INHERIT_FLAGS.has(token.toUpperCase()));
   if (rights.length === 0) return null;
-  return { principal, rights, rawRights, ...rightsFromTokens(rights) };
+  const normalizedPrincipal = normalizeSid(principal);
+  return {
+    principal,
+    ...(SID_RE.test(normalizedPrincipal) ? { sid: normalizedPrincipal } : {}),
+    rights,
+    rawRights,
+    ...rightsFromTokens(rights),
+  };
 }
 
 export function parseIcaclsOutput(output: string, targetPath: string): WindowsAclEntry[] {
@@ -440,7 +442,7 @@ export function summarizeWindowsAcl(
   const untrustedWorld: WindowsAclEntry[] = [];
   const untrustedGroup: WindowsAclEntry[] = [];
   for (const entry of entries) {
-    const classification = classifyPrincipal(entry.principal, trustedPrincipals);
+    const classification = classifyPrincipal(entry.sid ?? entry.principal, trustedPrincipals);
     if (classification === "trusted") trusted.push(entry);
     else if (classification === "world") untrustedWorld.push(entry);
     else untrustedGroup.push(entry);
@@ -448,44 +450,47 @@ export function summarizeWindowsAcl(
   return { trusted, untrustedWorld, untrustedGroup };
 }
 
-async function resolveCurrentUserSid(
-  exec: PermissionExec,
-  env?: NodeJS.ProcessEnv,
-): Promise<string | null> {
-  try {
-    const { stdout, stderr } = await exec(resolveWindowsSystemCommand("whoami.exe", env), [
-      "/user",
-      "/fo",
-      "csv",
-      "/nh",
-    ]);
-    const match = `${stdout}\n${stderr}`.match(/\*?S-\d+-\d+(?:-\d+)+/i);
-    return match ? normalizeSid(match[0]) : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function inspectWindowsAcl(
   targetPath: string,
-  opts?: { env?: NodeJS.ProcessEnv; exec?: PermissionExec },
+  opts?: {
+    env?: NodeJS.ProcessEnv;
+    exec?: PermissionExec;
+    currentUserSid?: string;
+    principalSids?: Record<string, string>;
+  },
 ): Promise<WindowsAclSummary> {
   const exec = opts?.exec ?? defaultPermissionExec;
   try {
     const { stdout, stderr } = await exec(resolveWindowsSystemCommand("icacls.exe", opts?.env), [
       targetPath,
-      "/sid",
     ]);
-    const entries = parseIcaclsOutput(`${stdout}\n${stderr}`.trim(), targetPath);
-    let effectiveEnv = opts?.env;
+    let entries = parseIcaclsOutput(`${stdout}\n${stderr}`.trim(), targetPath);
+    const unresolvedPrincipals = entries
+      .filter((entry) => !entry.sid)
+      .map((entry) => entry.principal);
+    const principalSids = await resolveWindowsPrincipalSids({
+      principals: unresolvedPrincipals,
+      known: opts?.principalSids,
+      env: opts?.env,
+      exec,
+    });
+    entries = entries.map((entry) => {
+      const sid = entry.sid ?? principalSids[entry.principal.toLowerCase()];
+      if (!sid) {
+        throw new Error(`Windows ACL principal SID could not be verified: ${entry.principal}`);
+      }
+      return { ...entry, sid };
+    });
+    let currentUserSid = normalizeSid(opts?.currentUserSid ?? "");
+    let effectiveEnv = currentUserSid ? { USERSID: currentUserSid } : undefined;
     let { trusted, untrustedWorld, untrustedGroup } = summarizeWindowsAcl(entries, effectiveEnv);
     const needsUserSidResolution =
-      !effectiveEnv?.USERSID &&
-      untrustedGroup.some((entry) => SID_RE.test(normalize(entry.principal)));
+      !currentUserSid && untrustedGroup.some((entry) => entry.sid && !TRUSTED_SIDS.has(entry.sid));
     if (needsUserSidResolution) {
-      const currentUserSid = await resolveCurrentUserSid(exec, effectiveEnv);
+      currentUserSid =
+        (await resolveWindowsCurrentUserSid({ exec, env: opts?.env })) ?? "";
       if (currentUserSid) {
-        effectiveEnv = { ...effectiveEnv, USERSID: currentUserSid };
+        effectiveEnv = { USERSID: currentUserSid };
         ({ trusted, untrustedWorld, untrustedGroup } = summarizeWindowsAcl(entries, effectiveEnv));
       }
     }

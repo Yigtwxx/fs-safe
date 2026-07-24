@@ -21,7 +21,16 @@ export function isWindowsNetworkPath(
     return false;
   }
   const normalized = filePath.replace(/\//g, "\\");
-  return normalized.startsWith("\\\\?\\UNC\\") || normalized.startsWith("\\\\");
+  const extendedDrive =
+    normalized.length >= 7 &&
+    normalized.startsWith("\\\\?\\") &&
+    /^[a-z]$/i.test(normalized[4] ?? "") &&
+    normalized[5] === ":" &&
+    normalized[6] === "\\";
+  if (extendedDrive) {
+    return false;
+  }
+  return normalized.startsWith("\\\\");
 }
 
 export function isWindowsDriveLetterPath(
