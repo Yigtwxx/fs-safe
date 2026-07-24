@@ -22,7 +22,11 @@ function normalizeWindowsInstallRoot(value: string | undefined): string | null {
   if (!trimmed || !path.win32.isAbsolute(trimmed)) {
     return null;
   }
-  return trimmed.replace(/[\\/]+$/, "");
+  let end = trimmed.length;
+  while (end > 0 && (trimmed[end - 1] === "\\" || trimmed[end - 1] === "/")) {
+    end -= 1;
+  }
+  return trimmed.slice(0, end);
 }
 
 function resolveWindowsSystemRoot(env?: NodeJS.ProcessEnv): string {

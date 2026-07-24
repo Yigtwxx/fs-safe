@@ -13,6 +13,8 @@
   the live Windows user/domain environment for named ACE classification, so
   ACL verification works on supported Windows hosts instead of failing on the
   invalid `/sid` argument.
+- Normalize trailing Windows install-root separators with a bounded linear
+  scan so library-provided environment maps cannot trigger regex backtracking.
 
 ### Docs and Tooling
 

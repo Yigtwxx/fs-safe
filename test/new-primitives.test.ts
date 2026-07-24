@@ -221,7 +221,8 @@ describe("secure file reads", () => {
       await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
       await secureWindowsTestFile(filePath);
 
-      expect(await inspectPathPermissions(filePath)).toMatchObject({
+      const permissions = await inspectPathPermissions(filePath);
+      expect(permissions, permissions.ownerError ?? JSON.stringify(permissions)).toMatchObject({
         source: "windows-acl",
         ownerTrusted: true,
       });
@@ -249,7 +250,8 @@ describe("secure file reads", () => {
       await secureWindowsTestFile(filePath);
       const extendedPath = `\\\\?\\${path.resolve(filePath)}`;
 
-      expect(await inspectPathPermissions(extendedPath)).toMatchObject({
+      const permissions = await inspectPathPermissions(extendedPath);
+      expect(permissions, permissions.ownerError ?? JSON.stringify(permissions)).toMatchObject({
         source: "windows-acl",
         ownerTrusted: true,
       });
@@ -452,6 +454,19 @@ describe("secure file reads", () => {
       userInfo: () => ({ username: "me" }),
     });
     expect(command?.command).toBe("C:\\Windows\\System32\\icacls.exe");
+
+    const trailingSeparatorsExec = vi.fn().mockResolvedValue({
+      stdout: String.raw`C:\Users\me\secret.txt *S-1-5-18:(F)`,
+      stderr: "",
+    });
+    await inspectWindowsAcl(String.raw`C:\Users\me\secret.txt`, {
+      exec: trailingSeparatorsExec,
+      env: { SystemRoot: `D:\\Windows${"/".repeat(10_000)}` },
+    });
+    expect(trailingSeparatorsExec).toHaveBeenCalledWith(
+      "D:\\Windows\\System32\\icacls.exe",
+      [String.raw`C:\Users\me\secret.txt`],
+    );
   });
 
   it("covers permission formatting and ACL classification helpers", async () => {
