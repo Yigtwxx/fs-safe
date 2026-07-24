@@ -9,6 +9,7 @@ export type WindowsOwnerSummary = {
   sid?: string;
   currentUserSid?: string;
   principalSids?: Record<string, string>;
+  principalTranslationFailed?: boolean;
   remote?: boolean;
   trusted?: boolean;
   error?: string;
@@ -37,10 +38,12 @@ function windowsOwnerQueryCommand(targetPath: string): string {
     "$currentSid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
     "$root=[IO.Path]::GetPathRoot($p)",
     "$extendedDrive=$p.Length -ge 7 -and $p.StartsWith('\\\\?\\') -and [char]::IsLetter($p[4]) -and $p[5] -eq ':' -and $p[6] -eq '\\'",
+    "$driveRoot=if($extendedDrive){$p.Substring(4,3)}else{$root}",
     "$namespacePath=$p.StartsWith('\\\\')",
-    "$remote=($namespacePath -and -not $extendedDrive) -or ([IO.DriveInfo]::new($root).DriveType -eq [IO.DriveType]::Network)",
-    "$principalSids=@($acl.Access|ForEach-Object {@{name=$_.IdentityReference.Value;sid=$_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value}})",
-    "@{owner=$owner;ownerSid=$ownerSid;currentUserSid=$currentSid;principalSids=$principalSids;remote=$remote}|ConvertTo-Json -Depth 4 -Compress",
+    "$remote=($namespacePath -and -not $extendedDrive) -or ([IO.DriveInfo]::new($driveRoot).DriveType -eq [IO.DriveType]::Network)",
+    "$principalTranslationFailed=$false",
+    "$principalSids=@($acl.Access|ForEach-Object {$identity=$_.IdentityReference;try{$sid=if($identity -is [System.Security.Principal.SecurityIdentifier]){$identity.Value}else{$identity.Translate([System.Security.Principal.SecurityIdentifier]).Value};@{name=$identity.Value;sid=$sid}}catch{$principalTranslationFailed=$true}})",
+    "@{owner=$owner;ownerSid=$ownerSid;currentUserSid=$currentSid;principalSids=$principalSids;principalTranslationFailed=$principalTranslationFailed;remote=$remote}|ConvertTo-Json -Depth 4 -Compress",
   ].join(";");
 }
 
@@ -139,6 +142,7 @@ export async function inspectWindowsOwner(params: {
       ownerSid?: unknown;
       currentUserSid?: unknown;
       principalSids?: unknown;
+      principalTranslationFailed?: unknown;
       remote?: unknown;
     };
     const ownerSid =
@@ -157,6 +161,7 @@ export async function inspectWindowsOwner(params: {
       sid: ownerSid,
       currentUserSid,
       principalSids: parsePrincipalSidRows(parsed.principalSids),
+      principalTranslationFailed: parsed.principalTranslationFailed === true,
       remote,
       trusted: !remote && (ownerSid === currentUserSid || TRUSTED_OWNER_SIDS.has(ownerSid)),
     };

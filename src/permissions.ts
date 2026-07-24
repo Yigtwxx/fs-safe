@@ -196,6 +196,7 @@ export async function inspectPathPermissions(
       exec: opts?.exec,
       currentUserSid: owner.currentUserSid,
       principalSids: owner.principalSids,
+      principalTranslationFailed: owner.principalTranslationFailed,
     });
     const ownerFields = {
       ...(owner.sid ? { ownerSid: owner.sid } : {}),
@@ -457,10 +458,14 @@ export async function inspectWindowsAcl(
     exec?: PermissionExec;
     currentUserSid?: string;
     principalSids?: Record<string, string>;
+    principalTranslationFailed?: boolean;
   },
 ): Promise<WindowsAclSummary> {
   const exec = opts?.exec ?? defaultPermissionExec;
   try {
+    if (opts?.principalTranslationFailed) {
+      throw new Error("Windows ACL principal SID translation failed");
+    }
     const { stdout, stderr } = await exec(resolveWindowsSystemCommand("icacls.exe", opts?.env), [
       targetPath,
     ]);

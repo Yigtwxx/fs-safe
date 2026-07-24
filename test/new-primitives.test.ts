@@ -200,6 +200,11 @@ describe("secure file reads", () => {
       const filePath = path.join(root, "secret.json");
       await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
 
+      expect(await inspectPathPermissions(filePath)).toMatchObject({
+        source: "windows-acl",
+        ownerTrusted: true,
+      });
+
       const result = await readSecureFile({
         filePath,
         label: "test secret",
@@ -220,6 +225,11 @@ describe("secure file reads", () => {
       const filePath = path.join(root, "extended-secret.json");
       await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
       const extendedPath = `\\\\?\\${path.resolve(filePath)}`;
+
+      expect(await inspectPathPermissions(extendedPath)).toMatchObject({
+        source: "windows-acl",
+        ownerTrusted: true,
+      });
 
       const result = await readSecureFile({
         filePath: extendedPath,
@@ -616,6 +626,32 @@ describe("secure file reads", () => {
     expect(result.ownerSid).toBeUndefined();
     expect(result.ownerTrusted).toBeUndefined();
     expect(result.ownerError).toContain("owner lookup failed");
+  });
+
+  it("fails Windows ACL verification closed when a principal SID cannot be translated", async () => {
+    const target = path.join(root, "windows-untranslated-principal.txt");
+    await fs.writeFile(target, "secret", { mode: 0o600 });
+    const exec = vi.fn(async () => ({
+      stdout: JSON.stringify({
+        ownerSid: "S-1-5-21-42",
+        currentUserSid: "S-1-5-21-42",
+        principalTranslationFailed: true,
+      }),
+      stderr: "",
+    }));
+
+    const result = await inspectPathPermissions(target, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      exec,
+    });
+
+    expect(result).toMatchObject({
+      source: "unknown",
+      ownerTrusted: true,
+      error: expect.stringContaining("principal SID translation failed"),
+    });
+    expect(exec).toHaveBeenCalledTimes(1);
   });
 
   it("does not trust well-known local owners on remote Windows filesystems", async () => {
