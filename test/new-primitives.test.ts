@@ -669,6 +669,11 @@ describe("secure file reads", () => {
     expect(ownerQuery).toContain(
       "$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
     );
+    expect(ownerQuery).toContain("[IO.File]::GetAccessControl($p,$sections)");
+    expect(ownerQuery).toContain(
+      "$acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])",
+    );
+    expect(ownerQuery).not.toContain("Get-Acl");
     expect(ownerQuery).not.toContain("$acl.Owner");
   });
 

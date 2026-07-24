@@ -32,7 +32,8 @@ function windowsOwnerQueryCommand(targetPath: string): string {
   return [
     "$ErrorActionPreference='Stop'",
     `$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))`,
-    "$acl=Get-Acl -LiteralPath $p",
+    "$sections=[System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner",
+    "$acl=if([IO.Directory]::Exists($p)){[IO.Directory]::GetAccessControl($p,$sections)}else{[IO.File]::GetAccessControl($p,$sections)}",
     "$ownerSid=$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
     "$currentSid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
     "$root=[IO.Path]::GetPathRoot($p)",
@@ -40,9 +41,9 @@ function windowsOwnerQueryCommand(targetPath: string): string {
     "$driveRoot=if($extendedDrive){$p.Substring(4,3)}else{$root}",
     "$namespacePath=$p.StartsWith('\\\\')",
     "$remote=($namespacePath -and -not $extendedDrive) -or ([IO.DriveInfo]::new($driveRoot).DriveType -eq [IO.DriveType]::Network)",
-    "$principalTranslationFailed=$false",
-    "$principalSids=@($acl.Access|ForEach-Object {$identity=$_.IdentityReference;try{$sid=if($identity -is [System.Security.Principal.SecurityIdentifier]){$identity.Value}else{$identity.Translate([System.Security.Principal.SecurityIdentifier]).Value};@{name=$identity.Value;sid=$sid}}catch{$principalTranslationFailed=$true}})",
-    "@{ownerSid=$ownerSid;currentUserSid=$currentSid;principalSids=$principalSids;principalTranslationFailed=$principalTranslationFailed;remote=$remote}|ConvertTo-Json -Depth 4 -Compress",
+    "$rules=$acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])",
+    "$principalSids=@($rules|ForEach-Object {$identity=$_.IdentityReference;$sid=$identity.Value;@{name=$sid;sid=$sid};try{@{name=$identity.Translate([System.Security.Principal.NTAccount]).Value;sid=$sid}}catch{}})",
+    "@{ownerSid=$ownerSid;currentUserSid=$currentSid;principalSids=$principalSids;principalTranslationFailed=$false;remote=$remote}|ConvertTo-Json -Depth 4 -Compress",
   ].join(";");
 }
 
