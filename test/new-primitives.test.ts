@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import syncFs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendRegularFile,
@@ -49,6 +51,24 @@ import {
 } from "../src/walk.js";
 
 let root: string;
+const execFileAsync = promisify(execFile);
+
+async function secureWindowsTestFile(filePath: string): Promise<void> {
+  const username = os.userInfo().username;
+  const commandEnv = { SystemRoot: process.env.SystemRoot };
+  const userInfo = () => ({ username });
+  const principal = resolveWindowsUserPrincipal(commandEnv, userInfo);
+  const reset = createIcaclsResetCommand(filePath, {
+    isDir: false,
+    env: commandEnv,
+    userInfo,
+  });
+  if (!principal || !reset) {
+    throw new Error("Windows test principal could not be resolved");
+  }
+  await execFileAsync(reset.command, [filePath, "/setowner", principal], { windowsHide: true });
+  await execFileAsync(reset.command, reset.args, { windowsHide: true });
+}
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-new-"));
@@ -195,21 +215,60 @@ describe("secure file reads", () => {
   });
 
   it.runIf(process.platform === "win32")(
-    "fails closed on windows when ACL inspection is unavailable",
+    "reads from a validated Windows ACL and owner",
     async () => {
-      // See src/secure-file.ts:177 — readSecureFile throws permission-unverified
-      // on Windows because ACL inspection has no portable equivalent.
       const filePath = path.join(root, "secret.json");
       await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
+      await secureWindowsTestFile(filePath);
 
-      await expect(
-        readSecureFile({
-          filePath,
-          label: "test secret",
-          io: { maxBytes: 1024 },
-        }),
-      ).rejects.toMatchObject({ code: "permission-unverified" });
+      const permissions = await inspectPathPermissions(filePath);
+      expect(permissions, permissions.ownerError ?? JSON.stringify(permissions)).toMatchObject({
+        source: "windows-acl",
+        ownerTrusted: true,
+      });
+
+      const result = await readSecureFile({
+        filePath,
+        label: "test secret",
+        io: { maxBytes: 1024 },
+      });
+
+      expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
+      expect(result.permissions).toMatchObject({
+        source: "windows-acl",
+        ownerTrusted: true,
+      });
     },
+    15_000,
+  );
+
+  it.runIf(process.platform === "win32")(
+    "treats an extended-length local Windows path as local",
+    async () => {
+      const filePath = path.join(root, "extended-secret.json");
+      await fs.writeFile(filePath, '{"token":"ok"}', { mode: 0o600 });
+      await secureWindowsTestFile(filePath);
+      const extendedPath = `\\\\?\\${path.resolve(filePath)}`;
+
+      const permissions = await inspectPathPermissions(extendedPath);
+      expect(permissions, permissions.ownerError ?? JSON.stringify(permissions)).toMatchObject({
+        source: "windows-acl",
+        ownerTrusted: true,
+      });
+
+      const result = await readSecureFile({
+        filePath: extendedPath,
+        label: "extended-path secret",
+        io: { maxBytes: 1024 },
+      });
+
+      expect(result.buffer.toString("utf8")).toBe('{"token":"ok"}');
+      expect(result.permissions).toMatchObject({
+        source: "windows-acl",
+        ownerTrusted: true,
+      });
+    },
+    15_000,
   );
 
   it("rejects symlinks and files outside trusted dirs", async () => {
@@ -287,10 +346,16 @@ describe("secure file reads", () => {
   it("uses Windows ACL permission checks for secure reads when requested", async () => {
     const filePath = path.join(root, "windows-secret.txt");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
-    const exec = vi.fn().mockResolvedValue({
-      stdout: "*S-1-5-18:(F)\n",
-      stderr: "",
-    });
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ownerSid: "S-1-5-21-42",
+          currentUserSid: "S-1-5-21-42",
+        }),
+        stderr: "",
+      })
+      .mockResolvedValueOnce({ stdout: "*S-1-5-18:(F)\n", stderr: "" });
 
     const result = await readSecureFile({
       filePath,
@@ -300,16 +365,41 @@ describe("secure file reads", () => {
     expect(result.buffer.toString("utf8")).toBe("secret");
     expect(result.permissions?.source).toBe("windows-acl");
 
-    const unsafeExec = vi.fn().mockResolvedValue({
-      stdout: "Everyone:(R)\n",
-      stderr: "",
-    });
+    const unsafeExec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ownerSid: "S-1-5-21-42",
+          currentUserSid: "S-1-5-21-42",
+          principalSids: [{ name: "Everyone", sid: "S-1-1-0" }],
+        }),
+        stderr: "",
+      })
+      .mockResolvedValueOnce({ stdout: "Everyone:(R)\n", stderr: "" });
     await expect(
       readSecureFile({
         filePath,
         inject: { platform: "win32", exec: unsafeExec },
       }),
     ).rejects.toMatchObject({ code: "insecure-permissions" });
+
+    const foreignOwnerExec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ownerSid: "S-1-5-21-999",
+          currentUserSid: "S-1-5-21-42",
+        }),
+        stderr: "",
+      })
+      .mockResolvedValueOnce({ stdout: "*S-1-5-21-999:(R)\n", stderr: "" });
+    await expect(
+      readSecureFile({
+        filePath,
+        inject: { platform: "win32", exec: foreignOwnerExec },
+        permissions: { allowReadableByOthers: true },
+      }),
+    ).rejects.toMatchObject({ code: "not-owned" });
 
     const failedExec = vi.fn().mockRejectedValue(new Error("icacls failed"));
     await expect(
@@ -344,7 +434,6 @@ describe("secure file reads", () => {
     expect(result.ok).toBe(true);
     expect(exec).toHaveBeenCalledWith("D:\\Windows\\System32\\icacls.exe", [
       String.raw`C:\Users\me\secret.txt`,
-      "/sid",
     ]);
 
     const fallbackExec = vi.fn().mockResolvedValue({
@@ -357,7 +446,6 @@ describe("secure file reads", () => {
     });
     expect(fallbackExec).toHaveBeenCalledWith("E:\\Windows\\System32\\icacls.exe", [
       String.raw`C:\Users\me\secret.txt`,
-      "/sid",
     ]);
 
     const command = createIcaclsResetCommand(String.raw`C:\Users\me\secret.txt`, {
@@ -366,6 +454,19 @@ describe("secure file reads", () => {
       userInfo: () => ({ username: "me" }),
     });
     expect(command?.command).toBe("C:\\Windows\\System32\\icacls.exe");
+
+    const trailingSeparatorsExec = vi.fn().mockResolvedValue({
+      stdout: String.raw`C:\Users\me\secret.txt *S-1-5-18:(F)`,
+      stderr: "",
+    });
+    await inspectWindowsAcl(String.raw`C:\Users\me\secret.txt`, {
+      exec: trailingSeparatorsExec,
+      env: { SystemRoot: `D:\\Windows${"/".repeat(10_000)}` },
+    });
+    expect(trailingSeparatorsExec).toHaveBeenCalledWith(
+      "D:\\Windows\\System32\\icacls.exe",
+      [String.raw`C:\Users\me\secret.txt`],
+    );
   });
 
   it("covers permission formatting and ACL classification helpers", async () => {
@@ -473,12 +574,196 @@ describe("secure file reads", () => {
     expect(result.groupWritable).toBe(false);
   });
 
+  it("reports a foreign Windows owner even when the visible ACL is read-only", async () => {
+    const target = path.join(root, "windows-foreign-owner.txt");
+    await fs.writeFile(target, "secret", { mode: 0o600 });
+    const exec = vi.fn(async (command: string) => {
+      if (command.toLowerCase().endsWith("powershell.exe")) {
+        return {
+          stdout: JSON.stringify({
+            owner: "DOMAIN\\attacker",
+            ownerSid: "S-1-5-21-999",
+            currentUserSid: "S-1-5-21-42",
+          }),
+          stderr: "",
+        };
+      }
+      return {
+        stdout: `${target} *S-1-5-21-42:(RX)\n*S-1-5-18:(F)\n*S-1-5-32-544:(F)\n`,
+        stderr: "",
+      };
+    });
+
+    const result = await inspectPathPermissions(target, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      exec,
+    });
+
+    expect(result).toMatchObject({
+      source: "windows-acl",
+      groupWritable: false,
+      worldWritable: false,
+      ownerSid: "s-1-5-21-999",
+      ownerTrusted: false,
+    });
+  });
+
+  it.each(["S-1-5-21-42", "S-1-5-18", "S-1-5-32-544"])(
+    "trusts the supported Windows owner SID %s",
+    async (ownerSid) => {
+      const target = path.join(root, `windows-trusted-owner-${ownerSid}.txt`);
+      await fs.writeFile(target, "secret", { mode: 0o600 });
+      const exec = vi.fn(async (command: string) => {
+        if (command.toLowerCase().endsWith("powershell.exe")) {
+          return {
+            stdout: JSON.stringify({
+              owner: ownerSid,
+              ownerSid,
+              currentUserSid: "S-1-5-21-42",
+            }),
+            stderr: "",
+          };
+        }
+        return {
+          stdout: `${target} *S-1-5-21-42:(RX)\n*S-1-5-18:(F)\n*S-1-5-32-544:(F)\n`,
+          stderr: "",
+        };
+      });
+
+      const result = await inspectPathPermissions(target, {
+        platform: "win32",
+        env: { SystemRoot: "C:\\Windows" },
+        exec,
+      });
+
+      expect(result.ownerSid).toBe(ownerSid.toLowerCase());
+      expect(result.ownerTrusted).toBe(true);
+    },
+  );
+
+  it("queries the canonical Windows owner SID without a friendly-name round trip", async () => {
+    const target = path.join(root, "windows-canonical-owner.txt");
+    await fs.writeFile(target, "secret", { mode: 0o600 });
+    const exec = vi.fn(async (command: string, _args: string[]) => {
+      if (command.toLowerCase().endsWith("powershell.exe")) {
+        return {
+          stdout: JSON.stringify({
+            ownerSid: "S-1-5-21-42",
+            currentUserSid: "S-1-5-21-42",
+          }),
+          stderr: "",
+        };
+      }
+      return { stdout: `${target} *S-1-5-21-42:(F)\n`, stderr: "" };
+    });
+
+    await inspectPathPermissions(target, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      exec,
+    });
+
+    const ownerArgs = exec.mock.calls[0]?.[1];
+    const ownerQuery = Buffer.from(ownerArgs?.[4] ?? "", "base64").toString("utf16le");
+    expect(ownerQuery).toContain(
+      "$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
+    );
+    expect(ownerQuery).toContain("[IO.File]::GetAccessControl($p,$sections)");
+    expect(ownerQuery).toContain(
+      "$acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])",
+    );
+    expect(ownerQuery).not.toContain("Get-Acl");
+    expect(ownerQuery).not.toContain("$acl.Owner");
+  });
+
+  it("leaves Windows ownership unverified when the owner query fails", async () => {
+    const target = path.join(root, "windows-owner-query-failure.txt");
+    await fs.writeFile(target, "secret", { mode: 0o600 });
+    const exec = vi.fn(async (command: string) => {
+      if (command.toLowerCase().endsWith("powershell.exe")) {
+        throw new Error("owner lookup failed");
+      }
+      return {
+        stdout: `${target} *S-1-5-21-42:(RX)\n`,
+        stderr: "",
+      };
+    });
+
+    const result = await inspectPathPermissions(target, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      exec,
+    });
+
+    expect(result.source).toBe("windows-acl");
+    expect(result.ownerSid).toBeUndefined();
+    expect(result.ownerTrusted).toBeUndefined();
+    expect(result.ownerError).toContain("owner lookup failed");
+  });
+
+  it("fails Windows ACL verification closed when a principal SID cannot be translated", async () => {
+    const target = path.join(root, "windows-untranslated-principal.txt");
+    await fs.writeFile(target, "secret", { mode: 0o600 });
+    const exec = vi.fn(async () => ({
+      stdout: JSON.stringify({
+        ownerSid: "S-1-5-21-42",
+        currentUserSid: "S-1-5-21-42",
+        principalTranslationFailed: true,
+      }),
+      stderr: "",
+    }));
+
+    const result = await inspectPathPermissions(target, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      exec,
+    });
+
+    expect(result).toMatchObject({
+      source: "unknown",
+      ownerTrusted: true,
+      error: expect.stringContaining("principal SID translation failed"),
+    });
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not trust well-known local owners on remote Windows filesystems", async () => {
+    const target = path.join(root, "windows-remote-owner.txt");
+    await fs.writeFile(target, "secret", { mode: 0o600 });
+    const exec = vi.fn(async (command: string) => {
+      if (command.toLowerCase().endsWith("powershell.exe")) {
+        return {
+          stdout: JSON.stringify({
+            ownerSid: "S-1-5-32-544",
+            currentUserSid: "S-1-5-21-42",
+            remote: true,
+          }),
+          stderr: "",
+        };
+      }
+      return { stdout: `${target} *S-1-5-32-544:(F)\n`, stderr: "" };
+    });
+
+    const result = await inspectPathPermissions(target, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      exec,
+    });
+
+    expect(result.ownerTrusted).toBe(false);
+  });
+
   it("resolves the current user SID when ACL output only contains an unknown SID", async () => {
     const target = String.raw`C:\Secrets\token.txt`;
     const exec = vi
       .fn()
       .mockResolvedValueOnce({
         stdout: `${target} *S-1-5-21-42:(F)\nEveryone:(R)\n`,
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([{ name: "Everyone", sid: "S-1-1-0" }]),
         stderr: "",
       })
       .mockResolvedValueOnce({
@@ -489,7 +774,41 @@ describe("secure file reads", () => {
     const result = await inspectWindowsAcl(target, { exec, env: { SystemRoot: "C:\\Windows" } });
     expect(result.ok).toBe(true);
     expect(result.trusted.some((entry) => entry.principal === "*S-1-5-21-42")).toBe(true);
-    expect(exec).toHaveBeenCalledTimes(2);
+    expect(exec).toHaveBeenCalledTimes(3);
+  });
+
+  it("classifies friendly ACL names by authoritative SID instead of spoofed environment names", async () => {
+    const target = String.raw`C:\Secrets\token.txt`;
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: `${target} DOMAIN\\attacker:(F)\n`,
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([{ name: "DOMAIN\\attacker", sid: "S-1-5-21-999" }]),
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: '"USER","SID"\n"DOMAIN\\me","S-1-5-21-42"\n',
+        stderr: "",
+      });
+
+    const result = await inspectWindowsAcl(target, {
+      exec,
+      env: {
+        SystemRoot: "C:\\Windows",
+        USERDOMAIN: "DOMAIN",
+        USERNAME: "attacker",
+        USERSID: "S-1-5-21-999",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.trusted).toEqual([]);
+    expect(result.untrustedGroup).toMatchObject([
+      { principal: "DOMAIN\\attacker", sid: "s-1-5-21-999", canWrite: true },
+    ]);
   });
 });
 

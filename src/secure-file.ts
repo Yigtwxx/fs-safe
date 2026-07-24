@@ -186,6 +186,12 @@ async function assertSecurePermissions(
       `${label(options)} ACL verification unavailable on Windows for ${realPath}.`,
     );
   }
+  if (platform === "win32" && permissions.ownerTrusted !== true) {
+    throw new FsSafeError(
+      permissions.ownerTrusted === false ? "not-owned" : "permission-unverified",
+      `${label(options)} owner could not be trusted on Windows: ${realPath}`,
+    );
+  }
   const writableByOthers = permissions.worldWritable || permissions.groupWritable;
   const readableByOthers = permissions.worldReadable || permissions.groupReadable;
   if (writableByOthers || (!options.permissions?.allowReadableByOthers && readableByOthers)) {

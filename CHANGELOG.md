@@ -2,6 +2,23 @@
 
 ## 0.4.6 - Unreleased
 
+### Security and Correctness
+
+- Report Windows owner SIDs and whether the owner is the current user,
+  LocalSystem, or built-in Administrators so credential-bearing executable
+  checks can reject foreign-owned paths even when their visible DACL is
+  read-only. Secure reads enforce the result and remote filesystems fail
+  closed.
+- Read Windows owner and DACL data through the underlying .NET security
+  descriptor APIs so verification does not depend on PowerShell security-module
+  autoloading.
+- Invoke `icacls.exe` with its supported path-only inspection syntax and use
+  the live Windows user/domain environment for named ACE classification, so
+  ACL verification works on supported Windows hosts instead of failing on the
+  invalid `/sid` argument.
+- Normalize trailing Windows install-root separators with a bounded linear
+  scan so library-provided environment maps cannot trigger regex backtracking.
+
 ### Docs and Tooling
 
 - Add the public repository governance baseline, pinned CodeQL analysis,
