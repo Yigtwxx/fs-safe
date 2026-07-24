@@ -14,6 +14,12 @@
   ACL verification works on supported Windows hosts instead of failing on the
   invalid `/sid` argument.
 
+### Docs and Tooling
+
+- Add the public repository governance baseline, pinned CodeQL analysis,
+  package tarball/import validation, and protected tag-driven npm trusted
+  publishing with provenance and changelog-derived GitHub releases.
+
 ## 0.4.5 - 2026-07-20
 
 ### Highlights
