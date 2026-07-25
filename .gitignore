@@ -3,6 +3,7 @@ node_modules
 target/
 native/*.node
 coverage/
+release-graph-proof*.json
 *.tsbuildinfo
 .clawpatch/
 .deepsec/

@@ -26,7 +26,7 @@ Full docs and reference at **[fs-safe.io](https://fs-safe.io)**.
 
 ## Contents
 
-[Why this exists](#why-this-exists) · [Not a sandbox](#not-a-sandbox) · [Install](#install) · [Quick start](#quick-start) · [Reading](#reading) · [Subpaths](#subpaths) · [Failure semantics](#failure-semantics-in-the-name) · [Directory durability](#directory-durability) · [Atomic writes](#atomic-writes) · [External outputs](#external-outputs) · [Stores](#stores) · [Secure absolute reads](#secure-absolute-file-reads) · [Walking](#directory-walking) · [Archive extraction](#archive-extraction) · [Path scopes](#advanced-path-scopes) · [Errors](#errors) · [Safety model](#safety-model) · [Limitations](#limitations)
+[Why this exists](#why-this-exists) · [Not a sandbox](#not-a-sandbox) · [Install](#install) · [Python migration](#migrating-from-the-python-helper) · [Quick start](#quick-start) · [Reading](#reading) · [Subpaths](#subpaths) · [Failure semantics](#failure-semantics-in-the-name) · [Directory durability](#directory-durability) · [Atomic writes](#atomic-writes) · [External outputs](#external-outputs) · [Stores](#stores) · [Secure absolute reads](#secure-absolute-file-reads) · [Walking](#directory-walking) · [Archive extraction](#archive-extraction) · [Path scopes](#advanced-path-scopes) · [Errors](#errors) · [Safety model](#safety-model) · [Limitations](#limitations)
 
 ## Why this exists
 
@@ -77,6 +77,22 @@ packages are prebuilt; consumers do not need Rust. Without a matching package,
 temp+rename writes, and post-write identity verification. See the [native
 helper policy](docs/native-helper.md) for the exact boundary and deployment
 tradeoff.
+
+## Migrating from the Python helper
+
+Version 0.5 replaces the persistent Python worker with optional prebuilt native
+bindings. The modes map directly: `configureFsSafePython({ mode: "auto" })`
+becomes `configureFsSafeNative({ mode: "auto" })`, and likewise for `off` and
+`require`. Replace `FS_SAFE_PYTHON_MODE` with `FS_SAFE_NATIVE_MODE`; remove
+`pythonPath`, `FS_SAFE_PYTHON`, and interpreter provisioning because the native
+loader does not spawn Python.
+
+For the 0.5.x line only, the old function and all documented `FS_SAFE_PYTHON*`
+and OpenClaw Python environment names emit one `FS_SAFE_PYTHON_DEPRECATED`
+warning and map the old mode to its native equivalent. They are migration
+bridges, not permanent aliases, and will be removed in 0.6. Update startup
+configuration now rather than relying on the warning path. See the [full
+migration table](docs/native-helper.md#migration-from-the-python-helper).
 
 ## Quick start
 

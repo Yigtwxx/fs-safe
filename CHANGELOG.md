@@ -9,13 +9,14 @@
 
 ### Security and Correctness
 
+- Remove the native loader's PATH-resolved `ldd` execution. Linux libc detection now uses the Node process report, conventional musl library filenames, and the Node executable's ELF interpreter without spawning a process at import time; an inconclusive probe conservatively attempts glibc and falls back normally in `auto` mode.
 - Default archive extraction to `entryModes: "clamp"`, normalizing directories to `0o755` and files to `0o644` or `0o755` while always stripping setuid, setgid, and sticky bits; use `"preserve"` to retain safe archived rwx bits.
 - Prefer native create-only commits, sidecar acquisition, hardlink publication, and the explicit `rename-noreplace` publication strategy when the platform binding is available, while retaining guarded JavaScript fallbacks for `auto` and `off` modes.
 - Build Linux native opens on `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`, macOS opens on an in-root `O_NOFOLLOW` component walk, and Windows opens on handle-relative `NtCreateFile` with reparse-point rejection.
 
 ### Compatibility
 
-- Remove the persistent Python helper and its `pythonPath` configuration. Replace `configureFsSafePython`, `getFsSafePythonConfig`, `FS_SAFE_PYTHON_MODE`, and the OpenClaw Python aliases with `configureFsSafeNative`, `getFsSafeNativeConfig`, and `FS_SAFE_NATIVE_MODE`; the former `auto`, `require`, and `off` policies map directly to the native modes.
+- Remove the persistent Python helper and its `pythonPath` configuration. Replace `configureFsSafePython`, `FS_SAFE_PYTHON_MODE`, and the OpenClaw Python aliases with `configureFsSafeNative` and `FS_SAFE_NATIVE_MODE`; 0.5.x warns once and maps the former `auto`, `require`, and `off` policies as a temporary migration bridge that will be removed in 0.6.
 - Add `publishFileExclusive({ strategy: "rename-noreplace" })`; this strategy requires the native helper, atomically moves the source, and never replaces an existing destination.
 
 ### Docs and Tooling

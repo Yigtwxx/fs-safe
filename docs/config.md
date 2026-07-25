@@ -84,6 +84,20 @@ FS_SAFE_NATIVE_MODE=auto      # auto | off | require | true | false | on | 1 | 0
 
 `OPENCLAW_FS_SAFE_NATIVE_MODE` is accepted as an alias. Programmatic overrides via `configureFsSafeNative` always win.
 
+### Python-helper migration bridge
+
+The 0.5.x line detects the former `FS_SAFE_PYTHON_MODE`, `FS_SAFE_PYTHON`,
+`OPENCLAW_FS_SAFE_PYTHON_MODE`, `OPENCLAW_FS_SAFE_PYTHON`,
+`OPENCLAW_PINNED_PYTHON`, and `OPENCLAW_PINNED_WRITE_PYTHON` names. It emits one
+`FS_SAFE_PYTHON_DEPRECATED` warning and maps `auto`, `off`, or `require` to the
+same native mode; interpreter paths are ignored. The deprecated
+`configureFsSafePython()` export behaves the same way.
+
+Replace these inputs with `configureFsSafeNative()` or
+`FS_SAFE_NATIVE_MODE`. The migration bridge is removed in 0.6. See [Migrating
+from the Python helper](native-helper.md#migration-from-the-python-helper) for
+the full mapping.
+
 ## Related pages
 
 - [Native helper policy](native-helper.md) — when to pick `auto`, `off`, or `require`, and what each mode protects.

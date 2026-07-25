@@ -103,3 +103,47 @@ jobs:
       - name: Test Windows host binding
         if: runner.os == 'Windows'
         run: node scripts/native-smoke.mjs
+
+  release-graph-smoke:
+    name: Release graph smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-15
+          - windows-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.34.5
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build host binding
+        run: pnpm native:build
+
+      - name: Pack and smoke test release graph
+        run: pnpm release-graph:smoke
+
+      - name: Upload behavior proof
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-graph-proof-${{ runner.os }}-${{ runner.arch }}
+          path: release-graph-proof.json
+          if-no-files-found: error

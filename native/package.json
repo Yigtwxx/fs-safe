@@ -37,8 +37,8 @@
   },
   "scripts": {
     "artifacts": "napi artifacts --npm-dir ../npm",
-    "build": "napi build --platform --release",
-    "build:debug": "napi build --platform",
+    "build": "napi build --platform --release && node ../scripts/harden-native-loader.mjs",
+    "build:debug": "napi build --platform && node ../scripts/harden-native-loader.mjs",
     "prepublishOnly": "napi prepublish -t npm"
   },
   "optionalDependencies": {

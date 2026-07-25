@@ -39,7 +39,27 @@ Native primitives currently back create-only pinned writes, async sidecar creati
 
 ## Migration from the Python helper
 
-Version 0.5 removes the Python worker, interpreter-path selection, and Python environment aliases. Map the old mode directly: `configureFsSafePython({ mode })` becomes `configureFsSafeNative({ mode })`; `FS_SAFE_PYTHON_MODE` becomes `FS_SAFE_NATIVE_MODE`. Delete `pythonPath` and interpreter provisioning.
+Version 0.5 removes the Python worker and interpreter-path selection. The mode
+contract is unchanged, so migrate startup configuration directly:
+
+| Python helper configuration | Native replacement |
+|---|---|
+| `configureFsSafePython({ mode: "auto" })` | `configureFsSafeNative({ mode: "auto" })` |
+| `configureFsSafePython({ mode: "off" })` | `configureFsSafeNative({ mode: "off" })` |
+| `configureFsSafePython({ mode: "require" })` | `configureFsSafeNative({ mode: "require" })` |
+| `FS_SAFE_PYTHON_MODE` | `FS_SAFE_NATIVE_MODE` |
+| `OPENCLAW_FS_SAFE_PYTHON_MODE` | `OPENCLAW_FS_SAFE_NATIVE_MODE` |
+| `pythonPath`, `FS_SAFE_PYTHON`, and the OpenClaw interpreter-path aliases | Remove; prebuilt bindings do not use an interpreter path |
+
+During 0.5.x, `configureFsSafePython` and the legacy Python environment names
+remain only as an upgrade bridge. On the first config read they emit one
+`DeprecationWarning` with code `FS_SAFE_PYTHON_DEPRECATED`, state the mapped
+native mode, and then apply that mode. A legacy interpreter path without an
+explicit mode maps to `auto` and the path itself is ignored. Native config has
+the normal precedence over legacy environment config.
+
+This bridge is removed in 0.6. There is no silent or permanent alias, so
+deployments should change their configuration while upgrading to 0.5.
 
 ## Related pages
 

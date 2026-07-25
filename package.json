@@ -132,6 +132,7 @@
     "native:build": "pnpm --filter @openclaw/fs-safe-native build",
     "native:test": "cargo test --manifest-path native/Cargo.toml",
     "pack:check": "pnpm build && node scripts/check-pack.mjs",
+    "release-graph:smoke": "node scripts/release-graph-smoke.mjs",
     "check:changed": "pnpm run check",
     "release:notes": "node scripts/release-notes.mjs",
     "test:changed": "pnpm run test",
