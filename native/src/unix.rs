@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use std::os::fd::IntoRawFd;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 
 use rustix::fs::{AtFlags, FileType, Mode, OFlags, RenameFlags};
@@ -87,11 +89,7 @@ pub fn mkdir_beneath(root_fd: i32, rel_path: &str, mode: u32) -> NativeResult<()
         .split('/')
         .filter(|segment| !segment.is_empty() && *segment != ".")
     {
-        match rustix::fs::mkdirat(
-            current.as_fd(),
-            segment,
-            Mode::from_bits_retain(mode as u16),
-        ) {
+        match rustix::fs::mkdirat(current.as_fd(), segment, Mode::from_bits_retain(mode as _)) {
             Ok(()) | Err(rustix::io::Errno::EXIST) => {}
             Err(error) => return Err(os_error(error, "mkdirat beneath root")),
         }

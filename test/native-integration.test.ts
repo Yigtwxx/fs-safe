@@ -8,6 +8,7 @@ import { configureFsSafeNative } from "../src/native-config.js";
 import { acquireFileLock } from "../src/file-lock.js";
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { publishFileExclusive } from "../src/publish-file.js";
+import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import { root as openRoot } from "../src/root.js";
 
 type NativeBinding = typeof import("../native/index.js");
@@ -82,6 +83,24 @@ describe.runIf(native)("native filesystem primitives", () => {
     await root.create("nested/value", "native", { mkdir: true });
     expect(renameCalls).toBe(1);
     await expect(fs.readFile(path.join(directory, "nested/value"), "utf8")).resolves.toBe("native");
+  });
+
+  it("rejects native writes when the expected root identity does not match", async () => {
+    __setNativeLoaderForTest(() => native!);
+    configureFsSafeNative({ mode: "require" });
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-identity-"));
+    roots.push(directory);
+    const identity = await fs.lstat(directory);
+    await expect(runPinnedWriteHelper({
+      rootPath: directory,
+      relativeParentPath: "",
+      basename: "value",
+      mkdir: false,
+      mode: 0o600,
+      overwrite: false,
+      input: { kind: "buffer", data: "value" },
+      rootIdentity: { dev: identity.dev + 1, ino: identity.ino },
+    })).rejects.toMatchObject({ code: "path-mismatch" });
   });
 
   it("creates sidecar locks through native exclusive open", async () => {

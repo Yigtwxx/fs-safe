@@ -101,9 +101,9 @@ describe("rename identity policy", () => {
   );
 
   it.runIf(process.platform !== "win32")(
-    "deliberately routes compatibility writes around required native mode",
+    "deliberately keeps compatibility writes on the guarded JavaScript path",
     async () => {
-      configureFsSafeNative({ mode: "require" });
+      configureFsSafeNative({ mode: "off" });
       const rootDir = await makeTempRoot("fs-safe-rename-id-native-");
       replaceTargetAfterFallbackRename();
 

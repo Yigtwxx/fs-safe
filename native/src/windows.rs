@@ -348,7 +348,11 @@ fn set_rename_information(
     };
     if ok == 0 {
         // SAFETY: GetLastError has no memory safety preconditions.
-        return Err(win_error(unsafe { GetLastError() }, operation));
+        let code = unsafe { GetLastError() };
+        if nt_open_relative(target_root, target_path, FILE_READ_ATTRIBUTES, FILE_OPEN, 0).is_ok() {
+            return Err(native_error("EEXIST", "rename destination already exists"));
+        }
+        return Err(win_error(code, operation));
     }
     Ok(())
 }

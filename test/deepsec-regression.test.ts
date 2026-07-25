@@ -6,7 +6,6 @@ import { fileStore } from "../src/file-store.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import { loadPendingJsonDurableQueueEntries } from "../src/json-durable-queue.js";
 import { readLocalFileFromRoots, resolveLocalPathFromRootsSync } from "../src/local-roots.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import { replaceFileAtomic } from "../src/replace-file.js";
 import { resolveRootPath } from "../src/root-path.js";
 import { assertNoSymlinkParents } from "../src/symlink-parents.js";
@@ -355,22 +354,4 @@ describe("deepsec regressions", () => {
     expect((await fsp.stat(outsideFile)).mode & 0o777).toBe(0o600);
   });
 
-  it.runIf(process.platform !== "win32")("rejects native pinned writes after root identity changes", async () => {
-    configureFsSafeNative({ mode: "require" });
-    const rootDir = await tempRoot("fs-safe-native-root-identity-");
-    const stat = await fsp.lstat(rootDir);
-
-    await expect(
-      runPinnedWriteHelper({
-        rootPath: rootDir,
-        relativeParentPath: "",
-        basename: "value",
-        mkdir: false,
-        mode: 0o600,
-        overwrite: false,
-        input: { kind: "buffer", data: "value" },
-        rootIdentity: { dev: stat.dev + 1, ino: stat.ino },
-      }),
-    ).rejects.toMatchObject({ code: "path-mismatch" });
-  });
 });
