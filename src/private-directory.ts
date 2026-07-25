@@ -1,4 +1,3 @@
-import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding } from "./native.js";
 
@@ -12,9 +11,10 @@ export async function createPrivateDirectory(
 ): Promise<void> {
   const platform = options?.platform ?? process.platform;
   if (platform !== "win32") {
-    await fs.mkdir(targetPath, { mode: 0o700 });
-    await fs.chmod(targetPath, 0o700);
-    return;
+    throw new FsSafeError(
+      "helper-unavailable",
+      "private-directory creation is available only on Windows through the optional native binding",
+    );
   }
 
   const native = getNativeBinding();

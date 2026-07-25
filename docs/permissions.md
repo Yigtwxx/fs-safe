@@ -84,9 +84,11 @@ await createPrivateDirectory("C:\\Users\\me\\AppData\\Local\\MyApp\\private");
 On Windows with native support, this creates the directory and applies a
 protected owner + LocalSystem + Administrators full-control DACL directly with
 an atomic security descriptor; no PowerShell or `icacls` process is launched.
-POSIX uses mode `0o700`. Windows private-directory creation is native-only and
-fails closed with `FsSafeError("helper-unavailable")` when native mode is off or
-the binding is unavailable. Existing Windows permission inspection still
+This API is Windows-only and native-only; it fails closed with
+`FsSafeError("helper-unavailable")` on other platforms, when native mode is off,
+or when the binding is unavailable. POSIX callers should create private
+directories through their existing trusted-root creation policy rather than a
+pathname-only compatibility shim. Existing Windows permission inspection still
 retains its .NET/`icacls` compatibility fallback.
 
 Use `createIcaclsResetCommand()` when you need a structured command and argv pair. Use `formatIcaclsResetCommand()` when you only need a remediation string for a user-facing message.

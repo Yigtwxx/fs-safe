@@ -35,11 +35,13 @@ afterEach(async () => {
 });
 
 describe("createPrivateDirectory", () => {
-  it.runIf(process.platform !== "win32")("creates a private POSIX directory", async () => {
+  it.runIf(process.platform !== "win32")("fails closed without mutating POSIX paths", async () => {
     const root = await tempRoot();
     const target = path.join(root, "private");
-    await createPrivateDirectory(target);
-    expect((await fs.stat(target)).mode & 0o777).toBe(0o700);
+    await expect(createPrivateDirectory(target)).rejects.toMatchObject({
+      code: "helper-unavailable",
+    });
+    await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("fails closed when Windows native mode is off", async () => {
