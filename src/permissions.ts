@@ -3,17 +3,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
+import { inspectWindowsPermissionsNative } from "./windows-permissions-native.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
 import {
   inspectWindowsOwner,
   resolveWindowsCurrentUserSid,
   resolveWindowsPrincipalSids,
 } from "./windows-owner.js";
-
 const execFileAsync = promisify(execFile);
-
 export type PermissionExec = (
   command: string,
   args: string[],
@@ -186,6 +184,10 @@ export async function inspectPathPermissions(
   const bits = modeBits(effectiveMode);
   const platform = opts?.platform ?? process.platform;
   if (platform === "win32") {
+    const native = inspectWindowsPermissionsNative({
+      targetPath, stat: st, effectiveIsDir, effectiveMode, bits,
+    });
+    if (native) return native;
     const owner = await inspectWindowsOwner({
       targetPath,
       env: opts?.env,

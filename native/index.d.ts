@@ -4,6 +4,8 @@ export declare function cloneFileExclusive(sourceFd: number, targetRootFd: numbe
 
 export declare function copyFileRangeExclusive(sourceFd: number, targetRootFd: number, targetRelPath: string): Promise<NativeCopyResult>
 
+export declare function createPrivateDirectory(path: string): void
+
 export declare function extractArchiveNative(path: string, kind: string, rootFd: number, plan: Array<NativeArchivePlanEntry>, maxMetaEntryBytes: number, signal: AbortSignal): Promise<void>
 
 export interface FileHash {
@@ -57,6 +59,18 @@ export declare function openBeneath(rootFd: number, relPath: string, flags: numb
 
 export declare function readArchiveEntryNative(path: string, kind: string, requested: string, maxBytes: number, maxEntries: number, maxMetaEntryBytes: number, signal: AbortSignal): Promise<Buffer>
 
+export declare function readOwnerAndDacl(path: string): WindowsSecurityFacts
+
 export declare function renameNoReplace(sourceRootFd: number, sourceRelPath: string, targetRootFd: number, targetRelPath: string): void
 
 export declare function sha256File(fd: number): Promise<FileHash>
+
+export interface WindowsSecurityFacts {
+  ownerSid: string
+  ownerClass: string
+  worldWritable: boolean
+  groupWritable: boolean
+  worldReadable: boolean
+  groupReadable: boolean
+  fallbackRequired: boolean
+}

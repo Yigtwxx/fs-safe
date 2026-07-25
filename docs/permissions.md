@@ -66,6 +66,29 @@ resolveWindowsUserPrincipal(env);
 
 The default Windows inspector calls `icacls.exe /sid` and classifies principals as trusted, world, or group. Trusted defaults include the current user, SYSTEM, and Administrators. The parser is on the advanced surface so tests and CLIs can process captured `icacls` output without spawning a process.
 
+When the optional native binding is available, `inspectPathPermissions()`
+reads the owner and DACL directly with Windows security APIs. It classifies the
+current user, LocalSystem, and built-in Administrators as trusted and reports
+the world/group read/write facts consumed by secure reads. Descriptor forms it
+cannot classify equivalently fall back to the established owner/.NET and
+`icacls` path; `mode: "off"` exercises that fallback deterministically.
+
+## Private directories
+
+```ts
+import { createPrivateDirectory } from "@openclaw/fs-safe/permissions";
+
+await createPrivateDirectory("C:\\Users\\me\\AppData\\Local\\MyApp\\private");
+```
+
+On Windows with native support, this creates the directory and applies a
+protected owner + LocalSystem + Administrators full-control DACL directly with
+an atomic security descriptor; no PowerShell or `icacls` process is launched.
+POSIX uses mode `0o700`. Windows private-directory creation is native-only and
+fails closed with `FsSafeError("helper-unavailable")` when native mode is off or
+the binding is unavailable. Existing Windows permission inspection still
+retains its .NET/`icacls` compatibility fallback.
+
 Use `createIcaclsResetCommand()` when you need a structured command and argv pair. Use `formatIcaclsResetCommand()` when you only need a remediation string for a user-facing message.
 
 ## Types

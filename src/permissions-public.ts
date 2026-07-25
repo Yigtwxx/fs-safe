@@ -13,3 +13,7 @@ export {
   type PermissionCheckOptions,
   type SafeStatResult,
 } from "./permissions.js";
+export {
+  createPrivateDirectory,
+  type CreatePrivateDirectoryOptions,
+} from "./private-directory.js";

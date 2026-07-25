@@ -1,0 +1,78 @@
+import { createRequire } from "node:module";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
+import {
+  __resetNativeLoaderForTest,
+  __setNativeLoaderForTest,
+  type NativeBinding,
+} from "../src/native.js";
+import { inspectPathPermissions } from "../src/permissions.js";
+import { createPrivateDirectory } from "../src/private-directory.js";
+
+const require = createRequire(import.meta.url);
+let native: NativeBinding | undefined;
+try {
+  native = require("../native") as NativeBinding;
+} catch {
+  // Ordinary JS jobs do not build a host binding.
+}
+const tempDirs: string[] = [];
+
+async function tempRoot(): Promise<string> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-private-dir-"));
+  tempDirs.push(root);
+  return root;
+}
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+  __resetFsSafeNativeConfigForTest();
+  __resetNativeLoaderForTest();
+  await Promise.all(tempDirs.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
+});
+
+describe("createPrivateDirectory", () => {
+  it.runIf(process.platform !== "win32")("creates a private POSIX directory", async () => {
+    const root = await tempRoot();
+    const target = path.join(root, "private");
+    await createPrivateDirectory(target);
+    expect((await fs.stat(target)).mode & 0o777).toBe(0o700);
+  });
+
+  it("fails closed when Windows native mode is off", async () => {
+    const root = await tempRoot();
+    const target = path.join(root, "fallback");
+    configureFsSafeNative({ mode: "off" });
+    await expect(createPrivateDirectory(target, { platform: "win32" })).rejects.toMatchObject({
+      code: "helper-unavailable",
+    });
+    await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.runIf(process.platform === "win32" && Boolean(native))(
+    "creates and inspects the direct native DACL",
+    async () => {
+      const root = await tempRoot();
+      const target = path.join(root, "native");
+      __setNativeLoaderForTest(() => native!);
+      configureFsSafeNative({ mode: "require" });
+      await createPrivateDirectory(target);
+      const facts = native!.readOwnerAndDacl(target);
+      expect(facts.ownerClass).toBe("current-user");
+      expect(facts).toMatchObject({
+        worldWritable: false,
+        groupWritable: false,
+        fallbackRequired: false,
+      });
+      await expect(inspectPathPermissions(target)).resolves.toMatchObject({
+        source: "windows-acl",
+        ownerTrusted: true,
+        worldWritable: false,
+        groupWritable: false,
+      });
+    },
+  );
+});

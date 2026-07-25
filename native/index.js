@@ -673,6 +673,7 @@ if (!nativeBinding) {
 module.exports = nativeBinding
 module.exports.cloneFileExclusive = nativeBinding.cloneFileExclusive
 module.exports.copyFileRangeExclusive = nativeBinding.copyFileRangeExclusive
+module.exports.createPrivateDirectory = nativeBinding.createPrivateDirectory
 module.exports.extractArchiveNative = nativeBinding.extractArchiveNative
 module.exports.fstatIdentity = nativeBinding.fstatIdentity
 module.exports.inspectArchiveNative = nativeBinding.inspectArchiveNative
@@ -680,5 +681,6 @@ module.exports.linkBeneath = nativeBinding.linkBeneath
 module.exports.mkdirBeneath = nativeBinding.mkdirBeneath
 module.exports.openBeneath = nativeBinding.openBeneath
 module.exports.readArchiveEntryNative = nativeBinding.readArchiveEntryNative
+module.exports.readOwnerAndDacl = nativeBinding.readOwnerAndDacl
 module.exports.renameNoReplace = nativeBinding.renameNoReplace
 module.exports.sha256File = nativeBinding.sha256File

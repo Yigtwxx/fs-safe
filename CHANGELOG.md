@@ -15,6 +15,7 @@
 - Default archive extraction to `entryModes: "clamp"`, normalizing directories to `0o755` and files to `0o644` or `0o755` while always stripping setuid, setgid, and sticky bits; use `"preserve"` to retain safe archived rwx bits.
 - Prefer native create-only commits, sidecar acquisition, hardlink publication, and the explicit `rename-noreplace` publication strategy when the platform binding is available, while retaining guarded JavaScript fallbacks for `auto` and `off` modes.
 - Accelerate exclusive publication fallbacks with macOS `fclonefileat`, Linux `FICLONE` and `copy_file_range`, then the unchanged JavaScript byte loop; all paths retain exclusive creation, identity fencing, mode normalization, and SHA-256 verification through an async native hash task when available.
+- Add direct Windows owner/DACL inspection and protected private-directory creation for the current owner, LocalSystem, and Administrators, while retaining the existing .NET/`icacls` behavior when native mode is unavailable, forced off, or encounters an unsupported descriptor form.
 - Build Linux native opens on `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`, macOS opens on an in-root `O_NOFOLLOW` component walk, and Windows opens on handle-relative `NtCreateFile` with reparse-point rejection.
 
 ### Compatibility

@@ -206,7 +206,7 @@ that OpenClaw needs to compose higher-level APIs are grouped under
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `withTempWorkspace`, `resolveSecureTempRoot` |
 | `@openclaw/fs-safe/secure-file` | fd-pinned absolute file reads with owner, mode, ACL, trusted-dir, size, and timeout checks |
 | `@openclaw/fs-safe/file-lock` | async/sync sidecar locks, root-bounded sidecars, ownership verification, and stale policy |
-| `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection plus remediation formatting helpers |
+| `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection, private-directory creation, and remediation helpers |
 | `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
 | `@openclaw/fs-safe/archive` | policy-driven ZIP/TAR extraction (native gzip/zstd/bzip2), bounded single-entry reads, kind resolution, and limit helpers |
 | `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, root-file open, bounded descriptor reads, install paths, filename sanitizing, temp-file targets, sibling-temp writes, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
