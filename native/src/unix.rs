@@ -1,7 +1,9 @@
+#[cfg(target_os = "macos")]
+use std::ffi::CString;
+#[cfg(target_os = "macos")]
+use std::ffi::c_void;
 use std::io::{Read, Write};
-#[cfg(target_os = "linux")]
-use std::os::fd::IntoRawFd;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 
 use rustix::fs::{AtFlags, FileType, Mode, OFlags, RenameFlags};
 
@@ -221,6 +223,425 @@ pub fn chmod_beneath(root_fd: i32, rel_path: &str, mode: u32) -> NativeResult<()
     let owned = unsafe { OwnedFd::from_raw_fd(fd) };
     rustix::fs::fchmod(owned.as_fd(), Mode::from_bits_retain(mode as _))
         .map_err(|error| os_error(error, "set archive directory mode"))
+}
+
+pub fn read_at(fd: i32, buffer: &mut [u8], offset: u64) -> NativeResult<usize> {
+    rustix::io::pread(borrowed(fd), buffer, offset)
+        .map_err(|error| os_error(error, "read file at offset"))
+}
+
+#[cfg(target_os = "linux")]
+fn create_exclusive_target(root_fd: i32, rel_path: &str) -> NativeResult<OwnedFd> {
+    let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC;
+    let fd = open_beneath(root_fd, rel_path, flags.bits() as i32)?;
+    // SAFETY: open_beneath returned a fresh descriptor owned by this call.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+fn remove_created_target(root_fd: i32, rel_path: &str, target: &OwnedFd) {
+    #[cfg(target_os = "macos")]
+    // SAFETY: target is an open descriptor owned by the caller.
+    unsafe {
+        libc::fchflags(target.as_raw_fd(), 0);
+    }
+    let Ok(target_stat) = rustix::fs::fstat(target.as_fd()) else {
+        return;
+    };
+    let Ok((parent, name)) = open_parent(root_fd, rel_path) else {
+        return;
+    };
+    let Ok(path_stat) = rustix::fs::statat(parent.as_fd(), name, AtFlags::SYMLINK_NOFOLLOW) else {
+        return;
+    };
+    if target_stat.st_dev == path_stat.st_dev && target_stat.st_ino == path_stat.st_ino {
+        let _ = rustix::fs::unlinkat(parent.as_fd(), name, AtFlags::empty());
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn clone_file_exclusive(
+    source_fd: i32,
+    target_root_fd: i32,
+    target_rel_path: &str,
+) -> NativeResult<i32> {
+    let target = create_exclusive_target(target_root_fd, target_rel_path)?;
+    if let Err(error) = rustix::fs::ioctl_ficlone(target.as_fd(), borrowed(source_fd)) {
+        remove_created_target(target_root_fd, target_rel_path, &target);
+        return Err(native_error(
+            "ENOTSUP",
+            format!("FICLONE is unavailable: {error}"),
+        ));
+    }
+    if let Err(error) = rustix::fs::fchmod(target.as_fd(), Mode::from_bits_retain(0o600))
+        .and_then(|()| rustix::fs::fsync(target.as_fd()))
+    {
+        remove_created_target(target_root_fd, target_rel_path, &target);
+        return Err(os_error(error, "normalize cloned file"));
+    }
+    Ok(target.into_raw_fd())
+}
+
+#[cfg(target_os = "macos")]
+pub fn clone_file_exclusive(
+    source_fd: i32,
+    target_root_fd: i32,
+    target_rel_path: &str,
+) -> NativeResult<i32> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    const CLONE_NOOWNERCOPY: u32 = 0x0002;
+    static CLONE_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let parent_stat = rustix::fs::fstat(borrowed(target_root_fd))
+        .map_err(|error| os_error(error, "inspect clone target parent"))?;
+    // SAFETY: geteuid has no preconditions.
+    let effective_uid = unsafe { libc::geteuid() };
+    if parent_stat.st_uid != effective_uid
+        || parent_stat.st_mode & 0o022 != 0
+        || macos_acl_has_entries(target_root_fd)?
+    {
+        return Err(native_error(
+            "ENOTSUP",
+            "cloning requires an owned target parent without broad modes or ACLs",
+        ));
+    }
+    let source_stat = rustix::fs::fstat(borrowed(source_fd))
+        .map_err(|error| os_error(error, "inspect clone source"))?;
+    if source_stat.st_flags != 0 || macos_has_xattrs(source_fd)? {
+        return Err(native_error(
+            "ENOTSUP",
+            "cloning is disabled for sources with flags or extended attributes",
+        ));
+    }
+    let stage_path = (0..8)
+        .find_map(|_| {
+            let nonce = CLONE_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let candidate = format!(".fs-safe-clone-stage-{}-{nonce}", std::process::id());
+            match rustix::fs::mkdirat(
+                borrowed(target_root_fd),
+                candidate.as_str(),
+                Mode::from_bits_retain(0o700),
+            ) {
+                Ok(()) => Some(candidate),
+                Err(rustix::io::Errno::EXIST) => None,
+                Err(_) => None,
+            }
+        })
+        .ok_or_else(|| native_error("EIO", "create private clone staging directory"))?;
+    let stage_fd = match open_beneath(
+        target_root_fd,
+        &stage_path,
+        (OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW).bits() as i32,
+    ) {
+        Ok(fd) => {
+            // SAFETY: open_beneath returned a fresh descriptor owned here.
+            unsafe { OwnedFd::from_raw_fd(fd) }
+        }
+        Err(error) => {
+            let _ = rustix::fs::unlinkat(
+                borrowed(target_root_fd),
+                stage_path.as_str(),
+                AtFlags::REMOVEDIR,
+            );
+            return Err(error);
+        }
+    };
+
+    let payload = CString::new("payload").unwrap();
+    // SAFETY: descriptors are borrowed for this call and payload is NUL-terminated.
+    if unsafe {
+        libc::fclonefileat(
+            source_fd,
+            stage_fd.as_raw_fd(),
+            payload.as_ptr(),
+            CLONE_NOOWNERCOPY,
+        )
+    } != 0
+    {
+        let error = std::io::Error::last_os_error();
+        let _ = rustix::fs::unlinkat(
+            borrowed(target_root_fd),
+            stage_path.as_str(),
+            AtFlags::REMOVEDIR,
+        );
+        let code = match error.raw_os_error() {
+            Some(libc::EXDEV) | Some(libc::ENOTSUP) | Some(libc::EINVAL) => "ENOTSUP",
+            Some(libc::EACCES) => "EACCES",
+            Some(libc::EPERM) => "EPERM",
+            _ => "EIO",
+        };
+        return Err(native_error(code, format!("fclonefileat: {error}")));
+    }
+    let target_fd = match open_beneath(
+        stage_fd.as_raw_fd(),
+        "payload",
+        (OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW).bits() as i32,
+    ) {
+        Ok(fd) => fd,
+        Err(error) => {
+            let _ = rustix::fs::unlinkat(stage_fd.as_fd(), "payload", AtFlags::empty());
+            let _ = rustix::fs::unlinkat(
+                borrowed(target_root_fd),
+                stage_path.as_str(),
+                AtFlags::REMOVEDIR,
+            );
+            return Err(error);
+        }
+    };
+    // SAFETY: open_beneath returned a fresh descriptor owned here.
+    let target = unsafe { OwnedFd::from_raw_fd(target_fd) };
+
+    let normalize = || -> NativeResult<()> {
+        // SAFETY: target is an open descriptor owned by this call.
+        if unsafe { libc::fchflags(target.as_raw_fd(), 0) } != 0 {
+            return Err(native_error(
+                "EIO",
+                format!(
+                    "clear cloned file flags: {}",
+                    std::io::Error::last_os_error()
+                ),
+            ));
+        }
+        clear_macos_acl(target.as_raw_fd())?;
+        rustix::fs::fchmod(target.as_fd(), Mode::from_bits_retain(0o600))
+            .map_err(|error| os_error(error, "set cloned file mode"))?;
+        clear_macos_xattrs(target.as_raw_fd())?;
+        rustix::fs::fsync(target.as_fd()).map_err(|error| os_error(error, "sync cloned file"))
+    };
+    if let Err(error) = normalize() {
+        remove_created_target(stage_fd.as_raw_fd(), "payload", &target);
+        let _ = rustix::fs::unlinkat(
+            borrowed(target_root_fd),
+            stage_path.as_str(),
+            AtFlags::REMOVEDIR,
+        );
+        return Err(error);
+    }
+    if let Err(error) = rename_no_replace(
+        stage_fd.as_raw_fd(),
+        "payload",
+        target_root_fd,
+        target_rel_path,
+    ) {
+        remove_created_target(stage_fd.as_raw_fd(), "payload", &target);
+        let _ = rustix::fs::unlinkat(
+            borrowed(target_root_fd),
+            stage_path.as_str(),
+            AtFlags::REMOVEDIR,
+        );
+        return Err(error);
+    }
+    let _ = rustix::fs::unlinkat(
+        borrowed(target_root_fd),
+        stage_path.as_str(),
+        AtFlags::REMOVEDIR,
+    );
+    Ok(target.into_raw_fd())
+}
+
+#[cfg(target_os = "macos")]
+fn clear_macos_acl(fd: i32) -> NativeResult<()> {
+    const ACL_TYPE_EXTENDED: i32 = 0x0000_0100;
+    unsafe extern "C" {
+        fn acl_init(count: i32) -> *mut c_void;
+        fn acl_set_fd_np(fd: i32, acl: *mut c_void, acl_type: i32) -> i32;
+        fn acl_free(object: *mut c_void) -> i32;
+    }
+
+    // SAFETY: acl_init allocates an empty ACL owned by this function.
+    let acl = unsafe { acl_init(0) };
+    if acl.is_null() {
+        return Err(native_error(
+            "EIO",
+            format!("allocate empty ACL: {}", std::io::Error::last_os_error()),
+        ));
+    }
+    // SAFETY: fd and acl are valid for the duration of the call.
+    let result = unsafe { acl_set_fd_np(fd, acl, ACL_TYPE_EXTENDED) };
+    // SAFETY: acl was allocated by acl_init and is freed exactly once.
+    unsafe { acl_free(acl) };
+    if result != 0 {
+        return Err(native_error(
+            "EIO",
+            format!("clear cloned file ACL: {}", std::io::Error::last_os_error()),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_acl_has_entries(fd: i32) -> NativeResult<bool> {
+    const ACL_TYPE_EXTENDED: i32 = 0x0000_0100;
+    const ACL_FIRST_ENTRY: i32 = 0;
+    unsafe extern "C" {
+        fn acl_get_fd_np(fd: i32, acl_type: i32) -> *mut c_void;
+        fn acl_get_entry(acl: *mut c_void, entry_id: i32, entry: *mut *mut c_void) -> i32;
+        fn acl_free(object: *mut c_void) -> i32;
+    }
+
+    // SAFETY: acl_get_fd_np borrows fd and returns an owned ACL object.
+    let acl = unsafe { acl_get_fd_np(fd, ACL_TYPE_EXTENDED) };
+    if acl.is_null() {
+        let error = std::io::Error::last_os_error();
+        let code = error.raw_os_error();
+        return if matches!(code, Some(libc::ENOENT) | Some(libc::ENOATTR)) {
+            Ok(false)
+        } else if code == Some(libc::ENOTSUP)
+            || code == Some(libc::EOPNOTSUPP)
+            || code == Some(libc::EINVAL)
+        {
+            Err(native_error(
+                "ENOTSUP",
+                format!("inspect parent ACL: {error}"),
+            ))
+        } else {
+            Err(native_error("EIO", format!("inspect parent ACL: {error}")))
+        };
+    }
+    let mut entry = std::ptr::null_mut();
+    // SAFETY: acl is valid and entry is writable for one pointer.
+    let result = unsafe { acl_get_entry(acl, ACL_FIRST_ENTRY, &mut entry) };
+    // SAFETY: acl was returned by acl_get_fd_np and is freed exactly once.
+    unsafe { acl_free(acl) };
+    match result {
+        1 => Ok(true),
+        0 => Ok(false),
+        _ => Err(native_error(
+            "EIO",
+            format!("enumerate parent ACL: {}", std::io::Error::last_os_error()),
+        )),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_has_xattrs(fd: i32) -> NativeResult<bool> {
+    // SAFETY: null buffer queries the required list size.
+    let length = unsafe { libc::flistxattr(fd, std::ptr::null_mut(), 0, 0) };
+    if length < 0 {
+        let error = std::io::Error::last_os_error();
+        let code = error.raw_os_error();
+        if code == Some(libc::ENOTSUP)
+            || code == Some(libc::EOPNOTSUPP)
+            || code == Some(libc::EINVAL)
+        {
+            return Err(native_error(
+                "ENOTSUP",
+                format!("inspect source xattrs: {error}"),
+            ));
+        }
+        return Err(native_error(
+            "EIO",
+            format!("inspect source xattrs: {error}"),
+        ));
+    }
+    Ok(length > 0)
+}
+
+#[cfg(target_os = "macos")]
+fn clear_macos_xattrs(fd: i32) -> NativeResult<()> {
+    // SAFETY: null buffer queries the required list size.
+    let length = unsafe { libc::flistxattr(fd, std::ptr::null_mut(), 0, 0) };
+    if length < 0 {
+        return Err(native_error(
+            "EIO",
+            format!(
+                "list cloned file xattrs: {}",
+                std::io::Error::last_os_error()
+            ),
+        ));
+    }
+    if length == 0 {
+        return Ok(());
+    }
+    let mut names = vec![0_u8; length as usize];
+    // SAFETY: names is writable for its full allocation.
+    let read = unsafe { libc::flistxattr(fd, names.as_mut_ptr().cast(), names.len(), 0) };
+    if read < 0 {
+        return Err(native_error(
+            "EIO",
+            format!(
+                "read cloned file xattrs: {}",
+                std::io::Error::last_os_error()
+            ),
+        ));
+    }
+    names.truncate(read as usize);
+    for name in names
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+    {
+        let name = CString::new(name)
+            .map_err(|_| native_error("EINVAL", "cloned xattr name contains a NUL byte"))?;
+        // SAFETY: name is NUL-terminated and fd remains open.
+        if unsafe { libc::fremovexattr(fd, name.as_ptr(), 0) } != 0
+            && std::io::Error::last_os_error().raw_os_error() != Some(libc::ENOATTR)
+        {
+            return Err(native_error(
+                "EIO",
+                format!(
+                    "remove cloned file xattr: {}",
+                    std::io::Error::last_os_error()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub fn copy_file_range_exclusive(
+    source_fd: i32,
+    target_root_fd: i32,
+    target_rel_path: &str,
+) -> NativeResult<(i32, u64)> {
+    let target = create_exclusive_target(target_root_fd, target_rel_path)?;
+    let source_stat = rustix::fs::fstat(borrowed(source_fd))
+        .map_err(|error| os_error(error, "inspect copy source"))?;
+    let expected = u64::try_from(source_stat.st_size)
+        .map_err(|_| native_error("EINVAL", "copy source has a negative size"))?;
+    let mut source_offset = 0_u64;
+    let mut target_offset = 0_u64;
+    while source_offset < expected {
+        let length = usize::try_from((expected - source_offset).min(16 * 1024 * 1024)).unwrap();
+        match rustix::fs::copy_file_range(
+            borrowed(source_fd),
+            Some(&mut source_offset),
+            target.as_fd(),
+            Some(&mut target_offset),
+            length,
+        ) {
+            Ok(0) => {
+                remove_created_target(target_root_fd, target_rel_path, &target);
+                return Err(native_error("EIO", "copy_file_range made no progress"));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                remove_created_target(target_root_fd, target_rel_path, &target);
+                return Err(native_error(
+                    "ENOTSUP",
+                    format!("copy_file_range is unavailable: {error}"),
+                ));
+            }
+        }
+    }
+    if let Err(error) = rustix::fs::fchmod(target.as_fd(), Mode::from_bits_retain(0o600))
+        .and_then(|()| rustix::fs::fsync(target.as_fd()))
+    {
+        remove_created_target(target_root_fd, target_rel_path, &target);
+        return Err(os_error(error, "normalize copied file"));
+    }
+    Ok((target.into_raw_fd(), target_offset))
+}
+
+#[cfg(target_os = "macos")]
+pub fn copy_file_range_exclusive(
+    _source_fd: i32,
+    _target_root_fd: i32,
+    _target_rel_path: &str,
+) -> NativeResult<(i32, u64)> {
+    Err(native_error(
+        "ENOTSUP",
+        "copy_file_range is only available on Linux",
+    ))
 }
 
 #[cfg(target_os = "macos")]

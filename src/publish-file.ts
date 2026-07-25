@@ -31,6 +31,14 @@ const HARDLINK_FALLBACK_CODES = new Set([
   "EOPNOTSUPP",
   "ENOSYS",
 ]);
+const NATIVE_COPY_FALLBACK_CODES = new Set([
+  "EINVAL",
+  "ENOSYS",
+  "ENOTSUP",
+  "EOPNOTSUPP",
+  "EPERM",
+  "EXDEV",
+]);
 
 export function isHardlinkFallbackError(error: unknown): boolean {
   return HARDLINK_FALLBACK_CODES.has((error as NodeJS.ErrnoException | undefined)?.code ?? "");
@@ -89,7 +97,11 @@ async function assertPinnedSourceCurrent(params: {
   }
 }
 
-async function hashHandle(handle: FileHandle): Promise<{ bytes: number; digest: string }> {
+async function hashHandle(
+  handle: FileHandle,
+  native?: NativeBinding,
+): Promise<{ bytes: number; digest: string }> {
+  if (native) return await native.sha256File(handle.fd);
   const hash = createHash("sha256");
   const buffer = Buffer.allocUnsafe(64 * 1024);
   let position = 0;
@@ -106,8 +118,76 @@ async function hashHandle(handle: FileHandle): Promise<{ bytes: number; digest: 
 async function copyPinnedSource(params: {
   source: FileHandle;
   targetPath: string;
+  native?: NativeBinding;
+  targetNativeParent?: Awaited<ReturnType<typeof openNativeParent>>;
 }): Promise<{ handle: FileHandle; stat: Stats; digest: string; bytes: number }> {
+  if (params.native && params.targetNativeParent) {
+    for (const method of ["clone", "copy-file-range"] as const) {
+      let nativeFd: number | undefined;
+      try {
+        if (method === "clone") {
+          nativeFd = params.native.cloneFileExclusive(
+            params.source.fd,
+            params.targetNativeParent.handle.fd,
+            params.targetNativeParent.basename,
+          );
+        } else {
+          const copied = await params.native.copyFileRangeExclusive(
+            params.source.fd,
+            params.targetNativeParent.handle.fd,
+            params.targetNativeParent.basename,
+          );
+          if (copied.errorCode) {
+            throw Object.assign(new Error(copied.errorMessage ?? "native copy failed"), {
+              code: copied.errorCode,
+            });
+          }
+          nativeFd = copied.fd;
+        }
+      } catch (error) {
+        if (NATIVE_COPY_FALLBACK_CODES.has((error as NodeJS.ErrnoException).code ?? "")) {
+          continue;
+        }
+        throw error;
+      }
+
+      let target: FileHandle | undefined;
+      const createdIdentity = params.native.fstatIdentity(nativeFd);
+      try {
+        const identity = await fs.lstat(params.targetPath);
+        target = await fs.open(params.targetPath, sourceOpenFlags());
+        const opened = await target.stat();
+        if (
+          identity.isSymbolicLink() ||
+          !identity.isFile() ||
+          !sameFileIdentity(createdIdentity, identity) ||
+          !sameFileIdentity(createdIdentity, opened)
+        ) {
+          throw new FsSafeError("path-mismatch", "native publication target changed after copy");
+        }
+        const hashed = await hashHandle(target, params.native);
+        fsSync.closeSync(nativeFd);
+        nativeFd = undefined;
+        return {
+          handle: target,
+          stat: await target.stat(),
+          digest: hashed.digest,
+          bytes: hashed.bytes,
+        };
+      } catch (error) {
+        await target?.close().catch(() => undefined);
+        await removeCreatedTargetIfUnchanged(params.targetPath, createdIdentity).catch(
+          () => undefined,
+        );
+        throw error;
+      } finally {
+        if (nativeFd !== undefined) fsSync.closeSync(nativeFd);
+      }
+    }
+  }
+
   const target = await fs.open(params.targetPath, "wx+", 0o600);
+  const identity = await target.stat();
   try {
     const hash = createHash("sha256");
     const buffer = Buffer.allocUnsafe(64 * 1024);
@@ -134,14 +214,18 @@ async function copyPinnedSource(params: {
       position += bytesRead;
     }
     await target.sync();
-    return { handle: target, stat: await target.stat(), digest: hash.digest("hex"), bytes: position };
+    return { handle: target, stat: identity, digest: hash.digest("hex"), bytes: position };
   } catch (error) {
     await target.close().catch(() => undefined);
+    await removeCreatedTargetIfUnchanged(params.targetPath, identity).catch(() => undefined);
     throw error;
   }
 }
 
-async function removeCreatedTargetIfUnchanged(targetPath: string, identity?: Stats): Promise<void> {
+async function removeCreatedTargetIfUnchanged(
+  targetPath: string,
+  identity?: FileIdentityStat,
+): Promise<void> {
   if (!identity) {
     return;
   }
@@ -269,12 +353,17 @@ export async function publishFileExclusive(params: {
     let target: FileHandle | undefined;
     let targetIdentity: Stats | undefined;
     try {
-      const copied = await copyPinnedSource({ source, targetPath });
+      const copied = await copyPinnedSource({
+        source,
+        targetPath,
+        native,
+        targetNativeParent,
+      });
       target = copied.handle;
       targetIdentity = copied.stat;
       const targetPathStat = await fs.lstat(targetPath);
-      const copiedBack = await hashHandle(target);
-      const sourceAfter = await hashHandle(source);
+      const copiedBack = await hashHandle(target, native);
+      const sourceAfter = await hashHandle(source, native);
       if (
         targetPathStat.isSymbolicLink() ||
         !sameFileIdentity(targetPathStat, targetIdentity) ||

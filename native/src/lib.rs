@@ -4,6 +4,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
 mod archive;
+mod fast_file;
 mod tar_meter;
 #[cfg(unix)]
 mod unix;
@@ -137,6 +138,9 @@ pub fn fstat_identity(env: Env, fd: i32) -> Result<FileIdentity> {
 pub use archive::{
     NativeArchiveEntry, NativeArchivePlanEntry, extract_archive_native, inspect_archive_native,
     read_archive_entry_native,
+};
+pub use fast_file::{
+    FileHash, NativeCopyResult, clone_file_exclusive, copy_file_range_exclusive, sha256_file,
 };
 
 #[cfg(unix)]

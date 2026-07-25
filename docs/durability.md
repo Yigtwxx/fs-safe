@@ -107,6 +107,20 @@ classifier. The fallback copies from the pinned source into a `wx` target,
 fsyncs it, and fences source and target identity and content before reporting
 success. `parentReceipt`, when supplied, must name the target's direct parent.
 
+With a native binding, the copy fallback first attempts a copy-on-write clone
+(`fclonefileat` on macOS, `FICLONE` on Linux), then Linux
+`copy_file_range`, and finally the existing JavaScript byte loop. Every route
+creates the target exclusively, normalizes its mode to `0o600`, and goes
+through the same post-copy identity and SHA-256 fencing. Hashing uses an async
+native task when available, so large verification reads do not occupy the
+JavaScript event loop.
+
+On a clone-capable filesystem, publication of a large file becomes mostly a
+metadata operation: data blocks are shared copy-on-write until either file is
+modified. Clone support is filesystem- and mount-dependent, so callers must
+not infer durability or physical independence from timing; an unsupported
+clone or `copy_file_range` transparently continues down the fallback chain.
+
 `"rename-noreplace"` requires the native helper and atomically moves the
 source to the target without replacement. A collision is reported as
 `EEXIST`, both files remain unchanged, and a successful call returns

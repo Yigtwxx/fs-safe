@@ -45,6 +45,14 @@ const hardenedTypes = generatedTypes
   .replace(
     /readArchiveEntryNative\(([^)]*)\): Promise<unknown>/,
     "readArchiveEntryNative($1): Promise<Buffer>",
+  )
+  .replace(
+    /sha256File\(([^)]*)\): Promise<unknown>/,
+    "sha256File($1): Promise<FileHash>",
+  )
+  .replace(
+    /copyFileRangeExclusive\(([^)]*)\): Promise<unknown>/,
+    "copyFileRangeExclusive($1): Promise<NativeCopyResult>",
   );
 if (hardenedTypes !== generatedTypes) {
   writeFileSync(typesPath, hardenedTypes);

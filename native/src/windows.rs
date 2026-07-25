@@ -86,6 +86,17 @@ unsafe extern "system" {
         length: u32,
         file_information_class: i32,
     ) -> i32;
+    fn NtReadFile(
+        file_handle: HANDLE,
+        event: HANDLE,
+        apc_routine: *const c_void,
+        apc_context: *const c_void,
+        io_status_block: *mut IO_STATUS_BLOCK,
+        buffer: *mut c_void,
+        length: u32,
+        byte_offset: *const i64,
+        key: *const u32,
+    ) -> i32;
     fn RtlNtStatusToDosError(status: i32) -> u32;
 }
 
@@ -558,6 +569,59 @@ pub fn write_archive_file<R: Read>(
 
 pub fn chmod_beneath(_root_fd: i32, _rel_path: &str, _mode: u32) -> NativeResult<()> {
     Ok(())
+}
+
+pub fn read_at(fd: i32, buffer: &mut [u8], offset: u64) -> NativeResult<usize> {
+    const STATUS_END_OF_FILE: i32 = 0xC000_0011_u32 as i32;
+    let offset = i64::try_from(offset)
+        .map_err(|_| native_error("EINVAL", "read offset exceeds Windows range"))?;
+    let length = u32::try_from(buffer.len())
+        .map_err(|_| native_error("EINVAL", "read buffer exceeds Windows range"))?;
+    let mut io: IO_STATUS_BLOCK = unsafe { zeroed() };
+    // SAFETY: the handle is valid, buffer is writable for length bytes, and
+    // the synchronous handle keeps all stack arguments live until completion.
+    let status = unsafe {
+        NtReadFile(
+            root_handle(fd)?,
+            null_mut(),
+            null(),
+            null(),
+            &mut io,
+            buffer.as_mut_ptr().cast(),
+            length,
+            &offset,
+            null(),
+        )
+    };
+    if status == STATUS_END_OF_FILE {
+        return Ok(0);
+    }
+    if status < 0 {
+        return Err(nt_error(status, "read file at offset"));
+    }
+    Ok(io.Information)
+}
+
+pub fn clone_file_exclusive(
+    _source_fd: i32,
+    _target_root_fd: i32,
+    _target_rel_path: &str,
+) -> NativeResult<i32> {
+    Err(native_error(
+        "ENOTSUP",
+        "file cloning is not available on Windows",
+    ))
+}
+
+pub fn copy_file_range_exclusive(
+    _source_fd: i32,
+    _target_root_fd: i32,
+    _target_rel_path: &str,
+) -> NativeResult<(i32, u64)> {
+    Err(native_error(
+        "ENOTSUP",
+        "copy_file_range is not available on Windows",
+    ))
 }
 
 #[cfg(test)]

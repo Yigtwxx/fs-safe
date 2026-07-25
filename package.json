@@ -120,6 +120,7 @@
   },
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",
+    "benchmark:publish": "pnpm build && node scripts/bench-publish.mjs",
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
     "lint:file-size": "node scripts/check-file-size.mjs",
     "lint:fs-boundary": "node scripts/check-fs-boundary-primitives.mjs",
