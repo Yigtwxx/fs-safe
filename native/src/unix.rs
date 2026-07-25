@@ -42,6 +42,11 @@ pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i3
     use rustix::fs::{ResolveFlags, openat2};
 
     validate_beneath_path(rel_path)?;
+    if rel_path.is_empty() || rel_path == "." {
+        return rustix::io::dup(borrowed(root_fd))
+            .map(OwnedFd::into_raw_fd)
+            .map_err(|error| os_error(error, "duplicate root descriptor"));
+    }
     let path = if rel_path.is_empty() { "." } else { rel_path };
     let oflags = OFlags::from_bits_retain(flags as u32);
     let mode = if oflags.intersects(OFlags::CREATE | OFlags::TMPFILE) {
