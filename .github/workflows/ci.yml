@@ -97,4 +97,9 @@ jobs:
         run: pnpm native:build
 
       - name: Test host binding
+        if: runner.os != 'Windows'
         run: pnpm test test/native-integration.test.ts
+
+      - name: Test Windows host binding
+        if: runner.os == 'Windows'
+        run: node scripts/native-smoke.mjs

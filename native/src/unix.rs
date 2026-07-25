@@ -132,14 +132,27 @@ pub fn rename_no_replace(
 ) -> NativeResult<()> {
     let (source_parent, source_name) = open_parent(source_root_fd, source_rel_path)?;
     let (target_parent, target_name) = open_parent(target_root_fd, target_rel_path)?;
-    rustix::fs::renameat_with(
+    let result = rustix::fs::renameat_with(
         source_parent.as_fd(),
         source_name,
         target_parent.as_fd(),
         target_name,
         RenameFlags::NOREPLACE,
-    )
-    .map_err(|error| os_error(error, "rename without replacement"))
+    );
+    match result {
+        Ok(()) => Ok(()),
+        Err(_error)
+            if rustix::fs::statat(
+                target_parent.as_fd(),
+                target_name,
+                AtFlags::SYMLINK_NOFOLLOW,
+            )
+            .is_ok() =>
+        {
+            Err(native_error("EEXIST", "rename destination already exists"))
+        }
+        Err(error) => Err(os_error(error, "rename without replacement")),
+    }
 }
 
 pub fn fstat_identity(fd: i32) -> NativeResult<FileIdentity> {
