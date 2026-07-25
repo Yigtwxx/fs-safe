@@ -1,7 +1,9 @@
 use napi::{Env, Result};
 use napi_derive::napi;
 
-use crate::{into_napi, native_error};
+use crate::into_napi;
+#[cfg(not(windows))]
+use crate::native_error;
 
 #[napi(object)]
 pub struct WindowsSecurityFacts {
@@ -64,14 +66,13 @@ mod windows {
         SetEntriesInAclW, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN,
     };
     use windows_sys::Win32::Security::{
-        ACCESS_ALLOWED_ACE, ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE, ACL,
-        CONTAINER_INHERIT_ACE, CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce,
-        GetTokenInformation, INHERIT_ONLY_ACE, InitializeSecurityDescriptor, IsWellKnownSid,
-        OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PSID, SE_DACL_PROTECTED,
-        SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR_REVISION,
-        SECURITY_MAX_SID_SIZE, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
-        SetSecurityDescriptorOwner, TOKEN_QUERY, TOKEN_USER, TokenUser, WinAnonymousSid,
-        WinAuthenticatedUserSid, WinBuiltinAdministratorsSid, WinBuiltinGuestsSid,
+        ACCESS_ALLOWED_ACE, ACL, CONTAINER_INHERIT_ACE, CreateWellKnownSid,
+        DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetTokenInformation,
+        InitializeSecurityDescriptor, IsWellKnownSid, OBJECT_INHERIT_ACE,
+        OWNER_SECURITY_INFORMATION, PSID, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES,
+        SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE, SetSecurityDescriptorControl,
+        SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, TOKEN_QUERY, TOKEN_USER, TokenUser,
+        WinAnonymousSid, WinAuthenticatedUserSid, WinBuiltinAdministratorsSid, WinBuiltinGuestsSid,
         WinBuiltinUsersSid, WinInteractiveSid, WinLocalSystemSid, WinNetworkSid, WinWorldSid,
     };
     use windows_sys::Win32::Storage::FileSystem::{
@@ -98,6 +99,10 @@ mod windows {
     const FILE_WRITE_EA: u32 = 0x0000_0010;
     const FILE_DELETE_CHILD: u32 = 0x0000_0040;
     const FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;
+    const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+    const ACCESS_DENIED_ACE_TYPE: u8 = 1;
+    const INHERIT_ONLY_ACE: u8 = 0x08;
+    const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
 
     fn wide(value: &str) -> NativeResult<Vec<u16>> {
         if value.encode_utf16().any(|unit| unit == 0) {
