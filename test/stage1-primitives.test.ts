@@ -19,6 +19,7 @@ import {
   tryReadSecretFile,
 } from "../src/secret.js";
 import { tempWorkspace } from "../src/temp.js";
+import { configureFsSafeNative } from "../src/native-config.js";
 
 const tempDirs: string[] = [];
 
@@ -29,6 +30,7 @@ async function tempRoot(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+  configureFsSafeNative({ mode: "auto" });
   vi.restoreAllMocks();
   await Promise.all(tempDirs.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
 });
@@ -49,6 +51,7 @@ describe("exclusive file publication", () => {
   });
 
   it("falls back only for classified hardlink errors and copies from the pinned source", async () => {
+    configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-publish-copy-");
     const sourcePath = path.join(directory, "source");
     const targetPath = path.join(directory, "target");

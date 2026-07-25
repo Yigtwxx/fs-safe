@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
+import { configureFsSafeNative } from "../src/native-config.js";
 import {
   readSidecarLockOwnershipToken,
   readSidecarLockSnapshot,
@@ -20,6 +21,7 @@ async function tempRoot(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+  configureFsSafeNative({ mode: "auto" });
   vi.restoreAllMocks();
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { recursive: true, force: true })));
 });
@@ -282,6 +284,7 @@ describe("sidecar lock ownership tokens", () => {
   });
 
   it("cleans a partial sidecar left by a failed write", async () => {
+    configureFsSafeNative({ mode: "off" });
     const base = await tempRoot("fs-safe-sidecar-partial-write-");
     const targetPath = path.join(base, "state.json");
     const lockPath = `${targetPath}.lock`;

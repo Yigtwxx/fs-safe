@@ -4,6 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
+import { configureFsSafeNative } from "../src/native-config.js";
+import { acquireFileLock } from "../src/file-lock.js";
+import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
+import { publishFileExclusive } from "../src/publish-file.js";
+import { root as openRoot } from "../src/root.js";
 
 type NativeBinding = typeof import("../native/index.js");
 
@@ -19,6 +24,8 @@ try {
 const roots: string[] = [];
 
 afterEach(async () => {
+  configureFsSafeNative({ mode: "auto" });
+  __resetNativeLoaderForTest();
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
@@ -57,5 +64,72 @@ describe.runIf(native)("native filesystem primitives", () => {
     }
     await expect(fs.readFile(path.join(root, "source"), "utf8")).resolves.toBe("source");
     await expect(fs.readFile(path.join(root, "target"), "utf8")).resolves.toBe("target");
+  });
+
+  it("uses native no-replace commits for create-only pinned writes", async () => {
+    let renameCalls = 0;
+    __setNativeLoaderForTest(() => ({
+      ...native!,
+      renameNoReplace(...args) {
+        renameCalls += 1;
+        return native!.renameNoReplace(...args);
+      },
+    }));
+    configureFsSafeNative({ mode: "require" });
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-write-"));
+    roots.push(directory);
+    const root = await openRoot(directory);
+    await root.create("nested/value", "native", { mkdir: true });
+    expect(renameCalls).toBe(1);
+    await expect(fs.readFile(path.join(directory, "nested/value"), "utf8")).resolves.toBe("native");
+  });
+
+  it("creates sidecar locks through native exclusive open", async () => {
+    let exclusiveOpenCalls = 0;
+    __setNativeLoaderForTest(() => ({
+      ...native!,
+      openBeneath(rootFd, relPath, flags) {
+        if (flags & fsSync.constants.O_EXCL) {
+          exclusiveOpenCalls += 1;
+        }
+        return native!.openBeneath(rootFd, relPath, flags);
+      },
+    }));
+    configureFsSafeNative({ mode: "require" });
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-lock-"));
+    roots.push(directory);
+    const targetPath = path.join(directory, "state.json");
+    const lock = await acquireFileLock(targetPath, { payload: () => ({ pid: process.pid }) });
+    try {
+      expect(exclusiveOpenCalls).toBe(1);
+      await expect(lock.verifyStillHeld()).resolves.toBe(true);
+    } finally {
+      await lock.release();
+    }
+  });
+
+  it("publishes by native rename without replacing an existing target", async () => {
+    __setNativeLoaderForTest(() => native!);
+    configureFsSafeNative({ mode: "require" });
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-publish-"));
+    roots.push(directory);
+    const sourcePath = path.join(directory, "source");
+    const targetPath = path.join(directory, "target");
+    await fs.writeFile(sourcePath, "content");
+    const result = await publishFileExclusive({
+      sourcePath,
+      targetPath,
+      strategy: "rename-noreplace",
+    });
+    expect(result.method).toBe("rename-noreplace");
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("content");
+    await expect(fs.lstat(sourcePath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    await fs.writeFile(sourcePath, "second");
+    await expect(
+      publishFileExclusive({ sourcePath, targetPath, strategy: "rename-noreplace" }),
+    ).rejects.toMatchObject({ code: "EEXIST" });
+    await expect(fs.readFile(sourcePath, "utf8")).resolves.toBe("second");
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("content");
   });
 });

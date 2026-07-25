@@ -1,5 +1,4 @@
 import fsSync from "node:fs";
-import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { sameFileIdentity } from "./file-identity.js";
@@ -18,6 +17,7 @@ import {
   type SidecarLockStaleSnapshot,
 } from "./sidecar-lock-reclaim.js";
 import { FsSafeError } from "./errors.js";
+import { createNativeExclusiveFile, type NativeFileHandle } from "./native-operations.js";
 import type { Root } from "./root-impl.js";
 import type {
   SidecarLockAcquireOptions,
@@ -42,7 +42,7 @@ export type {
 } from "./sidecar-lock-types.js";
 type HeldLock = {
   count: number;
-  handle: FileHandle;
+  handle: NativeFileHandle;
   lockPath: string;
   snapshot: SidecarLockSnapshot;
   acquiredAt: number;
@@ -283,7 +283,7 @@ export function createSidecarLockManager(key: string) {
           await waitForRetry();
           continue;
         }
-        let handle: FileHandle | null = null;
+        let handle: NativeFileHandle | null = null;
         try {
           const payload = await options.payload();
           const { raw, ownershipToken } = serializeSidecarLockPayload(payload);
@@ -299,7 +299,7 @@ export function createSidecarLockManager(key: string) {
             }
             handle = (await options.lockRoot.open(relativeLockPath)).handle;
           } else {
-            handle = await fs.open(lockPath, "wx");
+            handle = (await createNativeExclusiveFile(lockPath, 0o600)) ?? await fs.open(lockPath, "wx");
             await handle.writeFile(raw, "utf8");
           }
           const snapshot = { raw, payload, stat: await handle.stat(), ownershipToken };

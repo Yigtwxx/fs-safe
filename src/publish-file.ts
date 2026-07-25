@@ -10,11 +10,16 @@ import {
 } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
+import { syncNativeFileBestEffort } from "./native-operations.js";
+import { getNativeBinding, requireNativeBinding, type NativeBinding } from "./native.js";
 
-export type PublishFileExclusiveStrategy = "link-or-copy" | "link-required";
+export type PublishFileExclusiveStrategy =
+  | "link-or-copy"
+  | "link-required"
+  | "rename-noreplace";
 
 export type PublishFileExclusiveResult = {
-  method: "hardlink" | "exclusive-copy";
+  method: "hardlink" | "exclusive-copy" | "rename-noreplace";
   identity: Stats;
   directorySync: DirectorySyncOutcome;
 };
@@ -38,6 +43,32 @@ function sourceOpenFlags(): number {
       ? fsSync.constants.O_NOFOLLOW
       : 0)
   );
+}
+
+function directoryOpenFlags(): number {
+  return (
+    fsSync.constants.O_RDONLY |
+    (typeof fsSync.constants.O_DIRECTORY === "number" ? fsSync.constants.O_DIRECTORY : 0)
+  );
+}
+
+async function openNativeParent(binding: NativeBinding, filePath: string): Promise<{
+  basename: string;
+  handle: FileHandle;
+}> {
+  const parentPath = path.dirname(filePath);
+  const handle = await fs.open(parentPath, directoryOpenFlags());
+  try {
+    const pathname = await fs.lstat(parentPath);
+    const opened = binding.fstatIdentity(handle.fd);
+    if (pathname.isSymbolicLink() || !sameFileIdentity(pathname, opened)) {
+      throw new FsSafeError("path-mismatch", "publication parent changed while opening");
+    }
+    return { basename: path.basename(filePath), handle };
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 async function assertPinnedSourceCurrent(params: {
@@ -148,6 +179,8 @@ export async function publishFileExclusive(params: {
   const parent = await pinDirectory(params.parentReceipt ?? parentPath, {
     label: "publication parent",
   });
+  let sourceNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
+  let targetNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
   try {
     const sourceIdentity = await source.stat();
     if (
@@ -160,8 +193,58 @@ export async function publishFileExclusive(params: {
     await parent.assertCurrent();
     await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceIdentity });
 
+    const native = params.strategy === "rename-noreplace"
+      ? requireNativeBinding()
+      : getNativeBinding();
+    if (native) {
+      sourceNativeParent = await openNativeParent(native, sourcePath);
+      targetNativeParent = await openNativeParent(native, targetPath);
+    }
+
+    if (params.strategy === "rename-noreplace") {
+      const binding = requireNativeBinding();
+      binding.renameNoReplace(
+        sourceNativeParent!.handle.fd,
+        sourceNativeParent!.basename,
+        targetNativeParent!.handle.fd,
+        targetNativeParent!.basename,
+      );
+      const targetIdentity = await fs.lstat(targetPath);
+      if (
+        targetIdentity.isSymbolicLink() ||
+        !targetIdentity.isFile() ||
+        !sameFileIdentity(targetIdentity, sourceIdentity)
+      ) {
+        throw new FsSafeError("path-mismatch", "no-replace publication target changed");
+      }
+      try {
+        await fs.lstat(sourcePath);
+        throw new FsSafeError("path-mismatch", "no-replace publication source still exists");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
+      }
+      await parent.assertCurrent();
+      syncNativeFileBestEffort(sourceNativeParent!.handle.fd);
+      return {
+        method: "rename-noreplace",
+        identity: targetIdentity,
+        directorySync: await parent.sync(),
+      };
+    }
+
     try {
-      await fs.link(sourcePath, targetPath);
+      if (native) {
+        native.linkBeneath(
+          sourceNativeParent!.handle.fd,
+          sourceNativeParent!.basename,
+          targetNativeParent!.handle.fd,
+          targetNativeParent!.basename,
+        );
+      } else {
+        await fs.link(sourcePath, targetPath);
+      }
       const targetIdentity = await fs.lstat(targetPath);
       if (
         targetIdentity.isSymbolicLink() ||
@@ -215,6 +298,8 @@ export async function publishFileExclusive(params: {
       await target?.close().catch(() => undefined);
     }
   } finally {
+    await sourceNativeParent?.handle.close().catch(() => undefined);
+    await targetNativeParent?.handle.close().catch(() => undefined);
     await source.close().catch(() => undefined);
     await parent.close().catch(() => undefined);
   }

@@ -249,7 +249,7 @@ pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i3
         if rel_path.is_empty() { "." } else { rel_path },
         access_from_flags(flags),
         disposition_from_flags(flags),
-        FILE_NON_DIRECTORY_FILE,
+        0,
     )?;
     // SAFETY: ownership transfers from OwnedHandle to the CRT fd on success.
     let fd = unsafe {
