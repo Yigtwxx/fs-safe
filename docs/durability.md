@@ -81,9 +81,37 @@ accepted.
 the caller before a separate permission or policy check. A missing or replaced
 target fails with `FsSafeError("path-mismatch")`.
 
+## Exclusive file publication
+
+`publishFileExclusive()` materializes one file without clobbering an existing
+target. It pins the source with `O_NOFOLLOW`, optionally verifies
+`expectedSourceIdentity`, tries a hardlink first, then synchronizes the target
+parent directory.
+
+```ts
+const result = await publishFileExclusive({
+  sourcePath: stagedPath,
+  targetPath: finalPath,
+  strategy: "link-or-copy",
+  parentReceipt,
+});
+// result.method: "hardlink" | "exclusive-copy"
+// result.identity: the verified target Stats
+// result.directorySync: strict directory-sync outcome
+```
+
+`"link-required"` propagates an unsupported hardlink failure.
+`"link-or-copy"` falls back only for `EPERM`, `EXDEV`, `ENOTSUP`,
+`EOPNOTSUPP`, or `ENOSYS`; `isHardlinkFallbackError()` exposes that exact
+classifier. The fallback copies from the pinned source into a `wx` target,
+fsyncs it, and fences source and target identity and content before reporting
+success. `parentReceipt`, when supplied, must name the target's direct parent.
+
 ## Scope
 
-These primitives establish path identity and filesystem synchronization. They
+These primitives establish path identity and filesystem synchronization. One
+`publishFileExclusive()` call is one no-clobber file materialization, not a
+retention policy, multi-file transaction, or application commit protocol. They
 do not decide application commit protocols, marker formats, permission policy,
 or whether an unsupported platform is acceptable. Keep those decisions at the
 owning product boundary.

@@ -23,6 +23,7 @@ The compact factory. Returns:
 ```ts
 type TempWorkspace = {
   dir: string;
+  identity: { dev: number | bigint; ino: number | bigint };
   store: FileStore;
   path(fileName: string): string;
   write(fileName: string, data: string | Uint8Array): Promise<string>;
@@ -30,7 +31,7 @@ type TempWorkspace = {
   writeJson(fileName: string, data: unknown, options?: { trailingNewline?: boolean }): Promise<string>;
   copyIn(fileName: string, sourcePath: string): Promise<string>;
   read(fileName: string): Promise<Buffer>;
-  cleanup(): Promise<void>;
+  cleanup(): Promise<"removed" | "missing" | "identity-mismatch">;
   [Symbol.asyncDispose](): Promise<void>;
 };
 ```
@@ -57,6 +58,13 @@ await state.write({ ready: true });
 
 The workspace owns cleanup; the store is only a view over the workspace
 directory.
+
+The identity receipt is captured when the workspace is created. Manual,
+disposal, and process-exit cleanup remove the path only while `lstat` still
+matches that receipt. If another actor renames the workspace away and places a
+new directory at the old name, cleanup returns `"identity-mismatch"` and leaves
+the replacement untouched. Disposal hooks perform the same check and ignore
+the returned status.
 
 The sync variant `tempWorkspaceSync` exposes the same surface with sync return
 types and a `FileStoreSync` at `workspace.store`.

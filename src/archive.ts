@@ -38,15 +38,28 @@ import {
   type TarEntryInfo,
 } from "./archive-tar.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
+import {
+  isZipSymlinkEntry,
+  zipEntryDeclaredSize,
+  zipEntryMode,
+  type ZipEntry,
+} from "./archive-zip-entry.js";
 import { sameFileIdentity } from "./file-identity.js";
+import {
+  resolveArchiveEntryMode,
+  shouldExtractArchiveEntry,
+} from "./archive-policy.js";
+import { importOptionalTar } from "./archive-tar-runtime.js";
+import type { ExtractArchiveOptions } from "./archive-options.js";
 import { writeSiblingTempFile } from "./sibling-temp.js";
 import { tempFile } from "./temp-target.js";
-
-export type ArchiveLogger = {
-  info?: (message: string) => void;
-  warn?: (message: string) => void;
-};
-
+export type { ArchiveLogger, ExtractArchiveOptions } from "./archive-options.js";
+export type {
+  ArchiveEntryFilter,
+  ArchiveEntryKind,
+  ArchiveEntryModePolicy,
+  ArchiveFilteredEntryPolicy,
+} from "./archive-policy.js";
 export {
   isWindowsDrivePath,
   normalizeArchiveEntryPath,
@@ -55,6 +68,7 @@ export {
   validateArchiveEntryPath,
 } from "./archive-entry.js";
 export { resolveArchiveKind, resolvePackedRootDir, type ArchiveKind } from "./archive-kind.js";
+export { readArchiveEntry } from "./archive-read.js";
 export {
   ARCHIVE_LIMIT_ERROR_CODE,
   ArchiveLimitError,
@@ -79,67 +93,24 @@ export {
   readZipCentralDirectoryEntryCount,
   type ZipArchiveWithFiles,
 } from "./archive-zip-preflight.js";
-
 const SUPPORTS_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in fsConstants;
 const OPEN_WRITE_CREATE_FLAGS =
   fsConstants.O_WRONLY |
   fsConstants.O_CREAT |
   fsConstants.O_EXCL |
   (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
-
-type ZipEntry = {
-  name: string;
-  dir: boolean;
-  unixPermissions?: number;
-  nodeStream?: () => NodeJS.ReadableStream;
-  async: (type: "nodebuffer") => Promise<Buffer>;
-};
-
 type ZipExtractBudget = ReturnType<typeof createByteBudgetTracker>;
 type StagedArchiveFile = { path: string; cleanup: () => Promise<void> };
-type TarModule = {
-  x(options: {
-    file: string;
-    cwd: string;
-    strip: number;
-    gzip?: boolean;
-    signal?: AbortSignal;
-    preservePaths: false;
-    strict: true;
-    onReadEntry(this: unknown, entry: unknown): void;
-  }): Promise<unknown>;
-};
-
-const ZIP_UNIX_FILE_TYPE_MASK = 0o170000;
-const ZIP_UNIX_SYMLINK_TYPE = 0o120000;
-
-function isZipSymlinkEntry(entry: ZipEntry): boolean {
-  return (
-    typeof entry.unixPermissions === "number" &&
-    (entry.unixPermissions & ZIP_UNIX_FILE_TYPE_MASK) === ZIP_UNIX_SYMLINK_TYPE
-  );
-}
-
-function zipEntryFileMode(entry: ZipEntry): number | undefined {
-  if (typeof entry.unixPermissions !== "number") {
-    return undefined;
-  }
-  const mode = entry.unixPermissions & 0o777;
-  return mode === 0 ? undefined : mode;
-}
-
 async function cleanupStagedArchiveFile(staged: StagedArchiveFile | undefined): Promise<void> {
   if (staged) {
     await staged.cleanup().catch(() => undefined);
   }
 }
-
 async function closeFileHandle(handle: FileHandle | undefined): Promise<void> {
   if (handle) {
     await handle.close().catch(() => undefined);
   }
 }
-
 async function stageArchiveFileForExtraction(params: {
   archivePath: string;
   limits: ReturnType<typeof resolveExtractLimits>;
@@ -154,7 +125,6 @@ async function stageArchiveFileForExtraction(params: {
   if (initialStat.size > params.limits.maxArchiveBytes) {
     throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT);
   }
-
   const noFollow =
     process.platform !== "win32" && "O_NOFOLLOW" in fsConstants ? fsConstants.O_NOFOLLOW : 0;
   const handle = await fs.open(sourcePath, fsConstants.O_RDONLY | noFollow);
@@ -256,6 +226,7 @@ async function writeZipFileEntry(params: {
   outPath: string;
   budget: ZipExtractBudget;
   deadline: ExtractionDeadline;
+  mode: number;
 }): Promise<void> {
   params.deadline.check();
   params.budget.startEntry();
@@ -270,7 +241,7 @@ async function writeZipFileEntry(params: {
       dir: path.dirname(destinationPath),
       tempPrefix: `.${path.basename(destinationPath)}.fs-safe-archive`,
       chmodDir: false,
-      mode: zipEntryFileMode(params.entry),
+      mode: params.mode,
       writeTemp: async (tempPath) => {
         tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o666);
         const writable = tempHandle.createWriteStream();
@@ -316,6 +287,9 @@ async function extractZip(params: {
   stripComponents?: number;
   limits?: ArchiveExtractLimits;
   deadline: ExtractionDeadline;
+  entryModes?: ExtractArchiveOptions["entryModes"];
+  entryFilter?: ExtractArchiveOptions["entryFilter"];
+  onFiltered?: ExtractArchiveOptions["onFiltered"];
 }): Promise<void> {
   const limits = resolveExtractLimits(params.limits);
   const stagedArchive = await stageArchiveFileForExtraction({
@@ -352,6 +326,20 @@ async function extractZip(params: {
             continue;
           }
 
+          const isSymlink = isZipSymlinkEntry(entry);
+          const entryKind = isSymlink ? "symlink" : entry.dir ? "directory" : "file";
+          const entrySize = zipEntryDeclaredSize(entry);
+          if (
+            !shouldExtractArchiveEntry({
+              filter: params.entryFilter,
+              onFiltered: params.onFiltered,
+              entry: { path: entry.name, kind: entryKind, size: entrySize },
+            })
+          ) {
+            continue;
+          }
+          const mode = zipEntryMode(entry, params.entryModes);
+
           await prepareZipOutputPath({
             destinationDir: stagingRealDir,
             destinationRealDir: stagingRealDir,
@@ -361,9 +349,10 @@ async function extractZip(params: {
             isDirectory: entry.dir,
           });
           if (entry.dir) {
+            await fs.chmod(output.outPath, mode);
             continue;
           }
-          if (isZipSymlinkEntry(entry)) {
+          if (isSymlink) {
             throw new Error(`zip entry is a link: ${entry.name}`);
           }
 
@@ -372,6 +361,7 @@ async function extractZip(params: {
             outPath: output.outPath,
             budget,
             deadline: params.deadline,
+            mode,
           });
         }
 
@@ -389,16 +379,7 @@ async function extractZip(params: {
   }
 }
 
-export async function extractArchive(params: {
-  archivePath: string;
-  destDir: string;
-  timeoutMs: number;
-  kind?: ArchiveKind;
-  stripComponents?: number;
-  tarGzip?: boolean;
-  limits?: ArchiveExtractLimits;
-  logger?: ArchiveLogger;
-}): Promise<void> {
+export async function extractArchive(params: ExtractArchiveOptions): Promise<void> {
   const kind = params.kind ?? resolveArchiveKind(params.archivePath);
   if (!kind) {
     throw new Error(`unsupported archive: ${params.archivePath}`);
@@ -424,7 +405,10 @@ export async function extractArchive(params: {
               rootDir: destinationRealDir,
               stripComponents: params.stripComponents,
               limits,
+              entryFilter: params.entryFilter,
+              onFiltered: params.onFiltered,
             });
+            const acceptedEntries: Array<{ path: string; mode: number }> = [];
             // A canonical cwd is not enough here: tar can still follow
             // pre-existing child symlinks in the live destination tree.
             // Extract into a private staging dir first, then merge through
@@ -436,11 +420,36 @@ export async function extractArchive(params: {
               gzip: params.tarGzip,
               signal: deadline.signal,
               preservePaths: false,
+              noChmod: true,
+              preserveOwner: false,
               strict: true,
+              filter(_entryPath, entry) {
+                const info = readTarEntryInfo(entry);
+                const accepted = checkTarEntrySafety(info);
+                if (accepted) {
+                  const relPath = stripArchivePath(
+                    info.path,
+                    Math.max(0, Math.floor(params.stripComponents ?? 0)),
+                  );
+                  if (relPath) {
+                    acceptedEntries.push({
+                      path: relPath,
+                      mode: resolveArchiveEntryMode({
+                        kind:
+                          info.type === "Directory" || info.type === "GNUDumpDir"
+                            ? "directory"
+                            : "file",
+                        archivedMode: info.mode,
+                        policy: params.entryModes,
+                      }),
+                    });
+                  }
+                }
+                return accepted;
+              },
               onReadEntry(entry) {
                 try {
                   deadline.check();
-                  checkTarEntrySafety(readTarEntryInfo(entry));
                 } catch (err) {
                   const error = err instanceof Error ? err : new Error(String(err));
                   // Node's EventEmitter calls listeners with `this` bound to the
@@ -450,6 +459,14 @@ export async function extractArchive(params: {
                 }
               },
             });
+            for (const accepted of acceptedEntries) {
+              const outputPath = resolveArchiveOutputPath({
+                rootDir: stagingDir,
+                relPath: accepted.path,
+                originalPath: accepted.path,
+              });
+              await fs.chmod(outputPath, accepted.mode);
+            }
             deadline.check();
             await mergeExtractedTreeIntoDestination({
               sourceDir: stagingDir,
@@ -473,21 +490,9 @@ export async function extractArchive(params: {
       stripComponents: params.stripComponents,
       limits: params.limits,
       deadline,
+      entryModes: params.entryModes,
+      entryFilter: params.entryFilter,
+      onFiltered: params.onFiltered,
     }),
-  );
-}
-
-async function importOptionalTar(): Promise<TarModule> {
-  try {
-    return await import("tar");
-  } catch (err) {
-    throw missingOptionalArchiveDependencyError("tar", err);
-  }
-}
-
-function missingOptionalArchiveDependencyError(packageName: "tar", cause: unknown): Error {
-  return new Error(
-    `Optional archive dependency "${packageName}" is not installed. Install it to use TAR archive helpers from @openclaw/fs-safe/archive.`,
-    { cause },
   );
 }

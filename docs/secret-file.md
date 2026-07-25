@@ -4,7 +4,10 @@ Helpers for reading and writing credentials. Files are written at mode `0o600`, 
 
 ```ts
 import {
+  createSecretFileAtomic,
+  readSecretFile,
   readSecretFileSync,
+  tryReadSecretFile,
   tryReadSecretFileSync,
   writeSecretFileAtomic,
   DEFAULT_SECRET_FILE_MAX_BYTES,
@@ -69,6 +72,10 @@ type SecretFileReadOptions = {
 
 The reader trims the file content and rejects empty results. `rejectSymlink` blocks a symlink path before the pinned read. Hardlinks are rejected by default so another in-tree name cannot alias the credential; pass `rejectHardlinks: false` only when you explicitly trust that layout.
 
+`readSecretFile()` and `tryReadSecretFile()` are asynchronous counterparts with
+the same pinned-handle validation, byte cap, trimming, error codes, and strict
+versus missing-is-undefined naming semantics.
+
 ## Writing
 
 ### `writeSecretFileAtomic(params)`
@@ -98,6 +105,14 @@ type WriteSecretFileParams = {
 ```
 
 The directory mode is asserted on each component along the path: `rootDir`, then any intermediate dirs, then the parent. The helper enforces that every component matches `dirMode` — wider permissions on an existing directory cause the write to fail. Audit and tighten existing secret directories yourself.
+
+### `createSecretFileAtomic(params)`
+
+This create-only sibling has the same directory, mode, pinned-write, and
+post-write verification policy. Final materialization uses exclusive create;
+if anything already occupies the target path it throws
+`FsSafeError("secret-exists")` without modifying that entry. Use the distinct
+name when first-writer-wins is part of the credential protocol.
 
 For more permissive credentials, override `mode`:
 

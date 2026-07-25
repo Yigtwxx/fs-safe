@@ -67,6 +67,26 @@ type WalkDirectoryOptions = {
 
 Unreadable directories are skipped rather than throwing, but every skipped directory is recorded in `failedDirs`. This keeps the helper suitable for best-effort inventories while letting pruning jobs tell an incomplete scan from an empty one: a destructive reconcile that deletes state for paths missing from `entries` must first confirm `failedDirs` holds no real read failures, or a transient `EIO`/`EACCES` blip would be mistaken for mass deletion. Use a stricter root-bounded operation when every entry must be accounted for.
 
+## Root-bounded async iteration
+
+`Root.walk(rel, options)` is the root-bounded counterpart to these standalone
+inventory helpers. It yields `{ relativePath, kind, size }` incrementally and
+accepts `maxDepth`, `maxEntries`, `symlinkPolicy: "skip" |
+"follow-within-root"`, and an `AbortSignal`. The default budget behavior yields
+one `kind: "truncated"` marker and ends; pass `limitBehavior: "throw"` for a
+typed `FsSafeError("too-large")` instead.
+
+The pure-Node path validates every directory canonically inside the root,
+revalidates each listing through the normal `Root.list()` boundary, and tracks
+canonical directories to stop symlink cycles. It does not hold a descriptor
+for the entire tree, so it is not a process sandbox against a hostile peer that
+can continuously swap and restore directories. Each individual lookup retains
+the documented Node `Root` boundary checks.
+
+Unlike `walkDirectory()` and `walkDirectorySync()`, `Root.walk()` is
+root-bounded and fails on unreadable or invalid directories instead of
+returning a `failedDirs` inventory.
+
 ## See also
 
 - [`fileStore`](file-store.md) — managed stores use bounded walking for pruning.

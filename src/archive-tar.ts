@@ -9,8 +9,14 @@ import {
   resolveExtractLimits,
   type ArchiveExtractLimits,
 } from "./archive-limits.js";
+import {
+  archiveEntryKindFromTarType,
+  shouldExtractArchiveEntry,
+  type ArchiveEntryFilter,
+  type ArchiveFilteredEntryPolicy,
+} from "./archive-policy.js";
 
-export type TarEntryInfo = { path: string; type: string; size: number };
+export type TarEntryInfo = { path: string; type: string; size: number; mode?: number };
 
 const BLOCKED_TAR_ENTRY_TYPES = new Set([
   "SymbolicLink",
@@ -38,7 +44,14 @@ export function readTarEntryInfo(entry: unknown): TarEntryInfo {
     Number.isFinite((entry as { size: number }).size)
       ? Math.max(0, Math.floor((entry as { size: number }).size))
       : 0;
-  return { path: p, type: t, size: s };
+  const mode =
+    typeof entry === "object" &&
+    entry !== null &&
+    "mode" in entry &&
+    typeof (entry as { mode?: unknown }).mode === "number"
+      ? (entry as { mode: number }).mode
+      : undefined;
+  return { path: p, type: t, size: s, mode };
 }
 
 export function createTarEntryPreflightChecker(params: {
@@ -46,7 +59,9 @@ export function createTarEntryPreflightChecker(params: {
   stripComponents?: number;
   limits?: ArchiveExtractLimits;
   escapeLabel?: string;
-}): (entry: TarEntryInfo) => void {
+  entryFilter?: ArchiveEntryFilter;
+  onFiltered?: ArchiveFilteredEntryPolicy;
+}): (entry: TarEntryInfo) => boolean {
   const strip = Math.max(0, Math.floor(params.stripComponents ?? 0));
   const limits = resolveExtractLimits(params.limits);
   let entryCount = 0;
@@ -57,7 +72,7 @@ export function createTarEntryPreflightChecker(params: {
 
     const relPath = stripArchivePath(entry.path, strip);
     if (!relPath) {
-      return;
+      return false;
     }
     validateArchiveEntryPath(relPath, { escapeLabel: params.escapeLabel });
     resolveArchiveOutputPath({
@@ -67,12 +82,25 @@ export function createTarEntryPreflightChecker(params: {
       escapeLabel: params.escapeLabel,
     });
 
+    entryCount += 1;
+    assertArchiveEntryCountWithinLimit(entryCount, limits);
+
+    const kind = archiveEntryKindFromTarType(entry.type);
+    if (
+      !shouldExtractArchiveEntry({
+        filter: params.entryFilter,
+        onFiltered: params.onFiltered,
+        entry: { path: entry.path, kind, size: entry.size },
+      })
+    ) {
+      return false;
+    }
+
     if (BLOCKED_TAR_ENTRY_TYPES.has(entry.type)) {
       throw new Error(`tar entry is a link: ${entry.path}`);
     }
 
-    entryCount += 1;
-    assertArchiveEntryCountWithinLimit(entryCount, limits);
     budget.addEntrySize(entry.size);
+    return true;
   };
 }

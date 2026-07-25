@@ -58,14 +58,14 @@ import {
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import type { DirEntry, PathStat } from "./types.js";
-import { registerTempPathForExit } from "./temp-cleanup.js";
+import { walkRoot, type RootWalkEntry, type RootWalkOptions } from "./root-walk.js";
+import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 import { serializePathWrite } from "./write-queue.js";
 
 export type { DenyMutationPolicy } from "./deny-mutations.js";
 export type { RenameIdentityPolicy } from "./pinned-write.js";
 export { resolveOpenedFileRealPathForHandle } from "./opened-realpath.js";
 export type { ReadResult } from "./read-opened-file.js";
-
 export type OpenResult = {
   handle: FileHandle;
   realPath: string;
@@ -342,6 +342,7 @@ export interface Root {
     toRelative: string,
     options?: RootMoveOptions,
   ): Promise<void>;
+  walk(relativePath: string, options: RootWalkOptions): AsyncIterableIterator<RootWalkEntry>;
 }
 
 class RootHandle implements Root {
@@ -622,8 +623,11 @@ class RootHandle implements Root {
       throw error;
     }
   }
+  walk(relativePath: string, options: RootWalkOptions): AsyncIterableIterator<RootWalkEntry> {
+    assertValidRootRelativePath(relativePath);
+    return walkRoot(this, relativePath, options);
+  }
 }
-
 function readDefaults(defaults: RootDefaults): RootReadParams {
   return {
     hardlinks: defaults.hardlinks,
@@ -1542,7 +1546,7 @@ async function writeFileFallback(
   await target.handle.close().catch(() => {});
   const destinationGuard = await createAsyncDirectoryGuard(path.dirname(destinationPath));
   let tempPath: string | null = null;
-  let unregisterTempPath: (() => void) | null = null;
+  let unregisterTempPath: TempPathRegistration | null = null;
   try {
     tempPath = buildAtomicWriteTempPath(destinationPath);
     unregisterTempPath = registerTempPathForExit(tempPath);
@@ -1552,6 +1556,7 @@ async function writeFileFallback(
       encoding: params.encoding,
       mode: mode || 0o600,
     });
+    unregisterTempPath.setIdentity(writtenStat);
     const commitTempPath = tempPath;
     await withAsyncDirectoryGuards([destinationGuard], async () => {
       await fs.rename(commitTempPath, destinationPath);
@@ -1668,7 +1673,7 @@ async function copyFileFallback(
   let targetClosedByUs = false;
   let tempHandle: FileHandle | null = null;
   let tempPath: string | null = null;
-  let unregisterTempPath: (() => void) | null = null;
+  let unregisterTempPath: TempPathRegistration | null = null;
   let tempClosedByStream = false;
   try {
     target = await openWritableFileInRoot(root, {
@@ -1687,6 +1692,7 @@ async function copyFileFallback(
     tempPath = buildAtomicWriteTempPath(destinationPath);
     unregisterTempPath = registerTempPathForExit(tempPath);
     tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, mode || 0o600);
+    unregisterTempPath.setIdentity(await tempHandle.stat());
     const sourceStream = createBoundedReadStream(source, params.maxBytes);
     const targetStream = tempHandle.createWriteStream();
     sourceStream.once("close", () => {

@@ -187,15 +187,15 @@ that OpenClaw needs to compose higher-level APIs are grouped under
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants |
 | `@openclaw/fs-safe/output` | `writeExternalFileWithinRoot` for external libraries that need a temp output path |
 | `@openclaw/fs-safe/store` | `fileStore`, `fileStoreSync`, and `jsonStore` |
-| `@openclaw/fs-safe/secret` | strict and try-style secret file read/write helpers |
+| `@openclaw/fs-safe/secret` | sync/async strict and try-style secret reads, atomic replace, and create-only secret writes |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
-| `@openclaw/fs-safe/durability` | pinned directory identities, strict and best-effort directory sync, durable nested-directory creation |
+| `@openclaw/fs-safe/durability` | pinned directory identities, strict directory sync, durable nested-directory creation, exclusive file publication |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `withTempWorkspace`, `resolveSecureTempRoot` |
 | `@openclaw/fs-safe/secure-file` | fd-pinned absolute file reads with owner, mode, ACL, trusted-dir, size, and timeout checks |
-| `@openclaw/fs-safe/file-lock` | `acquireFileLock`, `withFileLock`, `createFileLockManager`, and related lock types |
+| `@openclaw/fs-safe/file-lock` | async/sync sidecar locks, root-bounded sidecars, ownership verification, and stale policy |
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection plus remediation formatting helpers |
 | `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
-| `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, `ArchiveLimitError`, preflight helpers |
+| `@openclaw/fs-safe/archive` | policy-driven ZIP/TAR extraction, bounded single-entry reads, kind resolution, and limit helpers |
 | `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, root-file open, bounded descriptor reads, install paths, filename sanitizing, temp-file targets, sibling-temp writes, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode` |
 | `@openclaw/fs-safe/types` | shared types: `DirEntry`, `PathStat`, … |
@@ -406,6 +406,10 @@ for (const file of scan.entries) {
 
 Check `scan.truncated` before treating the result as complete, and `scan.failedDirs` to tell an incomplete scan (a directory that could not be read) from an empty one before pruning state from the listing.
 
+For caller-controlled paths, `Root.walk()` is the root-bounded async iterator.
+It supports entry/depth budgets, in-root symlink following, cancellation, and a
+truncation marker (or typed error) when a budget is reached.
+
 ## Archive extraction
 
 `extractArchive()` handles ZIP and TAR behind one API, with traversal checks, blocked-link-type rejection, and entry-count and byte budgets.
@@ -474,7 +478,7 @@ if (err instanceof FsSafeError) {
 }
 ```
 
-Current `FsSafeErrorCode` values are `already-exists`, `denied-path`, `device-path`, `hardlink`, `helper-failed`, `helper-unavailable`, `invalid-path`, `insecure-permissions`, `not-empty`, `not-file`, `not-found`, `not-owned`, `not-removable`, `outside-workspace`, `path-alias`, `path-mismatch`, `permission-unverified`, `symlink`, `timeout`, `too-large`, and `unsupported-platform`.
+Current `FsSafeErrorCode` values are `already-exists`, `denied-path`, `device-path`, `hardlink`, `helper-failed`, `helper-unavailable`, `invalid-path`, `insecure-permissions`, `not-empty`, `not-file`, `not-found`, `not-owned`, `not-removable`, `outside-workspace`, `path-alias`, `path-mismatch`, `permission-unverified`, `secret-exists`, `symlink`, `timeout`, `too-large`, and `unsupported-platform`.
 
 ## Safety model
 

@@ -26,6 +26,9 @@ await extractArchive({
   kind: "zip",                        // optional; resolveArchiveKind() can infer
   timeoutMs: 15_000,                  // hard ceiling for the whole extraction
   stripComponents: 0,                 // tar-style strip-leading-dirs
+  entryModes: "clamp",                // default; use "preserve" for archive rwx bits
+  entryFilter: ({ path, kind, size }) => "extract",
+  onFiltered: "reject-archive",        // default; opt into "skip-entry" explicitly
   limits: {
     maxArchiveBytes: 256 * 1024 * 1024,
     maxEntries: 50_000,
@@ -47,8 +50,24 @@ type ExtractArchiveParams = {
   tarGzip?: boolean;            // when archive is .tar.gz/.tgz
   limits?: ArchiveExtractLimits;
   logger?: ArchiveLogger;       // { info?, warn? }
+  entryModes?: "clamp" | "preserve";
+  entryFilter?: (entry: { path: string; kind: ArchiveEntryKind; size: number }) =>
+    "extract" | "skip";
+  onFiltered?: "reject-archive" | "skip-entry";
 };
 ```
+
+`entryModes` defaults to `"clamp"`: directories become `0o755`; files become
+`0o644`, or `0o755` when the archived owner-execute bit is set. `"preserve"`
+keeps archived read/write/execute bits. Both policies strip setuid, setgid, and
+sticky bits, and neither applies archived ownership. TAR extraction disables
+`tar`'s ownership and mode restoration and applies the selected modes in the
+private staging tree; ZIP applies the same policy to `unixPermissions`.
+
+An `entryFilter` sees the validated archive path, entry kind, and declared
+size. Returning `"skip"` rejects the whole archive unless `onFiltered` is
+explicitly `"skip-entry"`. Path traversal and archive-wide entry-count checks
+still apply to skipped entries.
 
 If `kind` is omitted, the helper calls `resolveArchiveKind(archivePath)` and throws if the extension is not recognized. Pass `kind` explicitly when the archive name doesn't carry the type (e.g. content-addressed names).
 
@@ -70,8 +89,8 @@ A limit violation throws `ArchiveLimitError`. The error's code is one of:
 ```ts
 ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT
 ARCHIVE_LIMIT_ERROR_CODE.ENTRY_COUNT_EXCEEDS_LIMIT
-ARCHIVE_LIMIT_ERROR_CODE.EXTRACTED_BYTES_EXCEEDS_LIMIT
-ARCHIVE_LIMIT_ERROR_CODE.ENTRY_BYTES_EXCEEDS_LIMIT
+ARCHIVE_LIMIT_ERROR_CODE.EXTRACTED_SIZE_EXCEEDS_LIMIT
+ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT
 ```
 
 Catch and branch on the code to surface a meaningful response to the caller.
@@ -97,9 +116,23 @@ const unknown = resolveArchiveKind("upload.bin"); // undefined
 Recognizes:
 
 - `*.zip` → `"zip"`
-- `*.tar`, `*.tar.gz`, `*.tgz`, `*.tar.bz2`, `*.tbz`, `*.tbz2` → `"tar"`
+- `*.tar`, `*.tar.gz`, `*.tgz` → `"tar"`
 
 Returns `undefined` for unknown extensions; check the result before calling `extractArchive` if the filename is caller-controlled.
+
+## `readArchiveEntry`
+
+`readArchiveEntry(archivePath, entryPath, { maxBytes, kind? })` reads one
+regular-file entry into a bounded `Buffer` without extracting a tree. It pins
+and privately stages the archive input, rejects link and directory entries,
+and throws `ArchiveLimitError` if decompressed bytes exceed `maxBytes`. ZIP
+inputs retain the archive subpath's 256 MiB compressed-input ceiling.
+
+```ts
+const manifest = await readArchiveEntry(uploadPath, "package/manifest.json", {
+  maxBytes: 64 * 1024,
+});
+```
 
 ## Lower-level building blocks
 

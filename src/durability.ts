@@ -11,3 +11,9 @@ export {
   type EnsureDurableDirectoryOptions,
   type PinnedDirectory,
 } from "./directory-durability.js";
+export {
+  isHardlinkFallbackError,
+  publishFileExclusive,
+  type PublishFileExclusiveResult,
+  type PublishFileExclusiveStrategy,
+} from "./publish-file.js";

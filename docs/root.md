@@ -51,7 +51,15 @@ fs.readJson<T>(rel, options?)  // parsed T
 fs.open(rel, options?)         // { handle, realPath, stat, [Symbol.asyncDispose] }
 fs.readAbsolute(absPath, options?) // ReadResult; absPath must already be inside the root
 fs.reader(options?)            // (path) => Promise<Buffer>; useful for loader APIs
+fs.walk(rel, options)          // root-bounded AsyncIterable<{ relativePath, kind, size }>
 ```
+
+`walk()` is the incremental, root-bounded recursive scan. It supports entry and
+depth budgets, cancellation, and `symlinkPolicy: "skip" |
+"follow-within-root"`. Budget exhaustion yields a `"truncated"` marker by
+default or throws `FsSafeError("too-large")` with `limitBehavior: "throw"`.
+See [Directory walking](walk.md) for the pure-Node guarantees and the contrast
+with the standalone best-effort walkers.
 
 `open()` returns a Node `FileHandle` for streaming. Prefer `await using` for cleanup:
 

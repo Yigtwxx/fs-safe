@@ -28,3 +28,10 @@ export {
   type WritableOpenMode,
   type WritableOpenResult,
 } from "./root-impl.js";
+export type {
+  RootWalkEntry,
+  RootWalkEntryKind,
+  RootWalkLimitBehavior,
+  RootWalkOptions,
+  RootWalkSymlinkPolicy,
+} from "./root-walk.js";

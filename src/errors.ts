@@ -16,6 +16,7 @@ export type FsSafeErrorCode =
   | "path-alias"
   | "path-mismatch"
   | "permission-unverified"
+  | "secret-exists"
   | "symlink"
   | "timeout"
   | "too-large"

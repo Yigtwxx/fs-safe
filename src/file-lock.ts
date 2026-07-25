@@ -7,6 +7,12 @@ import {
   type SidecarLockStaleRecovery,
 } from "./sidecar-lock.js";
 import { getFsSafeLockConfig } from "./lock-config.js";
+export {
+  acquireFileLockSync,
+  withFileLockSync,
+  type FileLockSyncAcquireOptions,
+  type FileLockSyncHandle,
+} from "./file-lock-sync.js";
 
 export type FileLockRetryOptions = SidecarLockRetryOptions;
 export type FileLockStaleRecovery = SidecarLockStaleRecovery;
@@ -21,6 +27,7 @@ export type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = O
 
 export type FileLockHandle = SidecarLockHandle;
 export type FileLockHeldEntry = SidecarLockHeldEntry;
+export type { SidecarLockCompromisedInfo } from "./sidecar-lock.js";
 
 export type FileLockManager = {
   acquire<TPayload extends Record<string, unknown>>(

@@ -42,6 +42,9 @@ function withFileLock<T, TPayload>(
 ): Promise<T>;
 
 function createFileLockManager(key: string): FileLockManager;
+
+function acquireFileLockSync<TPayload>(targetPath: string, options: FileLockSyncAcquireOptions<TPayload>): FileLockSyncHandle;
+function withFileLockSync<T, TPayload>(targetPath: string, options: FileLockSyncAcquireOptions<TPayload>, fn: () => T): T;
 ```
 
 `managerKey` is an optional identifier used to keep state isolated across multiple lock domains in the same process. Use distinct keys for distinct domains (`"snapshot"`, `"compact"`, `"build"`). If omitted, fs-safe derives one from the target path.
@@ -73,6 +76,10 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
     payload: Record<string, unknown> | null;
   }) => boolean | Promise<boolean>;
   metadata?: Record<string, unknown>;    // attached to heldEntries() output for diagnostics
+  parsePayload?: (raw: string) => unknown;
+  lockRoot?: Root;
+  onCompromised?: (info: { lockPath: string; normalizedTargetPath: string }) => void;
+  compromiseCheckIntervalMs?: number;
 };
 
 type FileLockRetryOptions = {
@@ -85,6 +92,14 @@ type FileLockRetryOptions = {
 ```
 
 `payload` is a function so you can re-evaluate it on each retry (e.g. timestamp, PID).
+`parsePayload` replaces JSON parsing for legacy or custom sidecars. Its `unknown`
+result is passed to `shouldReclaim` and `shouldRemoveStaleLock`, allowing PID,
+process-start, argv, or role schemas to remain application-owned.
+
+Pass `lockRoot` to place sidecar create, read, verification, and removal behind
+an existing `Root` capability. `lockPath` must resolve inside that root.
+Identity-conditioned removal remains the only release and reclaim deletion
+path.
 
 ## Release handle
 
@@ -92,10 +107,25 @@ type FileLockRetryOptions = {
 type FileLockHandle = {
   lockPath: string;
   normalizedTargetPath: string;
+  verifyStillHeld: () => Promise<boolean>;
   release: () => Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 };
 ```
+
+`verifyStillHeld()` compares the current sidecar with the ownership snapshot
+captured at acquisition. Set `compromiseCheckIntervalMs` together with
+`onCompromised` for a cheap periodic check; the callback fires once after the
+sidecar no longer matches. This is detection, not revocation of work already in
+progress.
+
+## Synchronous locks
+
+`acquireFileLockSync()` and `withFileLockSync()` mirror filesystem arbitration,
+retry, payload parsing, stale policy, guarded identity-conditioned reclaim,
+verification, and compromise monitoring. They do not use the async manager
+queue, support async callbacks, or provide same-process reentrancy. Retry waits
+block the calling thread; use the async API in request-serving code.
 
 Always release in a `finally`:
 

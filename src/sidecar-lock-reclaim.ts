@@ -1,7 +1,13 @@
 import { randomBytes } from "node:crypto";
 import type { Stats } from "node:fs";
 import fs from "node:fs/promises";
+import path from "node:path";
+import { readFileHandleBounded } from "./bounded-read.js";
+import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
+import type { Root } from "./root-impl.js";
+
+const MAX_LOCK_PAYLOAD_BYTES = 1024 * 1024;
 
 const SIDECAR_LOCK_OWNERSHIP_TOKEN_BYTES = 16;
 const SIDECAR_LOCK_OWNERSHIP_TOKEN_BITS = SIDECAR_LOCK_OWNERSHIP_TOKEN_BYTES * 8;
@@ -14,12 +20,12 @@ export type SidecarLockStaleSnapshot = {
   lockPath: string;
   normalizedTargetPath: string;
   raw: string;
-  payload: Record<string, unknown> | null;
+  payload: unknown;
 };
 
 export type SidecarLockSnapshot = {
   raw?: string;
-  payload: Record<string, unknown> | null;
+  payload: unknown;
   stat?: Stats;
   ownershipToken?: string;
 };
@@ -49,24 +55,55 @@ export function serializeSidecarLockPayload(payload: Record<string, unknown>): {
   };
 }
 
+export function relativeSidecarLockPath(lockRoot: Root, lockPath: string): string {
+  const resolved = path.resolve(lockPath);
+  const lexicalRelative = path.relative(lockRoot.rootDir, resolved);
+  const relative =
+    lexicalRelative !== ".." &&
+    !lexicalRelative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(lexicalRelative)
+      ? lexicalRelative
+      : path.relative(lockRoot.rootReal, resolved);
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new FsSafeError("outside-workspace", "sidecar lock path is outside lockRoot");
+  }
+  return relative.split(path.sep).join(path.posix.sep);
+}
+
+function parseLockPayload(raw: string, parser?: (raw: string) => unknown): unknown {
+  if (parser) {
+    return parser(raw);
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function readSidecarLockSnapshot(
   lockPath: string,
+  options: { lockRoot?: Root; parsePayload?: (raw: string) => unknown } = {},
 ): Promise<SidecarLockSnapshot | null> {
   try {
+    if (options.lockRoot) {
+      const opened = await options.lockRoot.open(relativeSidecarLockPath(options.lockRoot, lockPath));
+      try {
+        const raw = (await readFileHandleBounded(opened.handle, MAX_LOCK_PAYLOAD_BYTES)).toString("utf8");
+        return { raw, payload: parseLockPayload(raw, options.parsePayload), stat: opened.stat };
+      } finally {
+        await opened.handle.close().catch(() => undefined);
+      }
+    }
     const stat = await fs.lstat(lockPath);
     const raw = await fs.readFile(lockPath, "utf8");
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      const payload =
-        parsed && typeof parsed === "object" && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>)
-          : null;
-      return { raw, payload, stat };
-    } catch {
-      return { raw, payload: null, stat };
-    }
+    return { raw, payload: parseLockPayload(raw, options.parsePayload), stat };
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+    if (
+      (err as NodeJS.ErrnoException).code === "ENOENT" ||
+      (err instanceof FsSafeError && err.code === "not-found")
+    ) {
       return null;
     }
     throw err;
@@ -99,20 +136,26 @@ export function sidecarLockSnapshotMatches(
 export async function removeSidecarLockIfUnchanged(
   lockPath: string,
   observed: SidecarLockSnapshot | null,
+  options: { lockRoot?: Root; parsePayload?: (raw: string) => unknown } = {},
 ): Promise<boolean> {
-  const current = await readSidecarLockSnapshot(lockPath);
+  const current = await readSidecarLockSnapshot(lockPath, options);
   if (!current || !observed || !sidecarLockSnapshotMatches(current, observed)) {
     return false;
   }
-  await fs.rm(lockPath, { force: true }).catch(() => undefined);
+  if (options.lockRoot) {
+    await options.lockRoot.remove(relativeSidecarLockPath(options.lockRoot, lockPath)).catch(() => undefined);
+  } else {
+    await fs.rm(lockPath, { force: true }).catch(() => undefined);
+  }
   return true;
 }
 
 export async function sidecarLockSnapshotStillPresent(
   lockPath: string,
   observed: SidecarLockSnapshot | null,
+  options: { lockRoot?: Root; parsePayload?: (raw: string) => unknown } = {},
 ): Promise<boolean> {
-  const current = await readSidecarLockSnapshot(lockPath);
+  const current = await readSidecarLockSnapshot(lockPath, options);
   return !!current && !!observed && sidecarLockSnapshotMatches(current, observed);
 }
 
@@ -157,11 +200,14 @@ export async function removeStaleSidecarLockIfAllowed(params: {
   normalizedTargetPath: string;
   snapshot: SidecarLockSnapshot;
   shouldRemoveStaleLock?: (snapshot: SidecarLockStaleSnapshot) => boolean | Promise<boolean>;
+  lockRoot?: Root;
+  parsePayload?: (raw: string) => unknown;
 }): Promise<"removed" | "changed" | "not-approved"> {
   if (!params.shouldRemoveStaleLock || params.snapshot.raw === undefined) {
     return "not-approved";
   }
-  if (!(await sidecarLockSnapshotStillPresent(params.lockPath, params.snapshot))) {
+  const ioOptions = { lockRoot: params.lockRoot, parsePayload: params.parsePayload };
+  if (!(await sidecarLockSnapshotStillPresent(params.lockPath, params.snapshot, ioOptions))) {
     return "changed";
   }
   if (
@@ -174,11 +220,15 @@ export async function removeStaleSidecarLockIfAllowed(params: {
   ) {
     return "not-approved";
   }
-  if (!(await sidecarLockSnapshotStillPresent(params.lockPath, params.snapshot))) {
+  if (!(await sidecarLockSnapshotStillPresent(params.lockPath, params.snapshot, ioOptions))) {
     return "changed";
   }
   try {
-    await fs.rm(params.lockPath);
+    if (params.lockRoot) {
+      await params.lockRoot.remove(relativeSidecarLockPath(params.lockRoot, params.lockPath));
+    } else {
+      await fs.rm(params.lockPath);
+    }
     return "removed";
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {

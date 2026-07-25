@@ -46,6 +46,7 @@ type FsSafeErrorCode =
   | "path-alias"
   | "path-mismatch"
   | "permission-unverified"
+  | "secret-exists"
   | "symlink"
   | "timeout"
   | "too-large"
@@ -73,6 +74,7 @@ type FsSafeErrorCode =
 | `path-alias` | A path alias check failed (e.g. canonical-real-path moved out of the root). | Symlink resolution lands outside the root. |
 | `path-mismatch` | Post-open identity check failed: the opened fd does not match the resolved path. | TOCTOU — something else swapped the path between resolve and open. |
 | `permission-unverified` | A secure file check could not verify required permissions. | Windows ACL inspection failed; POSIX ownership/mode was unavailable. |
+| `secret-exists` | `createSecretFileAtomic()` found an existing final path. | First-writer-wins secret creation lost a race or the credential was already initialized. |
 | `symlink` | Path component is a symlink, policy is `reject`. | Caller followed a symlink they shouldn't have, or `symlinks: "reject"` is set. |
 | `timeout` | An operation with a wall-clock budget overran. | Secure file read or timed operation exceeded `timeoutMs`. |
 | `too-large` | Read exceeded `maxBytes`. | Caller gave a too-permissive file or didn't size-cap correctly. |
