@@ -39,6 +39,32 @@ afterEach(async () => {
 });
 
 describe("exclusive file publication", () => {
+  it("closes the source handle when publication parent pinning fails", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const directory = await tempRoot("fs-safe-publish-parent-failure-");
+    const sourcePath = path.join(directory, "source");
+    const targetPath = path.join(directory, "missing", "target");
+    await fs.writeFile(sourcePath, "content");
+    const open = fs.open.bind(fs);
+    let opened = 0;
+    let closed = 0;
+    vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
+      const handle = await open(...args);
+      opened += 1;
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementationOnce(async () => {
+        closed += 1;
+        await close();
+      });
+      return handle;
+    });
+
+    await expect(
+      publishFileExclusive({ sourcePath, targetPath, strategy: "link-required" }),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect({ opened, closed }).toEqual({ opened: 1, closed: 1 });
+  });
+
   it("publishes by hardlink without clobbering an existing target", async () => {
     const directory = await tempRoot("fs-safe-publish-link-");
     const sourcePath = path.join(directory, "source");

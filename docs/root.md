@@ -58,6 +58,13 @@ fs.walk(rel, options)          // root-bounded AsyncIterable<{ relativePath, kin
 depth budgets, cancellation, and `symlinkPolicy: "skip" |
 "follow-within-root"`. Budget exhaustion yields a `"truncated"` marker by
 default or throws `FsSafeError("too-large")` with `limitBehavior: "throw"`.
+Use `entryFilter(entry)` to return `"include"`, `"skip"`, or
+`"skip-subtree"`. `"skip"` omits the current entry but still descends into a
+directory; `"skip-subtree"` omits a directory and all of its descendants.
+Directory reads remain fail-fast by default. With
+`onDirectoryError: "skip-and-report"`, the iterator instead yields
+`{ relativePath, kind: "directory-error", size: 0, error }` and continues with
+the remaining tree.
 See [Directory walking](walk.md) for the pure-Node guarantees and the contrast
 with the standalone best-effort walkers.
 

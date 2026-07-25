@@ -13,6 +13,8 @@ export type ArchiveExtractLimits = {
   maxEntryBytes?: number;
   /** Max bytes in one PAX, GNU long-name, or related TAR metadata entry. */
   maxMetaEntryBytes?: number;
+  /** Max path components in one extracted entry after stripComponents. */
+  maxEntryPathComponents?: number;
 };
 
 export const DEFAULT_MAX_ARCHIVE_BYTES_ZIP = 256 * 1024 * 1024;
@@ -20,6 +22,7 @@ export const DEFAULT_MAX_ENTRIES = 50_000;
 export const DEFAULT_MAX_EXTRACTED_BYTES = 512 * 1024 * 1024;
 export const DEFAULT_MAX_ENTRY_BYTES = 256 * 1024 * 1024;
 export const DEFAULT_MAX_META_ENTRY_BYTES = 1024 * 1024;
+export const DEFAULT_MAX_ENTRY_PATH_COMPONENTS = 256;
 
 export const ARCHIVE_LIMIT_ERROR_CODE = {
   ARCHIVE_SIZE_EXCEEDS_LIMIT: "archive-size-exceeds-limit",
@@ -28,6 +31,7 @@ export const ARCHIVE_LIMIT_ERROR_CODE = {
   EXTRACTED_SIZE_EXCEEDS_LIMIT: "archive-extracted-size-exceeds-limit",
   META_ENTRY_SIZE_EXCEEDS_LIMIT: "archive-meta-entry-size-exceeds-limit",
   MANIFEST_SIZE_EXCEEDS_LIMIT: "archive-manifest-size-exceeds-limit",
+  ENTRY_PATH_COMPONENTS_EXCEEDS_LIMIT: "archive-entry-path-components-exceeds-limit",
 } as const;
 
 export type ArchiveLimitErrorCode =
@@ -43,6 +47,8 @@ const ARCHIVE_LIMIT_ERROR_MESSAGE = {
     "archive metadata entry size exceeds limit",
   [ARCHIVE_LIMIT_ERROR_CODE.MANIFEST_SIZE_EXCEEDS_LIMIT]:
     "archive manifest size exceeds limit",
+  [ARCHIVE_LIMIT_ERROR_CODE.ENTRY_PATH_COMPONENTS_EXCEEDS_LIMIT]:
+    "archive entry path components exceed limit",
 } as const satisfies Record<ArchiveLimitErrorCode, string>;
 
 export class ArchiveLimitError extends Error {
@@ -76,7 +82,23 @@ export function resolveExtractLimits(
     maxEntryBytes: clampLimit(limits?.maxEntryBytes) ?? DEFAULT_MAX_ENTRY_BYTES,
     maxMetaEntryBytes:
       clampLimit(limits?.maxMetaEntryBytes) ?? DEFAULT_MAX_META_ENTRY_BYTES,
+    maxEntryPathComponents:
+      clampLimit(limits?.maxEntryPathComponents) ?? DEFAULT_MAX_ENTRY_PATH_COMPONENTS,
   };
+}
+
+export function assertArchiveEntryPathComponentsWithinLimit(
+  entryPath: string,
+  limits: ResolvedArchiveExtractLimits,
+): void {
+  const components = entryPath
+    .split(/[\\/]+/u)
+    .filter((component) => component.length > 0 && component !== ".").length;
+  if (components > limits.maxEntryPathComponents) {
+    throw new ArchiveLimitError(
+      ARCHIVE_LIMIT_ERROR_CODE.ENTRY_PATH_COMPONENTS_EXCEEDS_LIMIT,
+    );
+  }
 }
 
 export function assertArchiveEntryCountWithinLimit(

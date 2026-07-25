@@ -29,7 +29,12 @@ export {
   type WritableOpenResult,
 } from "./root-impl.js";
 export type {
+  RootWalkDataEntry,
+  RootWalkDataEntryKind,
+  RootWalkDirectoryErrorBehavior,
   RootWalkEntry,
+  RootWalkEntryFilter,
+  RootWalkEntryFilterResult,
   RootWalkEntryKind,
   RootWalkLimitBehavior,
   RootWalkOptions,

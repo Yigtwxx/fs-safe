@@ -34,6 +34,7 @@ await extractArchive({
     maxExtractedBytes: 512 * 1024 * 1024,
     maxEntryBytes: 256 * 1024 * 1024,
     maxMetaEntryBytes: 1024 * 1024,
+    maxEntryPathComponents: 256,
   },
 });
 ```
@@ -94,10 +95,11 @@ type ArchiveExtractLimits = {
   maxExtractedBytes?: number;   // refuse mid-stream if total extracted bytes > this
   maxEntryBytes?: number;       // refuse a single entry larger than this
   maxMetaEntryBytes?: number;   // refuse one PAX/GNU metadata body above this
+  maxEntryPathComponents?: number; // bound output path depth after stripComponents
 };
 ```
 
-Defaults exist for each (`DEFAULT_MAX_ARCHIVE_BYTES_ZIP`, `DEFAULT_MAX_ENTRIES`, `DEFAULT_MAX_EXTRACTED_BYTES`, `DEFAULT_MAX_ENTRY_BYTES`, `DEFAULT_MAX_META_ENTRY_BYTES`). The 1 MiB metadata default matches node-tar's `maxMetaEntrySize`; fs-safe passes the same resolved value to node-tar and the native TAR meter.
+Defaults exist for each (`DEFAULT_MAX_ARCHIVE_BYTES_ZIP`, `DEFAULT_MAX_ENTRIES`, `DEFAULT_MAX_EXTRACTED_BYTES`, `DEFAULT_MAX_ENTRY_BYTES`, `DEFAULT_MAX_META_ENTRY_BYTES`, `DEFAULT_MAX_ENTRY_PATH_COMPONENTS`). The path-component default is 256. It is evaluated after `stripComponents` and before TypeScript accepts an entry for either JavaScript or native extraction, so rejected entries cannot cause implicit parent-directory creation. The 1 MiB metadata default matches node-tar's `maxMetaEntrySize`; fs-safe passes the same resolved value to node-tar and the native TAR meter.
 
 A limit violation throws `ArchiveLimitError`. The error's code is one of:
 
@@ -107,6 +109,7 @@ ARCHIVE_LIMIT_ERROR_CODE.ENTRY_COUNT_EXCEEDS_LIMIT
 ARCHIVE_LIMIT_ERROR_CODE.EXTRACTED_SIZE_EXCEEDS_LIMIT
 ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT
 ARCHIVE_LIMIT_ERROR_CODE.META_ENTRY_SIZE_EXCEEDS_LIMIT
+ARCHIVE_LIMIT_ERROR_CODE.ENTRY_PATH_COMPONENTS_EXCEEDS_LIMIT
 ```
 
 Catch and branch on the code to surface a meaningful response to the caller.

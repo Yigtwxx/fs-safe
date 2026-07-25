@@ -9,6 +9,7 @@ import {
   ARCHIVE_LIMIT_ERROR_CODE,
   ArchiveLimitError,
   assertArchiveEntryCountWithinLimit,
+  assertArchiveEntryPathComponentsWithinLimit,
   createByteBudgetTracker,
   resolveExtractLimits,
   type ArchiveExtractLimits,
@@ -92,6 +93,7 @@ export async function extractNativeArchive(params: {
           const relPath = stripArchivePath(entry.path, strip);
           if (!relPath) continue;
           validateArchiveEntryPath(relPath);
+          assertArchiveEntryPathComponentsWithinLimit(relPath, limits);
           resolveArchiveOutputPath({ rootDir: stagingDir, relPath, originalPath: entry.path });
           const kind = policyKind(entry.kind);
           if (

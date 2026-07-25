@@ -249,6 +249,30 @@ describe.each(archiveBackends)("%s archive path", (backend) => {
     }
   });
 
+  it("rejects deep entry paths before creating implicit directories", async () => {
+    useBackend(backend);
+    const root = await tempRoot();
+    const archivePath = path.join(root, "deep-path.tar");
+    const destination = path.join(root, "destination");
+    await fs.writeFile(
+      archivePath,
+      tarFixture([{ path: "one/two/three/four/value.txt", body: "payload" }]),
+    );
+    await fs.mkdir(destination);
+
+    await expect(
+      extractArchive({
+        archivePath,
+        destDir: destination,
+        timeoutMs: 10_000,
+        limits: { maxEntryPathComponents: 4 },
+      }),
+    ).rejects.toMatchObject({
+      code: ARCHIVE_LIMIT_ERROR_CODE.ENTRY_PATH_COMPONENTS_EXCEEDS_LIMIT,
+    });
+    await expect(fs.readdir(destination)).resolves.toEqual([]);
+  });
+
   it("applies byte budgets after explicitly skipped entries", async () => {
     useBackend(backend);
     const root = await tempRoot();

@@ -324,9 +324,7 @@ export async function publishFileExclusive(params: {
     throw new FsSafeError("not-file", "publication source must be a regular file");
   }
   const source = await fs.open(sourcePath, sourceOpenFlags());
-  const parent = await pinDirectory(params.parentReceipt ?? parentPath, {
-    label: "publication parent",
-  });
+  let parent: Awaited<ReturnType<typeof pinDirectory>> | undefined;
   let sourceNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
   let targetNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
   const failure: PublishFailureState = {
@@ -335,6 +333,9 @@ export async function publishFileExclusive(params: {
     preserveTarget: false,
   };
   try {
+    parent = await pinDirectory(params.parentReceipt ?? parentPath, {
+      label: "publication parent",
+    });
     const sourceIdentity = await source.stat();
     if (
       !sameFileIdentity(sourcePathStat, sourceIdentity) ||
@@ -487,6 +488,6 @@ export async function publishFileExclusive(params: {
     await sourceNativeParent?.handle.close().catch(() => undefined);
     await targetNativeParent?.handle.close().catch(() => undefined);
     await source.close().catch(() => undefined);
-    await parent.close().catch(() => undefined);
+    await parent?.close().catch(() => undefined);
   }
 }

@@ -5,6 +5,7 @@ import {
 } from "./archive-entry.js";
 import {
   assertArchiveEntryCountWithinLimit,
+  assertArchiveEntryPathComponentsWithinLimit,
   createByteBudgetTracker,
   resolveExtractLimits,
   type ArchiveExtractLimits,
@@ -76,6 +77,7 @@ export function createTarEntryPreflightChecker(params: {
       return false;
     }
     validateArchiveEntryPath(relPath, { escapeLabel: params.escapeLabel });
+    assertArchiveEntryPathComponentsWithinLimit(relPath, limits);
     resolveArchiveOutputPath({
       rootDir: params.rootDir,
       relPath,

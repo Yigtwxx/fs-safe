@@ -17,6 +17,7 @@ import {
 } from "./archive-deadline.js";
 import {
   assertArchiveEntryCountWithinLimit,
+  assertArchiveEntryPathComponentsWithinLimit,
   createByteBudgetTracker,
   createExtractBudgetTransform,
   resolveExtractLimits,
@@ -78,6 +79,7 @@ export {
   DEFAULT_MAX_EXTRACTED_BYTES,
   DEFAULT_MAX_ENTRY_BYTES,
   DEFAULT_MAX_META_ENTRY_BYTES,
+  DEFAULT_MAX_ENTRY_PATH_COMPONENTS,
   type ArchiveExtractLimits,
   type ArchiveLimitErrorCode,
 } from "./archive-limits.js";
@@ -249,6 +251,7 @@ async function extractZip(params: {
           if (!output) {
             continue;
           }
+          assertArchiveEntryPathComponentsWithinLimit(output.relPath, limits);
 
           const isSymlink = isZipSymlinkEntry(entry);
           const entryKind = isSymlink ? "symlink" : entry.dir ? "directory" : "file";

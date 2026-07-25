@@ -422,7 +422,10 @@ Check `scan.truncated` before treating the result as complete, and `scan.failedD
 
 For caller-controlled paths, `Root.walk()` is the root-bounded async iterator.
 It supports entry/depth budgets, in-root symlink following, cancellation, and a
-truncation marker (or typed error) when a budget is reached.
+truncation marker (or typed error) when a budget is reached. Its `entryFilter`
+can return `"skip-subtree"` to prune a directory, and
+`onDirectoryError: "skip-and-report"` yields typed `"directory-error"` markers
+while preserving entries from readable subtrees.
 
 ## Archive extraction
 
@@ -444,6 +447,7 @@ await extractArchive({
     maxEntries: 50_000,
     maxExtractedBytes: 512 * 1024 * 1024,
     maxEntryBytes: 256 * 1024 * 1024,
+    maxEntryPathComponents: 64,
   },
 });
 ```
