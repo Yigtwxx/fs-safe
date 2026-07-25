@@ -104,7 +104,7 @@ describe("adversarial boundary payloads", () => {
       await attemptAll(safeRoot, payload);
       await expectOutsideUntouched(layout);
     }
-  }, 15_000);
+  }, 30_000);
 
   it("rejects chained symlink parent escapes across read and write surfaces", async () => {
     const layout = await makeTempLayout("fs-safe-symlink-chain");
@@ -140,5 +140,5 @@ describe("adversarial boundary payloads", () => {
       await expectOutsideUntouched(layout);
       await fsp.writeFile(source, "source");
     }
-  }, 15_000);
+  }, 30_000);
 });

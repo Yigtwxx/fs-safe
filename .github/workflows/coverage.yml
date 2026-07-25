@@ -37,6 +37,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build host binding
+        run: pnpm native:build
+
       - name: Coverage
         run: pnpm test:coverage
 
