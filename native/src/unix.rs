@@ -48,7 +48,9 @@ pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i3
             .map_err(|error| os_error(error, "duplicate root descriptor"));
     }
     let path = if rel_path.is_empty() { "." } else { rel_path };
-    let oflags = OFlags::from_bits_retain(flags as u32);
+    let mut oflags = OFlags::from_bits_retain(flags as u32);
+    let require_directory = oflags.contains(OFlags::DIRECTORY);
+    oflags.remove(OFlags::DIRECTORY);
     let mode = if oflags.intersects(OFlags::CREATE | OFlags::TMPFILE) {
         Mode::from_bits_retain(0o600)
     } else {
@@ -62,6 +64,13 @@ pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i3
         ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
     )
     .map_err(|error| os_error(error, "openat2 beneath root"))?;
+    if require_directory {
+        let stat = rustix::fs::fstat(fd.as_fd())
+            .map_err(|error| os_error(error, "fstat opened directory"))?;
+        if !FileType::from_raw_mode(stat.st_mode).is_dir() {
+            return Err(native_error("ENOTDIR", "opened path is not a directory"));
+        }
+    }
     Ok(fd.into_raw_fd())
 }
 
