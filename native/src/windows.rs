@@ -7,13 +7,14 @@ use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS,
-    ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+    ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GENERIC_READ, GetLastError, HANDLE,
+    INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
     FILE_ATTRIBUTE_TAG_INFO, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
     FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo, GetFileInformationByHandle,
-    GetFileInformationByHandleEx,
+    GetFileInformationByHandleEx, ReOpenFile,
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
@@ -290,7 +291,7 @@ fn nt_open_relative(
     let status = unsafe {
         NtCreateFile(
             &mut handle,
-            desired_access | SYNCHRONIZE_ACCESS,
+            desired_access | FILE_READ_ATTRIBUTES | SYNCHRONIZE_ACCESS,
             &mut attributes,
             &mut io,
             null(),
@@ -571,7 +572,27 @@ pub fn chmod_beneath(_root_fd: i32, _rel_path: &str, _mode: u32) -> NativeResult
     Ok(())
 }
 
-pub fn read_at(fd: i32, buffer: &mut [u8], offset: u64) -> NativeResult<usize> {
+pub struct IndependentReader(OwnedHandle);
+
+pub fn open_independent_reader(fd: i32) -> NativeResult<IndependentReader> {
+    let handle = unsafe {
+        ReOpenFile(
+            root_handle(fd)?,
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            0,
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(win_error(
+            unsafe { GetLastError() },
+            "reopen file for position-independent read",
+        ));
+    }
+    Ok(IndependentReader(OwnedHandle(handle)))
+}
+
+pub fn read_at(reader: &IndependentReader, buffer: &mut [u8], offset: u64) -> NativeResult<usize> {
     const STATUS_END_OF_FILE: i32 = 0xC000_0011_u32 as i32;
     let offset = i64::try_from(offset)
         .map_err(|_| native_error("EINVAL", "read offset exceeds Windows range"))?;
@@ -582,7 +603,7 @@ pub fn read_at(fd: i32, buffer: &mut [u8], offset: u64) -> NativeResult<usize> {
     // the synchronous handle keeps all stack arguments live until completion.
     let status = unsafe {
         NtReadFile(
-            root_handle(fd)?,
+            reader.0.0,
             null_mut(),
             null(),
             null(),

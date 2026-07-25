@@ -95,11 +95,13 @@ impl Task for HashTask {
     type JsValue = FileHash;
 
     fn compute(&mut self) -> Result<Self::Output> {
+        let reader = platform::open_independent_reader(self.fd)
+            .map_err(|error| Error::new(Status::GenericFailure, error.reason))?;
         let mut hasher = Sha256::new();
         let mut buffer = [0_u8; 64 * 1024];
         let mut bytes = 0_u64;
         loop {
-            let read = platform::read_at(self.fd, &mut buffer, bytes)
+            let read = platform::read_at(&reader, &mut buffer, bytes)
                 .map_err(|error| Error::new(Status::GenericFailure, error.reason))?;
             if read == 0 {
                 break;

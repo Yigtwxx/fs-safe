@@ -225,8 +225,14 @@ pub fn chmod_beneath(root_fd: i32, rel_path: &str, mode: u32) -> NativeResult<()
         .map_err(|error| os_error(error, "set archive directory mode"))
 }
 
-pub fn read_at(fd: i32, buffer: &mut [u8], offset: u64) -> NativeResult<usize> {
-    rustix::io::pread(borrowed(fd), buffer, offset)
+pub type IndependentReader = i32;
+
+pub fn open_independent_reader(fd: i32) -> NativeResult<IndependentReader> {
+    Ok(fd)
+}
+
+pub fn read_at(reader: &IndependentReader, buffer: &mut [u8], offset: u64) -> NativeResult<usize> {
+    rustix::io::pread(borrowed(*reader), buffer, offset)
         .map_err(|error| os_error(error, "read file at offset"))
 }
 
