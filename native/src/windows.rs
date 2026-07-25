@@ -10,8 +10,8 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
     FILE_ATTRIBUTE_TAG_INFO, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo, FileRenameInfoEx,
-    GetFileInformationByHandle, GetFileInformationByHandleEx, SetFileInformationByHandle,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo, GetFileInformationByHandle,
+    GetFileInformationByHandleEx,
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
@@ -43,6 +43,7 @@ const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
 const OBJ_DONT_REPARSE: u32 = 0x0000_1000;
 const FILE_RENAME_FLAG_POSIX_SEMANTICS: u32 = 0x0000_0002;
 const FILE_LINK_INFORMATION_CLASS: i32 = 11;
+const FILE_RENAME_INFORMATION_EX_CLASS: i32 = 65;
 
 #[repr(C)]
 struct UnicodeString {
@@ -399,22 +400,23 @@ fn set_rename_information(
             name_bytes,
         );
     }
-    // SAFETY: buffer contains the documented variable-length info structure.
-    let ok = unsafe {
-        SetFileInformationByHandle(
+    // SAFETY: buffer contains FILE_RENAME_INFORMATION_EX followed by the
+    // UTF-16 target name, and io remains valid for the synchronous call.
+    let mut io: IO_STATUS_BLOCK = unsafe { zeroed() };
+    let status = unsafe {
+        NtSetInformationFile(
             source,
-            FileRenameInfoEx,
+            &mut io,
             buffer.as_ptr().cast(),
             byte_len as u32,
+            FILE_RENAME_INFORMATION_EX_CLASS,
         )
     };
-    if ok == 0 {
-        // SAFETY: GetLastError has no memory safety preconditions.
-        let code = unsafe { GetLastError() };
+    if status < 0 {
         if nt_open_relative(target_root, target_path, FILE_READ_ATTRIBUTES, FILE_OPEN, 0).is_ok() {
             return Err(native_error("EEXIST", "rename destination already exists"));
         }
-        return Err(win_error(code, operation));
+        return Err(nt_error(status, operation));
     }
     Ok(())
 }
