@@ -96,6 +96,9 @@ jobs:
       - name: Build host binding
         run: pnpm native:build
 
+      - name: Build package
+        run: pnpm build
+
       - name: Test native mode auto
         run: node scripts/native-mode-smoke.mjs auto
 
@@ -124,6 +127,7 @@ jobs:
             pnpm install --frozen-lockfile
             cargo test --workspace --locked
             pnpm native:build
+            pnpm build
             node scripts/native-mode-smoke.mjs auto
             node scripts/native-mode-smoke.mjs require
             node scripts/native-mode-smoke.mjs off
