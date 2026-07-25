@@ -1,3 +1,4 @@
+use std::io::{Read, Write};
 #[cfg(target_os = "linux")]
 use std::os::fd::IntoRawFd;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
@@ -182,6 +183,44 @@ pub fn fstat_identity(fd: i32) -> NativeResult<FileIdentity> {
         is_directory: file_type.is_dir(),
         is_symbolic_link: file_type.is_symlink(),
     })
+}
+
+pub fn write_archive_file<R: Read>(
+    root_fd: i32,
+    rel_path: &str,
+    reader: &mut R,
+    expected_size: u64,
+    mode: u32,
+) -> NativeResult<()> {
+    let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC;
+    let fd = open_beneath(root_fd, rel_path, flags.bits() as i32)?;
+    // SAFETY: open_beneath returned a fresh descriptor owned by this call.
+    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+    let mut file = std::fs::File::from(owned);
+    let copied = std::io::copy(&mut reader.take(expected_size.saturating_add(1)), &mut file)
+        .map_err(|error| native_error("EIO", format!("write archive entry: {error}")))?;
+    if copied != expected_size {
+        return Err(native_error(
+            "EINVAL",
+            "archive entry size did not match its manifest",
+        ));
+    }
+    file.flush()
+        .map_err(|error| native_error("EIO", format!("flush archive entry: {error}")))?;
+    rustix::fs::fchmod(file.as_fd(), Mode::from_bits_retain(mode as _))
+        .map_err(|error| os_error(error, "set archive entry mode"))
+}
+
+pub fn chmod_beneath(root_fd: i32, rel_path: &str, mode: u32) -> NativeResult<()> {
+    let fd = open_beneath(
+        root_fd,
+        rel_path,
+        (OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW).bits() as i32,
+    )?;
+    // SAFETY: open_beneath returned a fresh descriptor owned by this call.
+    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+    rustix::fs::fchmod(owned.as_fd(), Mode::from_bits_retain(mode as _))
+        .map_err(|error| os_error(error, "set archive directory mode"))
 }
 
 #[cfg(target_os = "macos")]

@@ -3,6 +3,8 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
+mod archive;
+mod tar_meter;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
@@ -131,6 +133,11 @@ pub fn rename_no_replace(
 pub fn fstat_identity(env: Env, fd: i32) -> Result<FileIdentity> {
     into_napi(env, platform::fstat_identity(fd))
 }
+
+pub use archive::{
+    NativeArchiveEntry, NativeArchivePlanEntry, extract_archive_native, inspect_archive_native,
+    read_archive_entry_native,
+};
 
 #[cfg(unix)]
 use unix as platform;

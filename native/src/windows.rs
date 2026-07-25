@@ -1,6 +1,8 @@
 use std::ffi::c_void;
+use std::io::{Read, Write};
 use std::mem::{size_of, zeroed};
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::io::FromRawHandle;
 use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::{
@@ -524,6 +526,38 @@ pub fn fstat_identity(fd: i32) -> NativeResult<FileIdentity> {
         is_directory,
         is_symbolic_link: false,
     })
+}
+
+pub fn write_archive_file<R: Read>(
+    root_fd: i32,
+    rel_path: &str,
+    reader: &mut R,
+    expected_size: u64,
+    _mode: u32,
+) -> NativeResult<()> {
+    let handle = nt_open_relative(
+        root_handle(root_fd)?,
+        rel_path,
+        FILE_GENERIC_WRITE,
+        FILE_CREATE,
+        FILE_NON_DIRECTORY_FILE,
+    )?;
+    // SAFETY: into_raw transfers the uniquely owned HANDLE to File.
+    let mut file = unsafe { std::fs::File::from_raw_handle(handle.into_raw()) };
+    let copied = std::io::copy(&mut reader.take(expected_size.saturating_add(1)), &mut file)
+        .map_err(|error| native_error("EIO", format!("write archive entry: {error}")))?;
+    if copied != expected_size {
+        return Err(native_error(
+            "EINVAL",
+            "archive entry size did not match its manifest",
+        ));
+    }
+    file.flush()
+        .map_err(|error| native_error("EIO", format!("flush archive entry: {error}")))
+}
+
+pub fn chmod_beneath(_root_fd: i32, _rel_path: &str, _mode: u32) -> NativeResult<()> {
+    Ok(())
 }
 
 #[cfg(test)]

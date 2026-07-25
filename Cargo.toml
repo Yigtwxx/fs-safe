@@ -4,4 +4,7 @@ resolver = "2"
 
 [profile.release]
 lto = true
-strip = "symbols"
+# Cargo's Mach-O symbol stripping can corrupt the link-edit string table after
+# static compression libraries are linked. Platform package assembly may strip
+# with the target toolchain after the loadable artifact has been validated.
+strip = false

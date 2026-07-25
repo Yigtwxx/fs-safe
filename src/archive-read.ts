@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { Readable } from "node:stream";
 import { readFileHandleBounded } from "./bounded-read.js";
+import { ArchiveFormatError } from "./archive-errors.js";
 import {
   normalizeArchiveEntryPath,
   validateArchiveEntryPath,
@@ -9,12 +10,18 @@ import {
 import { resolveArchiveKind, type ArchiveKind } from "./archive-kind.js";
 import {
   DEFAULT_MAX_ARCHIVE_BYTES_ZIP,
+  DEFAULT_MAX_ENTRIES,
+  DEFAULT_MAX_META_ENTRY_BYTES,
   ArchiveLimitError,
   ARCHIVE_LIMIT_ERROR_CODE,
 } from "./archive-limits.js";
 import { readTarEntryInfo } from "./archive-tar.js";
+import { preflightTarMetadata } from "./archive-tar-meta.js";
+import { importOptionalTar } from "./archive-tar-runtime.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
+import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
+import { getNativeBinding } from "./native.js";
 import { tempFile } from "./temp-target.js";
 
 type ZipEntry = {
@@ -23,15 +30,6 @@ type ZipEntry = {
   unixPermissions?: number;
   nodeStream?: () => NodeJS.ReadableStream;
   async(type: "nodebuffer"): Promise<Buffer>;
-};
-
-type TarReadEntry = AsyncIterable<unknown> & { resume(): void };
-type TarModule = {
-  t(options: {
-    file: string;
-    strict: true;
-    onReadEntry(entry: TarReadEntry): void;
-  }): Promise<unknown>;
 };
 
 const ZIP_UNIX_FILE_TYPE_MASK = 0o170000;
@@ -149,10 +147,15 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number)
 
 async function readTarEntry(archivePath: string, entryPath: string, maxBytes: number): Promise<Buffer> {
   const tar = await importOptionalTar();
+  await preflightTarMetadata({
+    archivePath,
+    maxMetaEntryBytes: DEFAULT_MAX_META_ENTRY_BYTES,
+  });
   let matched: Promise<Buffer> | undefined;
   await tar.t({
     file: archivePath,
     strict: true,
+    maxMetaEntrySize: DEFAULT_MAX_META_ENTRY_BYTES,
     onReadEntry(entry) {
       const info = readTarEntryInfo(entry);
       validateArchiveEntryPath(info.path, { escapeLabel: "archive root" });
@@ -197,21 +200,65 @@ export async function readArchiveEntry(
   const requestedEntry = normalizedRequestedEntry(entryPath);
   const staged = await stageArchiveInput(archivePath);
   try {
+    const native = getNativeBinding();
+    if (native) {
+      try {
+        const signal = new AbortController().signal;
+        const manifest = await native.inspectArchiveNative(
+          staged.path,
+          kind,
+          DEFAULT_MAX_ENTRIES,
+          DEFAULT_MAX_META_ENTRY_BYTES,
+          DEFAULT_MAX_ARCHIVE_BYTES_ZIP,
+          signal,
+        );
+        let rawEntryPath: string | undefined;
+        for (const entry of manifest) {
+          validateArchiveEntryPath(entry.path, { escapeLabel: "archive root" });
+          const normalized = normalizeArchiveEntryPath(entry.path).replace(/^\.\//, "");
+          if (normalized === requestedEntry) {
+            if (entry.kind !== "file") {
+              throw new Error(`archive entry is not a file: ${entryPath}`);
+            }
+            rawEntryPath = entry.path;
+            break;
+          }
+        }
+        if (!rawEntryPath) throw new Error(`archive entry not found: ${entryPath}`);
+        return await native.readArchiveEntryNative(
+          staged.path,
+          kind,
+          rawEntryPath,
+          options.maxBytes,
+          DEFAULT_MAX_ENTRIES,
+          DEFAULT_MAX_META_ENTRY_BYTES,
+          signal,
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.includes(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT)
+        ) {
+          throw new ArchiveLimitError(
+            ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
+          );
+        }
+        if (error instanceof Error && error.message.includes("archive-header-invalid")) {
+          throw new ArchiveFormatError(error.message, { cause: error });
+        }
+        throw error;
+      }
+    }
+    if (kind === "tar-zstd" || kind === "tar-bzip2") {
+      throw new FsSafeError(
+        "helper-unavailable",
+        `${kind} archives require the optional native binding; install the matching platform package`,
+      );
+    }
     return kind === "zip"
       ? await readZipEntry(staged.buffer, requestedEntry, options.maxBytes)
       : await readTarEntry(staged.path, requestedEntry, options.maxBytes);
   } finally {
     await staged.cleanup();
-  }
-}
-
-async function importOptionalTar(): Promise<TarModule> {
-  try {
-    return await import("tar");
-  } catch (cause) {
-    throw new Error(
-      'Optional archive dependency "tar" is not installed. Install it to use TAR archive helpers from @openclaw/fs-safe/archive.',
-      { cause },
-    );
   }
 }

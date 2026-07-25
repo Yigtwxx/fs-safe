@@ -1,4 +1,21 @@
+export type TarParserEntry = {
+  meta?: boolean;
+  size: number;
+  type?: string;
+  resume(): void;
+};
+
+export type TarParser = NodeJS.WritableStream & {
+  abort(error: Error): void;
+  on(event: "ignoredEntry", listener: (entry: TarParserEntry) => void): TarParser;
+  on(event: "entry", listener: (entry: TarParserEntry) => void): TarParser;
+  on(event: "meta", listener: (metadata: string) => void): TarParser;
+  on(event: "error", listener: (error: Error) => void): TarParser;
+  on(event: "end", listener: () => void): TarParser;
+};
+
 export type TarModule = {
+  Parser: new (options: { strict: true; maxMetaEntrySize: number }) => TarParser;
   x(options: {
     file: string;
     cwd: string;
@@ -9,8 +26,15 @@ export type TarModule = {
     noChmod: true;
     preserveOwner: false;
     strict: true;
+    maxMetaEntrySize: number;
     filter?(entryPath: string, entry: unknown): boolean;
     onReadEntry(this: unknown, entry: unknown): void;
+  }): Promise<unknown>;
+  t(options: {
+    file: string;
+    strict: true;
+    maxMetaEntrySize: number;
+    onReadEntry(entry: AsyncIterable<unknown> & { resume(): void }): void;
   }): Promise<unknown>;
 };
 

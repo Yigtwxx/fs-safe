@@ -15,17 +15,14 @@ import {
   withExtractionDeadline,
   type ExtractionDeadline,
 } from "./archive-deadline.js";
-import { writeFileHandleFully } from "./archive-file-io.js";
 import {
-  ARCHIVE_LIMIT_ERROR_CODE,
-  ArchiveLimitError,
   assertArchiveEntryCountWithinLimit,
   createByteBudgetTracker,
   createExtractBudgetTransform,
   resolveExtractLimits,
   type ArchiveExtractLimits,
 } from "./archive-limits.js";
-import { resolveArchiveKind, type ArchiveKind } from "./archive-kind.js";
+import { resolveArchiveKind } from "./archive-kind.js";
 import {
   mergeExtractedTreeIntoDestination,
   prepareArchiveDestinationDir,
@@ -44,15 +41,18 @@ import {
   zipEntryMode,
   type ZipEntry,
 } from "./archive-zip-entry.js";
-import { sameFileIdentity } from "./file-identity.js";
+import { FsSafeError } from "./errors.js";
+import { extractNativeArchive } from "./archive-native.js";
+import { stageArchiveFileForExtraction } from "./archive-input.js";
+import { getNativeBinding } from "./native.js";
 import {
   resolveArchiveEntryMode,
   shouldExtractArchiveEntry,
 } from "./archive-policy.js";
 import { importOptionalTar } from "./archive-tar-runtime.js";
+import { preflightTarMetadata } from "./archive-tar-meta.js";
 import type { ExtractArchiveOptions } from "./archive-options.js";
 import { writeSiblingTempFile } from "./sibling-temp.js";
-import { tempFile } from "./temp-target.js";
 export type { ArchiveLogger, ExtractArchiveOptions } from "./archive-options.js";
 export type {
   ArchiveEntryFilter,
@@ -76,9 +76,11 @@ export {
   DEFAULT_MAX_ENTRIES,
   DEFAULT_MAX_EXTRACTED_BYTES,
   DEFAULT_MAX_ENTRY_BYTES,
+  DEFAULT_MAX_META_ENTRY_BYTES,
   type ArchiveExtractLimits,
   type ArchiveLimitErrorCode,
 } from "./archive-limits.js";
+export { ArchiveFormatError, type ArchiveFormatErrorCode } from "./archive-errors.js";
 export { ArchiveSecurityError, type ArchiveSecurityErrorCode } from "./archive-staging.js";
 export {
   createArchiveSymlinkTraversalError,
@@ -100,85 +102,6 @@ const OPEN_WRITE_CREATE_FLAGS =
   fsConstants.O_EXCL |
   (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
 type ZipExtractBudget = ReturnType<typeof createByteBudgetTracker>;
-type StagedArchiveFile = { path: string; cleanup: () => Promise<void> };
-async function cleanupStagedArchiveFile(staged: StagedArchiveFile | undefined): Promise<void> {
-  if (staged) {
-    await staged.cleanup().catch(() => undefined);
-  }
-}
-async function closeFileHandle(handle: FileHandle | undefined): Promise<void> {
-  if (handle) {
-    await handle.close().catch(() => undefined);
-  }
-}
-async function stageArchiveFileForExtraction(params: {
-  archivePath: string;
-  limits: ReturnType<typeof resolveExtractLimits>;
-  deadline: ExtractionDeadline;
-}): Promise<StagedArchiveFile> {
-  params.deadline.check();
-  const sourcePath = path.resolve(params.archivePath);
-  const initialStat = await fs.lstat(sourcePath);
-  if (initialStat.isSymbolicLink() || !initialStat.isFile()) {
-    throw new Error(`archive is not a regular file: ${params.archivePath}`);
-  }
-  if (initialStat.size > params.limits.maxArchiveBytes) {
-    throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT);
-  }
-  const noFollow =
-    process.platform !== "win32" && "O_NOFOLLOW" in fsConstants ? fsConstants.O_NOFOLLOW : 0;
-  const handle = await fs.open(sourcePath, fsConstants.O_RDONLY | noFollow);
-  let staged: StagedArchiveFile | undefined;
-  let output: FileHandle | undefined;
-  try {
-    staged = await tempFile({
-      prefix: "fs-safe-archive-input",
-      fileName: path.basename(sourcePath),
-    });
-    const openedStat = await handle.stat();
-    const pathStat = await fs.lstat(sourcePath);
-    if (
-      !openedStat.isFile() ||
-      pathStat.isSymbolicLink() ||
-      !pathStat.isFile() ||
-      !sameFileIdentity(initialStat, openedStat) ||
-      !sameFileIdentity(pathStat, openedStat)
-    ) {
-      throw new Error("archive changed during validation");
-    }
-
-    output = await fs.open(staged.path, OPEN_WRITE_CREATE_FLAGS, 0o600);
-    const buffer = Buffer.allocUnsafe(64 * 1024);
-    let written = 0;
-    while (true) {
-      params.deadline.check();
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-      if (bytesRead === 0) {
-        break;
-      }
-      written += bytesRead;
-      if (written > params.limits.maxArchiveBytes) {
-        throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT);
-      }
-      await writeFileHandleFully({
-        handle: output,
-        buffer,
-        bytes: bytesRead,
-        deadline: params.deadline,
-      });
-      params.deadline.check();
-    }
-    await output.close();
-    output = undefined;
-    return staged;
-  } catch (err) {
-    await closeFileHandle(output);
-    await cleanupStagedArchiveFile(staged);
-    throw err;
-  } finally {
-    await closeFileHandle(handle);
-  }
-}
 
 async function readZipEntryStream(entry: ZipEntry): Promise<NodeJS.ReadableStream> {
   if (typeof entry.nodeStream === "function") {
@@ -386,6 +309,30 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
   }
 
   const label = kind === "zip" ? "extract zip" : "extract tar";
+  const native = getNativeBinding();
+  if (native) {
+    await withExtractionDeadline(params.timeoutMs, label, async (deadline) =>
+      extractNativeArchive({
+        binding: native,
+        archivePath: params.archivePath,
+        destDir: params.destDir,
+        kind,
+        stripComponents: params.stripComponents,
+        limits: params.limits,
+        deadline,
+        entryModes: params.entryModes,
+        entryFilter: params.entryFilter,
+        onFiltered: params.onFiltered,
+      }),
+    );
+    return;
+  }
+  if (kind === "tar-zstd" || kind === "tar-bzip2") {
+    throw new FsSafeError(
+      "helper-unavailable",
+      `${kind} archives require the optional native binding; install the matching platform package`,
+    );
+  }
   if (kind === "tar") {
     await withExtractionDeadline(params.timeoutMs, label, async (deadline) => {
       const tar = await importOptionalTar();
@@ -396,6 +343,12 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
         deadline,
       });
       try {
+        await preflightTarMetadata({
+          archivePath: stagedArchive.path,
+          maxMetaEntryBytes: limits.maxMetaEntryBytes,
+          signal: deadline.signal,
+        });
+        deadline.check();
         const destinationRealDir = await prepareArchiveDestinationDir(params.destDir);
         await withStagedArchiveDestination({
           destinationRealDir,
@@ -409,6 +362,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               onFiltered: params.onFiltered,
             });
             const acceptedEntries: Array<{ path: string; mode: number }> = [];
+            let filterError: unknown;
             // A canonical cwd is not enough here: tar can still follow
             // pre-existing child symlinks in the live destination tree.
             // Extract into a private staging dir first, then merge through
@@ -423,29 +377,39 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               noChmod: true,
               preserveOwner: false,
               strict: true,
+              maxMetaEntrySize: limits.maxMetaEntryBytes,
               filter(_entryPath, entry) {
-                const info = readTarEntryInfo(entry);
-                const accepted = checkTarEntrySafety(info);
-                if (accepted) {
-                  const relPath = stripArchivePath(
-                    info.path,
-                    Math.max(0, Math.floor(params.stripComponents ?? 0)),
-                  );
-                  if (relPath) {
-                    acceptedEntries.push({
-                      path: relPath,
-                      mode: resolveArchiveEntryMode({
-                        kind:
-                          info.type === "Directory" || info.type === "GNUDumpDir"
-                            ? "directory"
-                            : "file",
-                        archivedMode: info.mode,
-                        policy: params.entryModes,
-                      }),
-                    });
+                if (filterError) return false;
+                try {
+                  const info = readTarEntryInfo(entry);
+                  const accepted = checkTarEntrySafety(info);
+                  if (accepted) {
+                    const relPath = stripArchivePath(
+                      info.path,
+                      Math.max(0, Math.floor(params.stripComponents ?? 0)),
+                    );
+                    if (relPath) {
+                      acceptedEntries.push({
+                        path: relPath,
+                        mode: resolveArchiveEntryMode({
+                          kind:
+                            info.type === "Directory" || info.type === "GNUDumpDir"
+                              ? "directory"
+                              : "file",
+                          archivedMode: info.mode,
+                          policy: params.entryModes,
+                        }),
+                      });
+                    }
                   }
+                  return accepted;
+                } catch (error) {
+                  // tar's filter callback is invoked from its parser event
+                  // loop; throwing here escapes the extraction promise. Keep
+                  // parsing the private stage, then reject normally below.
+                  filterError = error;
+                  return false;
                 }
-                return accepted;
               },
               onReadEntry(entry) {
                 try {
@@ -459,6 +423,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
                 }
               },
             });
+            if (filterError) throw filterError;
             for (const accepted of acceptedEntries) {
               const outputPath = resolveArchiveOutputPath({
                 rootDir: stagingDir,

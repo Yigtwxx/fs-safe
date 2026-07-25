@@ -5,6 +5,8 @@
 ### Highlights
 
 - Add policy-driven archive entry filtering and mode handling, bounded single-entry archive reads, root-bounded async walking, synchronous sidecar locks, async secret reads, create-only secret writes, and exclusive file publication.
+- Add native fd-relative ZIP and TAR extraction/read support with gzip, zstd, and bzip2 streaming; TypeScript evaluates the shared entry policy before Rust creates any output, and zstd/bzip2 report a typed native-required error when no binding is available.
+- Bound PAX, GNU long-name/link, and sparse metadata with one `maxMetaEntryBytes` policy shared by node-tar and the native fixed-header metering reader, including typed failures for oversized or malformed metadata.
 - Ship the optional `@openclaw/fs-safe-native` helper and seven platform packages from this repository for fd-relative opens, guarded directory creation and hardlinks, atomic no-replace rename, and file identity checks.
 
 ### Security and Correctness

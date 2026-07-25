@@ -45,7 +45,7 @@ The same idea has landed in other languages. Go [added `os.Root` and `OpenInRoot
 | `path.resolve().startsWith()` | string check only | – | – | – | – |
 | [`write-file-atomic`](https://www.npmjs.com/package/write-file-atomic) | – | ✓ | – | – | – |
 | Go [`os.Root`](https://go.dev/blog/osroot) / Rust [`cap-std`](https://github.com/bytecodealliance/cap-std) | ✓ | platform | ✓ | ✓ | – |
-| **`@openclaw/fs-safe`** | **✓** | **✓** | **✓** | **✓ (POSIX fd-relative)** | **✓ (ZIP/TAR)** |
+| **`@openclaw/fs-safe`** | **✓** | **✓** | **✓** | **✓ (POSIX fd-relative)** | **✓ (ZIP/TAR; native zstd/bzip2)** |
 
 ## Not a sandbox
 
@@ -208,7 +208,7 @@ that OpenClaw needs to compose higher-level APIs are grouped under
 | `@openclaw/fs-safe/file-lock` | async/sync sidecar locks, root-bounded sidecars, ownership verification, and stale policy |
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection plus remediation formatting helpers |
 | `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
-| `@openclaw/fs-safe/archive` | policy-driven ZIP/TAR extraction, bounded single-entry reads, kind resolution, and limit helpers |
+| `@openclaw/fs-safe/archive` | policy-driven ZIP/TAR extraction (native gzip/zstd/bzip2), bounded single-entry reads, kind resolution, and limit helpers |
 | `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, root-file open, bounded descriptor reads, install paths, filename sanitizing, temp-file targets, sibling-temp writes, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode` |
 | `@openclaw/fs-safe/types` | shared types: `DirEntry`, `PathStat`, … |
