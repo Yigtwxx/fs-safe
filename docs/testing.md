@@ -14,7 +14,7 @@ The double-underscore prefix is a deliberate "hands off" signal: production code
 ## When to reach for hooks
 
 - Reproduce a TOCTOU race deterministically: simulate a symlink swap between resolve and open, or between write and rename.
-- Force Node-only behavior without uninstalling Python from your runners.
+- Force guarded JavaScript behavior without removing native packages from your runners.
 - Inject latency to test cancellation/timeout paths.
 
 If you don't need to inject a race, you don't need hooks — most tests should drive the library through normal calls and assert on observable behavior.
@@ -81,20 +81,20 @@ it("rejects a swap between resolve and open", async () => {
 
 The `code` may be `symlink` (caught at open by `O_NOFOLLOW`) or `path-mismatch` (caught by the post-open identity check) depending on platform — both are correct refusals.
 
-## Example: force Node-only fallback behavior
+## Example: force guarded JavaScript fallback behavior
 
 ```ts
-import { configureFsSafePython } from "@openclaw/fs-safe/config";
+import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 
 beforeEach(() => {
-  configureFsSafePython({ mode: "off" });
+  configureFsSafeNative({ mode: "off" });
 });
 
 afterEach(() => {
-  configureFsSafePython({ mode: "auto", pythonPath: undefined });
+  configureFsSafeNative({ mode: "auto" });
 });
 
-it("runs without the Python helper", async () => {
+it("runs without the native helper", async () => {
   const fs = await root(dir);
   await fs.write("file.txt", "ok");
   await expect(fs.readText("file.txt")).resolves.toBe("ok");

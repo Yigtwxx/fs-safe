@@ -107,6 +107,12 @@ classifier. The fallback copies from the pinned source into a `wx` target,
 fsyncs it, and fences source and target identity and content before reporting
 success. `parentReceipt`, when supplied, must name the target's direct parent.
 
+`"rename-noreplace"` requires the native helper and atomically moves the
+source to the target without replacement. A collision is reported as
+`EEXIST`, both files remain unchanged, and a successful call returns
+`method: "rename-noreplace"` after synchronizing the source and target parent
+directories. Unlike the link/copy strategies, success consumes `sourcePath`.
+
 ## Scope
 
 These primitives establish path identity and filesystem synchronization. One

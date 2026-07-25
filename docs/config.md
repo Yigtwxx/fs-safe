@@ -5,47 +5,46 @@ description: "Process-global defaults for optional fs-safe helpers."
 
 # `@openclaw/fs-safe/config`
 
-Process-global configuration knobs for optional fs-safe helpers. The Python helper policy is described in the [Python helper policy](python-helper.md); this page is the API reference.
+Process-global configuration knobs for optional fs-safe helpers. The native helper policy is described in the [native helper policy](native-helper.md); this page is the API reference.
 
 ```ts
 import {
-  configureFsSafePython,
+  configureFsSafeNative,
   configureFsSafeLocks,
-  getFsSafePythonConfig,
+  getFsSafeNativeConfig,
   getFsSafeLockConfig,
   type FsSafeLockConfig,
-  type FsSafePythonConfig,
-  type FsSafePythonMode,
+  type FsSafeNativeConfig,
+  type FsSafeNativeMode,
 } from "@openclaw/fs-safe/config";
 ```
 
 These functions are also re-exported from the main entry point. Prefer the subpath when you only need helper configuration and want the smallest import surface.
 
-## `configureFsSafePython(config)`
+## `configureFsSafeNative(config)`
 
 ```ts
-function configureFsSafePython(config: Partial<FsSafePythonConfig>): void;
+function configureFsSafeNative(config: Partial<FsSafeNativeConfig>): void;
 
-type FsSafePythonConfig = {
-  mode: FsSafePythonMode;
-  pythonPath?: string;
+type FsSafeNativeConfig = {
+  mode: FsSafeNativeMode;
 };
 
-type FsSafePythonMode = "auto" | "off" | "require";
+type FsSafeNativeMode = "auto" | "off" | "require";
 ```
 
-Set the process-global policy. Calls merge into the existing override config, so passing `{ pythonPath: "/usr/bin/python3" }` keeps any previously set `mode`. Configure once at startup, before the first `root()` call — switching modes mid-process is supported but the helper may already be running.
+Set the process-global loading policy. Configure once at startup, before the first filesystem operation. The binding is loaded lazily and the result is cached.
 
 | Mode | Behavior |
 |---|---|
-| `auto` | Default. Use the helper when it starts; fall back to Node-only behavior if Python is missing or fails to start. |
-| `off` | Never spawn the helper. Read/write/move use Node fallbacks plus pre/post identity checks. |
-| `require` | Fail closed if the helper cannot start. Operations that need the helper raise `FsSafeError("helper-unavailable")`. |
+| `auto` | Default. Prefer the platform binding and use guarded JavaScript when it is unavailable. |
+| `off` | Do not load the binding; use guarded JavaScript deterministically. |
+| `require` | Operations that need the binding raise `FsSafeError("helper-unavailable")` when it cannot load. |
 
-## `getFsSafePythonConfig()`
+## `getFsSafeNativeConfig()`
 
 ```ts
-function getFsSafePythonConfig(): FsSafePythonConfig;
+function getFsSafeNativeConfig(): FsSafeNativeConfig;
 ```
 
 Return the effective configuration: programmatic overrides win, then env vars, then the package default (`auto`).
@@ -80,15 +79,14 @@ Return the current sidecar lock defaults.
 The same policy can be set without code:
 
 ```bash
-FS_SAFE_PYTHON_MODE=auto      # auto | off | require | true | false | on | off | 1 | 0 | never | required
-FS_SAFE_PYTHON=/usr/bin/python3
+FS_SAFE_NATIVE_MODE=auto      # auto | off | require | true | false | on | 1 | 0 | never | required
 ```
 
-OpenClaw compatibility aliases are accepted: `OPENCLAW_FS_SAFE_PYTHON_MODE`, `OPENCLAW_FS_SAFE_PYTHON`, `OPENCLAW_PINNED_PYTHON`, and `OPENCLAW_PINNED_WRITE_PYTHON`. Programmatic overrides via `configureFsSafePython` always win.
+`OPENCLAW_FS_SAFE_NATIVE_MODE` is accepted as an alias. Programmatic overrides via `configureFsSafeNative` always win.
 
 ## Related pages
 
-- [Python helper policy](python-helper.md) — when to pick `auto`, `off`, or `require`, and what each mode protects.
+- [Native helper policy](native-helper.md) — when to pick `auto`, `off`, or `require`, and what each mode protects.
 - [File lock](sidecar-lock.md) — the per-resource lock API that consumes lock defaults.
 - [Root API](root.md) — the API whose POSIX hardening the helper backs.
 - [Errors](errors.md) — `helper-unavailable` and `helper-failed`.

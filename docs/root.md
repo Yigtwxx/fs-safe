@@ -108,25 +108,22 @@ fs.resolve(rel)                  // absolute path inside the root, after canonic
 
 These do not pin a later operation. They are safe to expose to UIs and decision points; for the actual read or write, use the verb methods so the operation pins identity at the point of use.
 
-## Python helper mode
+## Native helper mode
 
-On POSIX, mutation and inspection methods that need fd-relative directory
-operations go through one persistent Python helper process. This avoids a
-spawn-per-call cost while still using `openat`/`renameat`/`unlinkat`-style
-operations that Node's `fs` API does not expose ergonomically.
+Create-only writes prefer the optional native helper for fd-relative opens and
+atomic no-replace rename. Operations without native wiring retain their guarded
+JavaScript implementations.
 
 ```ts
-import { configureFsSafePython } from "@openclaw/fs-safe/config";
+import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 
-configureFsSafePython({ mode: "off" });     // Node-only fallback path
-configureFsSafePython({ mode: "require" }); // fail if fd-relative helper unavailable
+configureFsSafeNative({ mode: "off" });     // guarded JavaScript path
+configureFsSafeNative({ mode: "require" }); // fail if the binding is unavailable
 ```
 
-`auto` is the default. Configure the mode before creating roots. Without the
-helper, root methods still run, but same-UID races that swap parent directories
-between validation and mutation are harder to close completely. Use `require`
-when that downgrade should be treated as a deployment failure. See
-[Python helper policy](python-helper.md) for deployment guidance.
+`auto` is the default. Configure the mode before creating roots. See the
+[native helper policy](native-helper.md) for supported platforms, the native
+surface, and the precise fallback boundary.
 
 ### Properties
 

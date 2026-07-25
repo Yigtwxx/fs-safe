@@ -13,10 +13,7 @@ import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { runPinnedWriteNative } from "./native-pinned-write.js";
 import { getNativeBinding } from "./native.js";
-import {
-  runPinnedPythonOperation,
-  validatePinnedOperationPayload,
-} from "./pinned-python.js";
+import { validatePinnedOperationPayload } from "./pinned-operation.js";
 import { withSidecarLock } from "./sidecar-lock.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -152,40 +149,6 @@ export async function runPinnedWriteWithRenamePolicy(
       onRenameIdentityMismatch: "verify-content",
     }),
   );
-}
-
-export async function runPinnedCopyHelper(params: {
-  rootPath: string;
-  relativeParentPath: string;
-  basename: string;
-  mkdir: boolean;
-  mode: number;
-  overwrite?: boolean;
-  maxBytes?: number;
-  sourcePath: string;
-  sourceIdentity: FileIdentityStat;
-  rootIdentity?: FileIdentityStat;
-}): Promise<FileIdentityStat> {
-  assertSafeBasename(params.basename);
-  validatePinnedOperationPayload({
-    relativeParentPath: params.relativeParentPath,
-  });
-  return await runPinnedPythonOperation<FileIdentityStat>({
-    operation: "copy",
-    rootPath: params.rootPath,
-    payload: {
-      basename: params.basename,
-      maxBytes: params.maxBytes ?? -1,
-      mkdir: params.mkdir,
-      mode: params.mode || 0o600,
-      overwrite: params.overwrite !== false,
-      relativeParentPath: params.relativeParentPath,
-      ...(params.rootIdentity ? { rootDev: params.rootIdentity.dev, rootIno: params.rootIdentity.ino } : {}),
-      sourceDev: params.sourceIdentity.dev,
-      sourceIno: params.sourceIdentity.ino,
-      sourcePath: params.sourcePath,
-    },
-  });
 }
 
 async function runPinnedWriteFallback(params: {

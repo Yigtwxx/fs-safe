@@ -3,8 +3,7 @@ import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { configureFsSafePython, root as openRoot } from "../src/index.js";
-import { __resetPinnedPythonWorkerForTest } from "../src/pinned-python.js";
+import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
 const tempDirs: string[] = [];
@@ -33,8 +32,7 @@ function compatibilityLockPath(rootDir: string, relativePath = "file.txt"): stri
 
 afterEach(async () => {
   __setFsSafeTestHooksForTest();
-  __resetPinnedPythonWorkerForTest();
-  configureFsSafePython({ mode: "auto", pythonPath: undefined });
+  configureFsSafeNative({ mode: "auto" });
   for (const dir of tempDirs.splice(0)) {
     await fsp.rm(dir, { recursive: true, force: true });
   }
@@ -44,7 +42,7 @@ describe("rename identity policy", () => {
   it.runIf(process.platform !== "win32")(
     "keeps strict post-rename identity verification as the default",
     async () => {
-      configureFsSafePython({ mode: "off" });
+      configureFsSafeNative({ mode: "off" });
       const rootDir = await makeTempRoot("fs-safe-rename-id-strict-");
       replaceTargetAfterFallbackRename();
 
@@ -58,7 +56,7 @@ describe("rename identity policy", () => {
   it.runIf(process.platform !== "win32")(
     "accepts matching content under the explicit compatibility lock",
     async () => {
-      configureFsSafePython({ mode: "off" });
+      configureFsSafeNative({ mode: "off" });
       const rootDir = await makeTempRoot("fs-safe-rename-id-lock-");
       const targetPath = path.join(rootDir, "file.txt");
       replaceTargetAfterFallbackRename();
@@ -75,7 +73,7 @@ describe("rename identity policy", () => {
   it.runIf(process.platform !== "win32")(
     "rejects replacement content despite the compatibility lock",
     async () => {
-      configureFsSafePython({ mode: "off" });
+      configureFsSafeNative({ mode: "off" });
       const rootDir = await makeTempRoot("fs-safe-rename-id-attack-");
       replaceTargetAfterFallbackRename("attacker-content");
 
@@ -89,7 +87,7 @@ describe("rename identity policy", () => {
   it.runIf(process.platform !== "win32")(
     "supports a per-call compatibility override",
     async () => {
-      configureFsSafePython({ mode: "off" });
+      configureFsSafeNative({ mode: "off" });
       const rootDir = await makeTempRoot("fs-safe-rename-id-per-call-");
       replaceTargetAfterFallbackRename();
 
@@ -103,10 +101,10 @@ describe("rename identity policy", () => {
   );
 
   it.runIf(process.platform !== "win32")(
-    "deliberately routes compatibility writes around required Python mode",
+    "deliberately routes compatibility writes around required native mode",
     async () => {
-      configureFsSafePython({ mode: "require" });
-      const rootDir = await makeTempRoot("fs-safe-rename-id-python-");
+      configureFsSafeNative({ mode: "require" });
+      const rootDir = await makeTempRoot("fs-safe-rename-id-native-");
       replaceTargetAfterFallbackRename();
 
       const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });
@@ -118,7 +116,7 @@ describe("rename identity policy", () => {
   it.runIf(process.platform !== "win32")(
     "preserves already-exists errors for create",
     async () => {
-      configureFsSafePython({ mode: "off" });
+      configureFsSafeNative({ mode: "off" });
       const rootDir = await makeTempRoot("fs-safe-rename-id-create-");
       await fsp.writeFile(path.join(rootDir, "file.txt"), "existing");
 
@@ -132,7 +130,7 @@ describe("rename identity policy", () => {
   it.runIf(process.platform !== "win32")(
     "does not create a missing parent when mkdir is disabled",
     async () => {
-      configureFsSafePython({ mode: "off" });
+      configureFsSafeNative({ mode: "off" });
       const rootDir = await makeTempRoot("fs-safe-rename-id-no-mkdir-");
       const parentPath = path.join(rootDir, "missing");
 
@@ -163,7 +161,7 @@ describe("rename identity policy", () => {
   it.runIf(process.platform !== "win32")(
     "works on a normal POSIX filesystem and releases the lock",
     async () => {
-      configureFsSafePython({ mode: "off" });
+      configureFsSafeNative({ mode: "off" });
       const rootDir = await makeTempRoot("fs-safe-rename-id-posix-");
 
       const fs = await openRoot(rootDir, { renameIdentity: "verify-content-with-lock" });

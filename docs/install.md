@@ -64,7 +64,7 @@ Use the main entry for the common surface, or the focused subpaths when you want
 |---|---|
 | `@openclaw/fs-safe` | Small common surface: `root`, root types, and errors. |
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types. |
-| `@openclaw/fs-safe/config` | Process-global Python helper configuration. |
+| `@openclaw/fs-safe/config` | Process-global native helper and lock defaults. |
 | `@openclaw/fs-safe/path` | `isPathInside`, `safeRealpathSync`, `isWithinDir`, error helpers. |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants. |
 | `@openclaw/fs-safe/store` | `fileStore()`, `fileStoreSync()`, and `jsonStore<T>()`. |
@@ -85,40 +85,34 @@ Use the main entry for the common surface, or the focused subpaths when you want
 
 `@openclaw/fs-safe` lists `jszip` and `tar` as optional dependencies for [archive extraction](archive.md). They are loaded lazily and only required when ZIP/TAR helpers run. Installs that omit optional dependencies can still import and use every non-archive subpath; archive calls fail with a clear missing-optional-dependency message.
 
-There are no peer dependencies and no native build step.
+There are no peer dependencies. Native helpers are optional prebuilt packages, so consumers do not run a native build during installation.
 
-## Python helper policy
+## Native helper policy
 
-On POSIX, `root()` uses one persistent Python helper process for the
-fd-relative operations Node does not expose cleanly. The default is `auto`: use
-the helper when it starts, fall back to Node-only behavior when it is disabled
-or unavailable.
+The optional native package provides fd-relative open/link/mkdir primitives,
+atomic no-replace rename, and file identity checks. The default is `auto`: use
+the platform binding when it loads, otherwise keep the guarded JavaScript path.
 
 ```ts
-import { configureFsSafePython } from "@openclaw/fs-safe/config";
+import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 
-configureFsSafePython({ mode: "auto" });    // default
-configureFsSafePython({ mode: "off" });     // never spawn Python
-configureFsSafePython({ mode: "require" }); // fail closed if unavailable
+configureFsSafeNative({ mode: "auto" });    // default
+configureFsSafeNative({ mode: "off" });     // guarded JavaScript only
+configureFsSafeNative({ mode: "require" }); // fail closed if unavailable
 ```
 
 Environment variables are read at runtime:
 
 ```bash
-FS_SAFE_PYTHON_MODE=off      # auto | off | require
-FS_SAFE_PYTHON=/usr/bin/python3
+FS_SAFE_NATIVE_MODE=off      # auto | off | require
 ```
 
-OpenClaw compatibility aliases are also accepted:
-`OPENCLAW_FS_SAFE_PYTHON_MODE`, `OPENCLAW_FS_SAFE_PYTHON`,
-`OPENCLAW_PINNED_PYTHON`, and `OPENCLAW_PINNED_WRITE_PYTHON`.
+`OPENCLAW_FS_SAFE_NATIVE_MODE` is also accepted.
 
-Disabling Python keeps the public API working, but downgrades POSIX mutation
-hardening from fd-relative syscalls to Node path operations guarded by lexical
-and canonical checks plus identity verification. Use `require` for
-security-sensitive deployments where that downgrade should be a startup/runtime
-failure instead of a fallback. The full tradeoff is documented in
-[Python helper policy](python-helper.md).
+Disabling native loading keeps the public API working through Node path
+operations guarded by lexical and canonical checks plus identity verification.
+Use `require` when native-backed operations must fail instead of falling back.
+The exact boundary is documented in [native helper policy](native-helper.md).
 
 ## Verify the install
 

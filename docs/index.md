@@ -38,7 +38,7 @@ await fs.remove("notes/archive/today.txt");
 ## Pick your path
 
 - **First time?** [Install](install.md), then walk through the [Quickstart](quickstart.md). Five minutes from `pnpm add` to a working root.
-- **Designing a workspace feature.** Read the [Security model](security-model.md) before you trust the boundary, the [Python helper policy](python-helper.md) before you pick deployment defaults, and the [Errors](errors.md) reference so you know what to catch.
+- **Designing a workspace feature.** Read the [Security model](security-model.md) before you trust the boundary, the [native helper policy](native-helper.md) before you pick deployment defaults, and the [Errors](errors.md) reference so you know what to catch.
 - **Replacing ad-hoc atomic writes.** Jump to [Atomic writes](atomic.md) or, for keyed JSON state, [JSON files](json.md).
 - **Extracting an upload.** Start at [Archive extraction](archive.md) — handles ZIP and TAR with traversal, link, count, and byte limits.
 - **Running an agent in a sandbox.** [Private temp workspaces](temp.md) plus [secret files](secret-file.md) cover the common scratch-and-credentials shape.
@@ -49,8 +49,8 @@ await fs.remove("notes/archive/today.txt");
 | Surface | Use it for |
 |---|---|
 | [`root()`](root.md) | One boundary for read/write/move/remove inside a trusted directory. |
-| [`@openclaw/fs-safe/config`](config.md) | Process-global Python helper and lock-option defaults. |
-| [Python helper policy](python-helper.md) | Choose `auto`, `off`, or `require` for POSIX fd-relative hardening. |
+| [`@openclaw/fs-safe/config`](config.md) | Process-global native helper and lock-option defaults. |
+| [Native helper policy](native-helper.md) | Choose `auto`, `off`, or `require` for optional native primitives. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
 | [Directory durability](durability.md) | Pinned directory identities, explicit sync outcomes, and durable nested-directory creation. |
 | [`writeExternalFileWithinRoot`](output.md) | Stage external-library file output in private temp storage, then finalize under a root. |

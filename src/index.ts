@@ -43,12 +43,6 @@ export {
   type FsSafeNativeMode,
 } from "./native-config.js";
 export {
-  configureFsSafePython,
-  getFsSafePythonConfig,
-  type FsSafePythonConfig,
-  type FsSafePythonMode,
-} from "./pinned-python-config.js";
-export {
   writeExternalFileWithinRoot,
   type ExternalFileWriteOptions,
   type ExternalFileWriteResult,

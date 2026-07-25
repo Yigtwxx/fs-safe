@@ -13,10 +13,8 @@ import {
   writeJsonDurableQueueEntry,
 } from "../src/json-durable-queue.js";
 import { resolveSafeRelativePath } from "../src/path.js";
-import { configureFsSafeNative } from "../src/native-config.js";
-import { __resetPinnedPythonWorkerForTest } from "../src/pinned-python.js";
 import { summarizeWindowsAcl } from "../src/permissions.js";
-import { configureFsSafePython, root as openRoot } from "../src/index.js";
+import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import { resolveExistingPathsWithinRoot, resolvePathWithinRoot } from "../src/root-paths.js";
 import { readSecureFile } from "../src/secure-file.js";
 import { withTimeout } from "../src/timing.js";
@@ -31,8 +29,6 @@ async function tempRoot(prefix: string): Promise<string> {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  __resetPinnedPythonWorkerForTest();
-  configureFsSafePython({ mode: "auto", pythonPath: undefined });
   configureFsSafeNative({ mode: "auto" });
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
@@ -377,7 +373,7 @@ describe("clawpatch regression coverage", () => {
   });
 
   it.runIf(process.platform !== "win32")("uses atomic no-clobber writes for root create", async () => {
-    configureFsSafePython({ mode: "require" });
+    configureFsSafeNative({ mode: "require" });
     const rootDir = await tempRoot("fs-safe-root-create-noclobber-");
     const scoped = await openRoot(rootDir);
     await scoped.create("created.txt", "first");
@@ -389,7 +385,7 @@ describe("clawpatch regression coverage", () => {
   });
 
   it.runIf(process.platform !== "win32")("keeps already-exists for no-clobber creates in read-only parents", async () => {
-    configureFsSafePython({ mode: "require" });
+    configureFsSafeNative({ mode: "require" });
     const rootDir = await tempRoot("fs-safe-root-create-existing-readonly-");
     const parent = path.join(rootDir, "readonly");
     await fs.mkdir(parent);
@@ -407,7 +403,7 @@ describe("clawpatch regression coverage", () => {
   });
 
   it.runIf(process.platform !== "win32")("rolls back no-clobber move links when source unlink fails", async () => {
-    configureFsSafePython({ mode: "require" });
+    configureFsSafeNative({ mode: "require" });
     const rootDir = await tempRoot("fs-safe-root-move-link-rollback-");
     const srcDir = path.join(rootDir, "src");
     const dstDir = path.join(rootDir, "dst");
@@ -430,7 +426,7 @@ describe("clawpatch regression coverage", () => {
 
   it.runIf(process.platform !== "win32")("rejects no-clobber directory moves instead of racing rename", async () => {
     for (const mode of ["require", "off"] as const) {
-      configureFsSafePython({ mode });
+      configureFsSafeNative({ mode });
       const rootDir = await tempRoot(`fs-safe-root-move-dir-noclobber-${mode}-`);
       await fs.mkdir(path.join(rootDir, "from"));
       const scoped = await openRoot(rootDir);

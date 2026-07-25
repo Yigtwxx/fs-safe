@@ -59,27 +59,24 @@ pnpm add @openclaw/fs-safe
 
 Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. Archive helpers use optional `jszip` and `tar` dependencies for ZIP/TAR support; installs that omit optional dependencies can still use every non-archive subpath.
 
-On POSIX, `root()` uses one process-global persistent Python helper for the
-fd-relative operations Node does not expose ergonomically (`renameat`,
-`unlinkat`, recursive `mkdirat`-style walks, and parent-fd writes). Configure it
-before first use when you need a strict environment policy:
+The optional native package supplies fd-relative and atomic no-replace
+primitives that Node does not expose directly. Configure its lazy loader before
+first use when you need a strict environment policy:
 
 ```ts
-import { configureFsSafePython } from "@openclaw/fs-safe";
+import { configureFsSafeNative } from "@openclaw/fs-safe";
 
-configureFsSafePython({ mode: "auto" });    // default: use helper, fall back if unavailable
-configureFsSafePython({ mode: "off" });     // never spawn Python; use best-effort Node fallbacks
-configureFsSafePython({ mode: "require" }); // fail closed if helper cannot start
+configureFsSafeNative({ mode: "auto" });    // default: native when available
+configureFsSafeNative({ mode: "off" });     // guarded JavaScript only
+configureFsSafeNative({ mode: "require" }); // fail closed if the binding is unavailable
 ```
 
-Equivalent env vars: `FS_SAFE_PYTHON_MODE=auto|off|require` and
-`FS_SAFE_PYTHON=/path/to/python3`. Without Python, `fs-safe` keeps lexical and
-canonical root checks, no-follow opens, atomic temp+rename writes, and
-post-write identity verification. What you lose is the strongest POSIX
-fd-relative protection against a same-process-user racer swapping parent
-directories between validation and mutation. Windows already uses the Node
-fallback path. See the [Python helper policy](docs/python-helper.md) for
-deployment guidance.
+Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. The seven platform
+packages are prebuilt; consumers do not need Rust. Without a matching package,
+`auto` retains lexical and canonical root checks, no-follow opens, guarded
+temp+rename writes, and post-write identity verification. See the [native
+helper policy](docs/native-helper.md) for the exact boundary and deployment
+tradeoff.
 
 ## Quick start
 
@@ -182,7 +179,7 @@ that OpenClaw needs to compose higher-level APIs are grouped under
 | Subpath | Contents |
 |---|---|
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types |
-| `@openclaw/fs-safe/config` | process-global Python helper configuration |
+| `@openclaw/fs-safe/config` | process-global native helper and lock defaults |
 | `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants |
 | `@openclaw/fs-safe/output` | `writeExternalFileWithinRoot` for external libraries that need a temp output path |
@@ -484,13 +481,13 @@ Current `FsSafeErrorCode` values are `already-exists`, `denied-path`, `device-pa
 
 - root-bounded APIs resolve paths against a configured root and reject canonical escapes
 - reads reject known unsafe device paths, open with `O_NOFOLLOW` where available, then verify fd identity matches the path identity before returning the buffer or handle
-- writes use pinned parent-directory helpers and atomic replacement on POSIX, with verified post-write identity
-- `remove`, `mkdir`, `move`, `stat`, `list`, and parent-fd writes use one persistent fd-relative Python helper on POSIX, with Node fallbacks when the helper is disabled or unavailable
+- create-only writes, sidecar acquisition, and exclusive publication prefer fd-relative native primitives, with verified guarded JavaScript fallbacks
+- `remove`, `mkdir`, `move`, `stat`, and `list` retain guarded JavaScript implementations with pre/post identity checks
 - archive extraction stages into a private directory and merges through the same boundary checks used by direct writes
 
 ## Limitations
 
-- Windows uses the safest Node-level behavior available; some fd-relative POSIX hardening is unavailable there.
+- Windows native opens are handle-relative and reject reparse points; operations without native wiring use the guarded Node implementation.
 - Hardlink rejection depends on platform metadata. Treat it as defense-in-depth, not authorization.
 - `fs-safe` does not validate file contents or archive payload semantics beyond filesystem safety constraints. Schemas, signatures, and authorization belong in the layer above.
 

@@ -3,7 +3,7 @@ import { chmod, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { configureFsSafePython, FsSafeError, root as openRoot } from "../src/index.js";
+import { configureFsSafeNative, FsSafeError, root as openRoot } from "../src/index.js";
 import { openLocalFileSafely, readLocalFileSafely } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { expectedFsSafeCode } from "./helpers/security.js";
@@ -19,7 +19,7 @@ async function tempRoot(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
-  configureFsSafePython({ mode: "auto", pythonPath: undefined });
+  configureFsSafeNative({ mode: "auto" });
   __setFsSafeTestHooksForTest(undefined);
   const { rm } = await import("node:fs/promises");
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
@@ -65,10 +65,10 @@ describe("@openclaw/fs-safe", () => {
     });
   });
 
-  it.skipIf(skipOnWindows)("can disable the Python helper while writes use best-effort fallbacks", async () => {
-    configureFsSafePython({ mode: "off" });
-    const rootPath = await tempRoot("fs-safe-python-off-");
-    const sourceRoot = await tempRoot("fs-safe-python-off-source-");
+  it.skipIf(skipOnWindows)("can disable the native helper while writes use guarded fallbacks", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const rootPath = await tempRoot("fs-safe-native-off-");
+    const sourceRoot = await tempRoot("fs-safe-native-off-source-");
     const sourcePath = path.join(sourceRoot, "source.txt");
     const root = await openRoot(rootPath);
     await writeFile(sourcePath, "copied");
@@ -355,38 +355,26 @@ describe("@openclaw/fs-safe", () => {
     await expect(readdir(rootPath)).resolves.toEqual([]);
   });
 
-  it.runIf(process.platform !== "win32")("rejects pinned copy when the source path is swapped after identity capture", async () => {
-    const { runPinnedCopyHelper } = await import("../src/pinned-write.js");
+  it.runIf(process.platform !== "win32")("rejects a copy when the source path is swapped after open", async () => {
     const rootPath = await tempRoot("fs-safe-copy-source-swap-root-");
     const sourceRoot = await tempRoot("fs-safe-copy-source-swap-source-");
     const sourcePath = path.join(sourceRoot, "source.txt");
     const replacementPath = path.join(sourceRoot, "replacement.txt");
     await writeFile(sourcePath, "original");
     await writeFile(replacementPath, "replacement");
-    const sourceIdentity = await stat(sourcePath);
-    await rm(sourcePath);
-    await rename(replacementPath, sourcePath);
-
-    configureFsSafePython({ mode: "require" });
-    try {
-      await runPinnedCopyHelper({
-        rootPath,
-        relativeParentPath: "",
-        basename: "copied.txt",
-        mkdir: true,
-        mode: 0o600,
-        overwrite: true,
-        maxBytes: 1024,
-        sourcePath,
-        sourceIdentity: { dev: sourceIdentity.dev, ino: sourceIdentity.ino },
-      });
-      throw new Error("expected pinned copy source swap to fail");
-    } catch (error) {
-      if (error instanceof FsSafeError && error.code === "helper-unavailable") {
-        return;
-      }
-      expect(error).toMatchObject({ code: "path-mismatch" });
-    }
+    let swapped = false;
+    __setFsSafeTestHooksForTest({
+      afterOpen: async (openedPath) => {
+        if (!swapped && openedPath === sourcePath) {
+          swapped = true;
+          await rm(sourcePath);
+          await rename(replacementPath, sourcePath);
+        }
+      },
+    });
+    const scoped = await openRoot(rootPath);
+    await expect(scoped.copyIn("copied.txt", sourcePath, { maxBytes: 1024 })).rejects
+      .toMatchObject({ code: "path-mismatch" });
     await expect(stat(path.join(rootPath, "copied.txt"))).rejects.toMatchObject({
       code: "ENOENT",
     });

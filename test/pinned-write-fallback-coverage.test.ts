@@ -44,11 +44,11 @@ afterEach(async () => {
 
 describe("pinned write fallback coverage", () => {
   it.runIf(process.platform !== "win32")(
-    "writes buffers, creates only when missing, streams, and enforces limits when Python is off",
+    "writes buffers, creates only when missing, streams, and enforces limits when native mode is off",
     async () => {
-      const { configureFsSafePython } = await import("../src/pinned-python-config.js");
+      const { configureFsSafeNative } = await import("../src/native-config.js");
       const { runPinnedWriteHelper } = await import("../src/pinned-write.js");
-      configureFsSafePython({ mode: "off" });
+      configureFsSafeNative({ mode: "off" });
       const root = await tempRoot("fs-safe-pinned-write-fallback-");
 
       const created = await runPinnedWriteHelper({
@@ -128,10 +128,10 @@ describe("pinned write fallback coverage", () => {
     },
   );
 
-  it.runIf(process.platform !== "win32")("falls back on POSIX when the helper is unavailable in auto mode", async () => {
-    const { configureFsSafePython } = await import("../src/pinned-python-config.js");
+  it.runIf(process.platform !== "win32")("uses the guarded fallback when native mode is off", async () => {
+    const { configureFsSafeNative } = await import("../src/native-config.js");
     const { runPinnedWriteHelper } = await import("../src/pinned-write.js");
-    configureFsSafePython({ mode: "auto", pythonPath: "/missing/fs-safe-python" });
+    configureFsSafeNative({ mode: "off" });
     const root = await tempRoot("fs-safe-pinned-write-fallback-");
 
     await expect(
