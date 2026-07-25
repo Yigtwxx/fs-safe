@@ -1,5 +1,7 @@
 dist/
 node_modules
+target/
+native/*.node
 coverage/
 *.tsbuildinfo
 .clawpatch/

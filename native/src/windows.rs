@@ -1,0 +1,501 @@
+use std::ffi::c_void;
+use std::mem::{size_of, zeroed};
+use std::os::windows::ffi::OsStrExt;
+use std::ptr::{null, null_mut};
+
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS,
+    ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+};
+use windows_sys::Win32::Storage::FileSystem::{
+    BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_ATTRIBUTE_TAG_INFO, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo, FileRenameInfoEx,
+    GetFileInformationByHandle, GetFileInformationByHandleEx, SetFileInformationByHandle,
+};
+use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
+
+use crate::{FileIdentity, NativeResult, native_error};
+
+const O_WRONLY: i32 = 0x0001;
+const O_RDWR: i32 = 0x0002;
+const O_APPEND: i32 = 0x0008;
+const O_CREAT: i32 = 0x0100;
+const O_TRUNC: i32 = 0x0200;
+const O_EXCL: i32 = 0x0400;
+const O_BINARY: i32 = 0x8000;
+
+const DELETE_ACCESS: u32 = 0x0001_0000;
+const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
+const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+const FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;
+const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
+const FILE_ADD_SUBDIRECTORY: u32 = 0x0000_0004;
+const FILE_OPEN: u32 = 1;
+const FILE_CREATE: u32 = 2;
+const FILE_OPEN_IF: u32 = 3;
+const FILE_OVERWRITE: u32 = 4;
+const FILE_OVERWRITE_IF: u32 = 5;
+const FILE_DIRECTORY_FILE: u32 = 0x0000_0001;
+const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x0000_0020;
+const FILE_NON_DIRECTORY_FILE: u32 = 0x0000_0040;
+const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
+const OBJ_DONT_REPARSE: u32 = 0x0000_1000;
+const FILE_RENAME_FLAG_POSIX_SEMANTICS: u32 = 0x0000_0002;
+const FILE_LINK_INFORMATION_CLASS: i32 = 11;
+
+#[repr(C)]
+struct UnicodeString {
+    length: u16,
+    maximum_length: u16,
+    buffer: *mut u16,
+}
+
+#[repr(C)]
+struct ObjectAttributes {
+    length: u32,
+    root_directory: HANDLE,
+    object_name: *mut UnicodeString,
+    attributes: u32,
+    security_descriptor: *mut c_void,
+    security_quality_of_service: *mut c_void,
+}
+
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    fn NtCreateFile(
+        file_handle: *mut HANDLE,
+        desired_access: u32,
+        object_attributes: *mut ObjectAttributes,
+        io_status_block: *mut IO_STATUS_BLOCK,
+        allocation_size: *const i64,
+        file_attributes: u32,
+        share_access: u32,
+        create_disposition: u32,
+        create_options: u32,
+        ea_buffer: *const c_void,
+        ea_length: u32,
+    ) -> i32;
+    fn NtSetInformationFile(
+        file_handle: HANDLE,
+        io_status_block: *mut IO_STATUS_BLOCK,
+        file_information: *const c_void,
+        length: u32,
+        file_information_class: i32,
+    ) -> i32;
+    fn RtlNtStatusToDosError(status: i32) -> u32;
+}
+
+#[link(name = "ucrt")]
+unsafe extern "C" {
+    fn _get_osfhandle(fd: i32) -> isize;
+    fn _open_osfhandle(handle: isize, flags: i32) -> i32;
+}
+
+struct OwnedHandle(HANDLE);
+
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() && self.0 != INVALID_HANDLE_VALUE {
+            // SAFETY: this wrapper uniquely owns the handle.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+}
+
+impl OwnedHandle {
+    fn into_raw(mut self) -> HANDLE {
+        let handle = self.0;
+        self.0 = null_mut();
+        handle
+    }
+}
+
+fn root_handle(fd: i32) -> NativeResult<HANDLE> {
+    // SAFETY: the CRT call only inspects its integer argument.
+    let handle = unsafe { _get_osfhandle(fd) };
+    if handle == -1 {
+        return Err(native_error("EBADF", "invalid root file descriptor"));
+    }
+    Ok(handle as HANDLE)
+}
+
+fn wide_relative(path: &str) -> NativeResult<Vec<u16>> {
+    let normalized = path.replace('/', "\\");
+    let wide: Vec<u16> = std::ffi::OsStr::new(&normalized).encode_wide().collect();
+    if wide.len() > (u16::MAX as usize / 2) {
+        return Err(native_error("ENAMETOOLONG", "relative path is too long"));
+    }
+    Ok(wide)
+}
+
+fn win_error(code: u32, operation: &str) -> napi::Error<String> {
+    let typed = match code {
+        ERROR_FILE_EXISTS | ERROR_ALREADY_EXISTS => "EEXIST",
+        ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => "ENOENT",
+        ERROR_ACCESS_DENIED => "EACCES",
+        _ => "EIO",
+    };
+    native_error(
+        typed,
+        format!("{operation} failed with Windows error {code}"),
+    )
+}
+
+fn nt_error(status: i32, operation: &str) -> napi::Error<String> {
+    // SAFETY: converting an NTSTATUS does not dereference application memory.
+    win_error(unsafe { RtlNtStatusToDosError(status) }, operation)
+}
+
+fn assert_not_reparse(handle: HANDLE) -> NativeResult<()> {
+    // SAFETY: info is a valid output buffer for the supplied class.
+    let mut info: FILE_ATTRIBUTE_TAG_INFO = unsafe { zeroed() };
+    let ok = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileAttributeTagInfo,
+            (&mut info as *mut FILE_ATTRIBUTE_TAG_INFO).cast(),
+            size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+        )
+    };
+    if ok == 0 {
+        // SAFETY: GetLastError has no memory safety preconditions.
+        return Err(win_error(unsafe { GetLastError() }, "inspect opened path"));
+    }
+    if info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(native_error(
+            "ELOOP",
+            "reparse points are not allowed beneath root",
+        ));
+    }
+    Ok(())
+}
+
+fn nt_open_relative(
+    root: HANDLE,
+    path: &str,
+    desired_access: u32,
+    disposition: u32,
+    options: u32,
+) -> NativeResult<OwnedHandle> {
+    let mut name = wide_relative(path)?;
+    let mut unicode = UnicodeString {
+        length: (name.len() * 2) as u16,
+        maximum_length: (name.len() * 2) as u16,
+        buffer: name.as_mut_ptr(),
+    };
+    let mut attributes = ObjectAttributes {
+        length: size_of::<ObjectAttributes>() as u32,
+        root_directory: root,
+        object_name: &mut unicode,
+        attributes: OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE,
+        security_descriptor: null_mut(),
+        security_quality_of_service: null_mut(),
+    };
+    // SAFETY: all pointers reference initialized, call-scoped storage.
+    let mut io: IO_STATUS_BLOCK = unsafe { zeroed() };
+    let mut handle: HANDLE = null_mut();
+    let status = unsafe {
+        NtCreateFile(
+            &mut handle,
+            desired_access | SYNCHRONIZE_ACCESS,
+            &mut attributes,
+            &mut io,
+            null(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            disposition,
+            options | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT,
+            null(),
+            0,
+        )
+    };
+    if status < 0 {
+        return Err(nt_error(status, "open path relative to root handle"));
+    }
+    let owned = OwnedHandle(handle);
+    assert_not_reparse(owned.0)?;
+    Ok(owned)
+}
+
+fn access_from_flags(flags: i32) -> u32 {
+    let mut access = FILE_READ_ATTRIBUTES;
+    match flags & 3 {
+        O_WRONLY => access |= FILE_GENERIC_WRITE,
+        O_RDWR => access |= FILE_GENERIC_READ | FILE_GENERIC_WRITE,
+        _ => access |= FILE_GENERIC_READ,
+    }
+    access
+}
+
+fn disposition_from_flags(flags: i32) -> u32 {
+    match (
+        flags & O_CREAT != 0,
+        flags & O_EXCL != 0,
+        flags & O_TRUNC != 0,
+    ) {
+        (true, true, _) => FILE_CREATE,
+        (true, false, true) => FILE_OVERWRITE_IF,
+        (true, false, false) => FILE_OPEN_IF,
+        (false, _, true) => FILE_OVERWRITE,
+        _ => FILE_OPEN,
+    }
+}
+
+pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i32> {
+    let handle = nt_open_relative(
+        root_handle(root_fd)?,
+        if rel_path.is_empty() { "." } else { rel_path },
+        access_from_flags(flags),
+        disposition_from_flags(flags),
+        FILE_NON_DIRECTORY_FILE,
+    )?;
+    // SAFETY: ownership transfers from OwnedHandle to the CRT fd on success.
+    let fd = unsafe {
+        _open_osfhandle(
+            handle.into_raw() as isize,
+            flags | O_BINARY | (flags & O_APPEND),
+        )
+    };
+    if fd < 0 {
+        return Err(native_error(
+            "EIO",
+            "convert Windows handle to file descriptor",
+        ));
+    }
+    Ok(fd)
+}
+
+pub fn mkdir_beneath(root_fd: i32, rel_path: &str, _mode: u32) -> NativeResult<()> {
+    if rel_path.is_empty() || rel_path == "." {
+        return Ok(());
+    }
+    let mut owned_parent: Option<OwnedHandle> = None;
+    for segment in rel_path
+        .split(['/', '\\'])
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+    {
+        let parent = owned_parent
+            .as_ref()
+            .map_or(root_handle(root_fd)?, |handle| handle.0);
+        owned_parent = Some(nt_open_relative(
+            parent,
+            segment,
+            FILE_LIST_DIRECTORY | FILE_ADD_SUBDIRECTORY | FILE_READ_ATTRIBUTES,
+            FILE_OPEN_IF,
+            FILE_DIRECTORY_FILE,
+        )?);
+    }
+    Ok(())
+}
+
+#[repr(C)]
+struct FileNameInfoHeader {
+    flags: u32,
+    root_directory: HANDLE,
+    file_name_length: u32,
+}
+
+#[repr(C)]
+struct FileLinkInfoHeader {
+    replace_if_exists: u8,
+    root_directory: HANDLE,
+    file_name_length: u32,
+}
+
+fn aligned_name_buffer<T>(header: T, name: &[u16]) -> Vec<usize> {
+    let byte_len = size_of::<T>() + std::mem::size_of_val(name);
+    let word_len = byte_len.div_ceil(size_of::<usize>());
+    let mut storage = vec![0_usize; word_len];
+    // SAFETY: Vec<usize> provides sufficient alignment for either header and
+    // owns enough initialized storage for the header plus UTF-16 path bytes.
+    unsafe {
+        storage.as_mut_ptr().cast::<T>().write(header);
+        std::ptr::copy_nonoverlapping(
+            name.as_ptr().cast::<u8>(),
+            storage.as_mut_ptr().cast::<u8>().add(size_of::<T>()),
+            std::mem::size_of_val(name),
+        );
+    }
+    storage
+}
+
+fn set_rename_information(
+    source: HANDLE,
+    target_root: HANDLE,
+    target_path: &str,
+    operation: &str,
+) -> NativeResult<()> {
+    let name = wide_relative(target_path)?;
+    let byte_len = size_of::<FileNameInfoHeader>() + std::mem::size_of_val(name.as_slice());
+    let buffer = aligned_name_buffer(
+        FileNameInfoHeader {
+            flags: FILE_RENAME_FLAG_POSIX_SEMANTICS,
+            root_directory: target_root,
+            file_name_length: std::mem::size_of_val(name.as_slice()) as u32,
+        },
+        &name,
+    );
+    // SAFETY: buffer contains the documented variable-length info structure.
+    let ok = unsafe {
+        SetFileInformationByHandle(
+            source,
+            FileRenameInfoEx,
+            buffer.as_ptr().cast(),
+            byte_len as u32,
+        )
+    };
+    if ok == 0 {
+        // SAFETY: GetLastError has no memory safety preconditions.
+        return Err(win_error(unsafe { GetLastError() }, operation));
+    }
+    Ok(())
+}
+
+fn set_link_information(
+    source: HANDLE,
+    target_root: HANDLE,
+    target_path: &str,
+) -> NativeResult<()> {
+    let name = wide_relative(target_path)?;
+    let byte_len = size_of::<FileLinkInfoHeader>() + std::mem::size_of_val(name.as_slice());
+    let buffer = aligned_name_buffer(
+        FileLinkInfoHeader {
+            replace_if_exists: 0,
+            root_directory: target_root,
+            file_name_length: std::mem::size_of_val(name.as_slice()) as u32,
+        },
+        &name,
+    );
+    // SAFETY: buffer contains FILE_LINK_INFORMATION followed by the UTF-16
+    // name, and io remains valid for the synchronous call.
+    let mut io: IO_STATUS_BLOCK = unsafe { zeroed() };
+    let status = unsafe {
+        NtSetInformationFile(
+            source,
+            &mut io,
+            buffer.as_ptr().cast(),
+            byte_len as u32,
+            FILE_LINK_INFORMATION_CLASS,
+        )
+    };
+    if status < 0 {
+        return Err(nt_error(status, "create hard link without replacement"));
+    }
+    Ok(())
+}
+
+fn open_source_for_metadata(
+    root_fd: i32,
+    path: &str,
+    extra_access: u32,
+) -> NativeResult<OwnedHandle> {
+    nt_open_relative(
+        root_handle(root_fd)?,
+        path,
+        FILE_READ_ATTRIBUTES | extra_access,
+        FILE_OPEN,
+        FILE_NON_DIRECTORY_FILE,
+    )
+}
+
+pub fn link_beneath(
+    source_root_fd: i32,
+    source_rel_path: &str,
+    target_root_fd: i32,
+    target_rel_path: &str,
+) -> NativeResult<()> {
+    let source = open_source_for_metadata(source_root_fd, source_rel_path, FILE_WRITE_ATTRIBUTES)?;
+    set_link_information(source.0, root_handle(target_root_fd)?, target_rel_path)
+}
+
+pub fn rename_no_replace(
+    source_root_fd: i32,
+    source_rel_path: &str,
+    target_root_fd: i32,
+    target_rel_path: &str,
+) -> NativeResult<()> {
+    let source = open_source_for_metadata(source_root_fd, source_rel_path, DELETE_ACCESS)?;
+    set_rename_information(
+        source.0,
+        root_handle(target_root_fd)?,
+        target_rel_path,
+        "rename without replacement",
+    )
+}
+
+pub fn fstat_identity(fd: i32) -> NativeResult<FileIdentity> {
+    let handle = root_handle(fd)?;
+    assert_not_reparse(handle)?;
+    // SAFETY: info is a valid output buffer for this API.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
+    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
+        // SAFETY: GetLastError has no memory safety preconditions.
+        return Err(win_error(
+            unsafe { GetLastError() },
+            "inspect file identity",
+        ));
+    }
+    let is_directory = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+    let size = ((info.nFileSizeHigh as u64) << 32) | info.nFileSizeLow as u64;
+    let ino = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
+    Ok(FileIdentity {
+        dev: info.dwVolumeSerialNumber as f64,
+        ino: ino as f64,
+        mode: if is_directory { 0o040000 } else { 0o100000 },
+        nlink: info.nNumberOfLinks as f64,
+        size: size as f64,
+        is_file: !is_directory,
+        is_directory,
+        is_symbolic_link: false,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::{self, OpenOptions};
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    #[test]
+    fn rejects_reparse_points_and_preserves_existing_rename_target() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("fs-safe-native-win-{}-{nonce}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("source"), b"source").unwrap();
+        fs::write(root.join("target"), b"target").unwrap();
+        let root_handle = OpenOptions::new()
+            .read(true)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&root)
+            .unwrap();
+        // Windows Rust file handles are not CRT descriptors, so exercise the
+        // handle-relative primitive directly in this platform unit test.
+        let source = nt_open_relative(
+            root_handle.as_raw_handle() as HANDLE,
+            "source",
+            FILE_READ_ATTRIBUTES | DELETE_ACCESS,
+            FILE_OPEN,
+            FILE_NON_DIRECTORY_FILE,
+        )
+        .unwrap();
+        let error = set_rename_information(
+            source.0,
+            root_handle.as_raw_handle() as HANDLE,
+            "target",
+            "rename without replacement",
+        )
+        .unwrap_err();
+        assert_eq!(error.status, "EEXIST");
+        assert_eq!(fs::read(root.join("target")).unwrap(), b"target");
+        fs::remove_dir_all(root).unwrap();
+    }
+}

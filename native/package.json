@@ -1,0 +1,53 @@
+{
+  "name": "@openclaw/fs-safe-native",
+  "version": "0.5.0-dev.0",
+  "description": "Native fd-relative filesystem primitives for @openclaw/fs-safe.",
+  "license": "MIT",
+  "author": "OpenClaw Team <dev@openclaw.ai>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openclaw/fs-safe.git",
+    "directory": "native"
+  },
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "napi": {
+    "binaryName": "fs-safe-native",
+    "packageName": "@openclaw/fs-safe-native",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-unknown-linux-musl",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc"
+    ]
+  },
+  "scripts": {
+    "artifacts": "napi artifacts --npm-dir ../npm",
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "prepublishOnly": "napi prepublish -t npm"
+  },
+  "optionalDependencies": {
+    "@openclaw/fs-safe-native-darwin-arm64": "0.5.0-dev.0",
+    "@openclaw/fs-safe-native-darwin-x64": "0.5.0-dev.0",
+    "@openclaw/fs-safe-native-linux-arm64-gnu": "0.5.0-dev.0",
+    "@openclaw/fs-safe-native-linux-arm64-musl": "0.5.0-dev.0",
+    "@openclaw/fs-safe-native-linux-x64-gnu": "0.5.0-dev.0",
+    "@openclaw/fs-safe-native-linux-x64-musl": "0.5.0-dev.0",
+    "@openclaw/fs-safe-native-win32-x64-msvc": "0.5.0-dev.0"
+  }
+}
