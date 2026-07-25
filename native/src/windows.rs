@@ -304,21 +304,11 @@ struct FileLinkInfoHeader {
     file_name_length: u32,
 }
 
-fn aligned_name_buffer<T>(header: T, name: &[u16]) -> Vec<usize> {
-    let byte_len = size_of::<T>() + std::mem::size_of_val(name);
+const FILE_NAME_OFFSET: usize = 20;
+
+fn aligned_name_buffer(byte_len: usize) -> Vec<usize> {
     let word_len = byte_len.div_ceil(size_of::<usize>());
-    let mut storage = vec![0_usize; word_len];
-    // SAFETY: Vec<usize> provides sufficient alignment for either header and
-    // owns enough initialized storage for the header plus UTF-16 path bytes.
-    unsafe {
-        storage.as_mut_ptr().cast::<T>().write(header);
-        std::ptr::copy_nonoverlapping(
-            name.as_ptr().cast::<u8>(),
-            storage.as_mut_ptr().cast::<u8>().add(size_of::<T>()),
-            std::mem::size_of_val(name),
-        );
-    }
-    storage
+    vec![0_usize; word_len]
 }
 
 fn set_rename_information(
@@ -328,15 +318,23 @@ fn set_rename_information(
     operation: &str,
 ) -> NativeResult<()> {
     let name = wide_relative(target_path)?;
-    let byte_len = size_of::<FileNameInfoHeader>() + std::mem::size_of_val(name.as_slice());
-    let buffer = aligned_name_buffer(
-        FileNameInfoHeader {
-            flags: FILE_RENAME_FLAG_POSIX_SEMANTICS,
-            root_directory: target_root,
-            file_name_length: std::mem::size_of_val(name.as_slice()) as u32,
-        },
-        &name,
-    );
+    let name_bytes = std::mem::size_of_val(name.as_slice());
+    let byte_len = FILE_NAME_OFFSET + name_bytes;
+    let mut buffer = aligned_name_buffer(byte_len);
+    // SAFETY: the zeroed usize storage is suitably aligned, the fixed fields
+    // end at offset 20 on the supported Windows x64 ABI, and the allocation is
+    // large enough for the trailing UTF-16 filename.
+    unsafe {
+        let header = buffer.as_mut_ptr().cast::<FileNameInfoHeader>();
+        (*header).flags = FILE_RENAME_FLAG_POSIX_SEMANTICS;
+        (*header).root_directory = target_root;
+        (*header).file_name_length = name_bytes as u32;
+        std::ptr::copy_nonoverlapping(
+            name.as_ptr().cast::<u8>(),
+            buffer.as_mut_ptr().cast::<u8>().add(FILE_NAME_OFFSET),
+            name_bytes,
+        );
+    }
     // SAFETY: buffer contains the documented variable-length info structure.
     let ok = unsafe {
         SetFileInformationByHandle(
@@ -363,15 +361,21 @@ fn set_link_information(
     target_path: &str,
 ) -> NativeResult<()> {
     let name = wide_relative(target_path)?;
-    let byte_len = size_of::<FileLinkInfoHeader>() + std::mem::size_of_val(name.as_slice());
-    let buffer = aligned_name_buffer(
-        FileLinkInfoHeader {
-            replace_if_exists: 0,
-            root_directory: target_root,
-            file_name_length: std::mem::size_of_val(name.as_slice()) as u32,
-        },
-        &name,
-    );
+    let name_bytes = std::mem::size_of_val(name.as_slice());
+    let byte_len = FILE_NAME_OFFSET + name_bytes;
+    let mut buffer = aligned_name_buffer(byte_len);
+    // SAFETY: FILE_LINK_INFORMATION uses the same x64 filename offset.
+    unsafe {
+        let header = buffer.as_mut_ptr().cast::<FileLinkInfoHeader>();
+        (*header).replace_if_exists = 0;
+        (*header).root_directory = target_root;
+        (*header).file_name_length = name_bytes as u32;
+        std::ptr::copy_nonoverlapping(
+            name.as_ptr().cast::<u8>(),
+            buffer.as_mut_ptr().cast::<u8>().add(FILE_NAME_OFFSET),
+            name_bytes,
+        );
+    }
     // SAFETY: buffer contains FILE_LINK_INFORMATION followed by the UTF-16
     // name, and io remains valid for the synchronous call.
     let mut io: IO_STATUS_BLOCK = unsafe { zeroed() };

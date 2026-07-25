@@ -115,7 +115,9 @@ it("rejects a dangling symlink directory component with a typed FsSafeError, not
 // mkdirPathComponentsWithGuards returns, so the fix must flow the resolved
 // path back to the caller, not just resolve it internally. ---
 
-it("writes a file through root().write() when the parent directory is an in-root symlink (mkdir: true)", async () => {
+it.runIf(process.platform !== "win32")(
+  "writes a file through root().write() when the parent directory is an in-root symlink (mkdir: true)",
+  async () => {
   // Force the JS fallback path deterministically, matching this repo's own
   // convention in test/pinned-write-fallback-coverage.test.ts.
   configureFsSafeNative({ mode: "off" });
@@ -139,4 +141,5 @@ it("writes a file through root().write() when the parent directory is an in-root
 
   const written = await fs.readFile(path.join(realDir, "SKILL.md"), "utf8");
   expect(written).toBe("# new content\n");
-});
+  },
+);

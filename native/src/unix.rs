@@ -43,11 +43,17 @@ pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i3
 
     validate_beneath_path(rel_path)?;
     let path = if rel_path.is_empty() { "." } else { rel_path };
+    let oflags = OFlags::from_bits_retain(flags as u32);
+    let mode = if oflags.intersects(OFlags::CREATE | OFlags::TMPFILE) {
+        Mode::from_bits_retain(0o600)
+    } else {
+        Mode::empty()
+    };
     let fd = openat2(
         borrowed(root_fd),
         path,
-        OFlags::from_bits_retain(flags as u32),
-        Mode::from_bits_retain(0o600),
+        oflags,
+        mode,
         ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
     )
     .map_err(|error| os_error(error, "openat2 beneath root"))?;

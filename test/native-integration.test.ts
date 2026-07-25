@@ -67,6 +67,22 @@ describe.runIf(native)("native filesystem primitives", () => {
     await expect(fs.readFile(path.join(root, "target"), "utf8")).resolves.toBe("target");
   });
 
+  it.runIf(process.platform === "win32")("rejects reparse-point directory components", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-native-reparse-"));
+    roots.push(root);
+    const real = path.join(root, "real");
+    await fs.mkdir(real);
+    await fs.writeFile(path.join(real, "value"), "ok");
+    await fs.symlink(real, path.join(root, "alias"), "junction");
+    const rootFd = fsSync.openSync(root, fsSync.constants.O_RDONLY);
+    try {
+      expect(() => native!.openBeneath(rootFd, "alias/value", fsSync.constants.O_RDONLY))
+        .toThrow();
+    } finally {
+      fsSync.closeSync(rootFd);
+    }
+  });
+
   it("uses native no-replace commits for create-only pinned writes", async () => {
     let renameCalls = 0;
     __setNativeLoaderForTest(() => ({
