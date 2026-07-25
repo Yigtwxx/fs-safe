@@ -10,7 +10,12 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-native-smoke-"));
 const rootFd = fs.openSync(root, fs.constants.O_RDONLY);
 try {
   console.log("native smoke: mkdir");
-  native.mkdirBeneath(rootFd, "nested", 0o700);
+  try {
+    native.mkdirBeneath(rootFd, "nested", 0o700);
+  } catch (error) {
+    console.error("native smoke: mkdir failed", error);
+    throw error;
+  }
   console.log("native smoke: write fixture");
   fs.writeFileSync(path.join(root, "nested", "source"), "source");
   console.log("native smoke: open");

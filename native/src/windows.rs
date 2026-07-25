@@ -29,8 +29,6 @@ const DELETE_ACCESS: u32 = 0x0001_0000;
 const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
 const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
 const FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;
-const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
-const FILE_ADD_SUBDIRECTORY: u32 = 0x0000_0004;
 const FILE_OPEN: u32 = 1;
 const FILE_CREATE: u32 = 2;
 const FILE_OPEN_IF: u32 = 3;
@@ -282,7 +280,7 @@ pub fn mkdir_beneath(root_fd: i32, rel_path: &str, _mode: u32) -> NativeResult<(
         owned_parent = Some(nt_open_relative(
             parent,
             segment,
-            FILE_LIST_DIRECTORY | FILE_ADD_SUBDIRECTORY | FILE_READ_ATTRIBUTES,
+            FILE_GENERIC_READ | FILE_GENERIC_WRITE,
             FILE_OPEN_IF,
             FILE_DIRECTORY_FILE,
         )?);
@@ -485,6 +483,16 @@ mod tests {
             .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
             .open(&root)
             .unwrap();
+        let created = nt_open_relative(
+            root_handle.as_raw_handle() as HANDLE,
+            "created-dir",
+            FILE_GENERIC_READ | FILE_GENERIC_WRITE,
+            FILE_OPEN_IF,
+            FILE_DIRECTORY_FILE,
+        )
+        .unwrap();
+        drop(created);
+        assert!(root.join("created-dir").is_dir());
         // Windows Rust file handles are not CRT descriptors, so exercise the
         // handle-relative primitive directly in this platform unit test.
         let source = nt_open_relative(
