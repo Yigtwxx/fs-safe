@@ -85,10 +85,32 @@ unsafe extern "system" {
     fn RtlNtStatusToDosError(status: i32) -> u32;
 }
 
-#[link(name = "ucrt")]
+#[link(name = "msvcrt")]
 unsafe extern "C" {
     fn _get_osfhandle(fd: i32) -> isize;
     fn _open_osfhandle(handle: isize, flags: i32) -> i32;
+    fn _set_thread_local_invalid_parameter_handler(
+        handler: InvalidParameterHandler,
+    ) -> InvalidParameterHandler;
+}
+
+type InvalidParameterHandler = Option<
+    unsafe extern "C" fn(
+        expression: *const u16,
+        function: *const u16,
+        file: *const u16,
+        line: u32,
+        reserved: usize,
+    ),
+>;
+
+unsafe extern "C" fn ignore_invalid_parameter(
+    _expression: *const u16,
+    _function: *const u16,
+    _file: *const u16,
+    _line: u32,
+    _reserved: usize,
+) {
 }
 
 struct OwnedHandle(HANDLE);
@@ -111,8 +133,20 @@ impl OwnedHandle {
 }
 
 fn root_handle(fd: i32) -> NativeResult<HANDLE> {
-    // SAFETY: the CRT call only inspects its integer argument.
+    let direct = fd as usize as HANDLE;
+    // Node/libuv may expose a Windows HANDLE directly rather than a UCRT fd.
+    // Probe that representation first with a non-destructive handle query.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
+    if !direct.is_null() && unsafe { GetFileInformationByHandle(direct, &mut info) } != 0 {
+        return Ok(direct);
+    }
+    // _get_osfhandle invokes UCRT's invalid-parameter handler for a non-CRT
+    // descriptor. Override it on this thread so an invalid representation
+    // becomes a normal -1 result instead of terminating Node.
+    let previous =
+        unsafe { _set_thread_local_invalid_parameter_handler(Some(ignore_invalid_parameter)) };
     let handle = unsafe { _get_osfhandle(fd) };
+    unsafe { _set_thread_local_invalid_parameter_handler(previous) };
     if handle == -1 {
         return Err(native_error("EBADF", "invalid root file descriptor"));
     }
