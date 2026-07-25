@@ -76,7 +76,8 @@ packages are prebuilt; consumers do not need Rust. Without a matching package,
 `auto` retains lexical and canonical root checks, no-follow opens, guarded
 temp+rename writes, and post-write identity verification. See the [native
 helper policy](docs/native-helper.md) for the exact boundary and deployment
-tradeoff.
+tradeoff, and [native architecture](docs/native.md) for the platform mechanisms
+and policy ownership model.
 
 ## Migrating from the Python helper
 

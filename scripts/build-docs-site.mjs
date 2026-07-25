@@ -26,7 +26,7 @@ const productDescription =
 const installCmd = "pnpm add @openclaw/fs-safe";
 
 const sections = [
-  ["Start", ["index.md", "install.md", "quickstart.md", "security-model.md", "native-helper.md", "config.md"]],
+  ["Start", ["index.md", "install.md", "quickstart.md", "security-model.md", "native-helper.md", "native.md", "config.md"]],
   ["Root API", ["root.md", "reading.md", "writing.md", "path-scope.md"]],
   ["Atomic & temp", ["atomic.md", "output.md", "json.md", "temp.md", "archive.md"]],
   ["Stores", ["store.md", "json-store.md", "file-store.md", "private-file-store.md"]],

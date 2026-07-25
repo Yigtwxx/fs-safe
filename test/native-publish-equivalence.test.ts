@@ -15,7 +15,12 @@ import {
 import { publishFileExclusive } from "../src/publish-file.js";
 
 const require = createRequire(import.meta.url);
-const native = require("../native") as NativeBinding;
+let native: NativeBinding | undefined;
+try {
+  native = require("../native") as NativeBinding;
+} catch {
+  // JS-only jobs intentionally exercise the fallback without a built binding.
+}
 const tempDirs: string[] = [];
 
 async function tempRoot(): Promise<string> {
@@ -31,7 +36,7 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
-describe("native publication primitives", () => {
+describe.runIf(Boolean(native))("native publication primitives", () => {
   it("hashes the same bytes as Node without changing the descriptor position", async () => {
     const root = await tempRoot();
     const sourcePath = path.join(root, "source");
@@ -40,7 +45,7 @@ describe("native publication primitives", () => {
     const source = await fs.open(sourcePath, "r");
     try {
       const before = await source.read(Buffer.alloc(1), 0, 1, null);
-      const digest = await native.sha256File(source.fd);
+      const digest = await native!.sha256File(source.fd);
       const after = await source.read(Buffer.alloc(1), 0, 1, null);
       expect(digest).toEqual({
         bytes: payload.length,
@@ -63,14 +68,14 @@ describe("native publication primitives", () => {
     try {
       let clonedFd: number;
       try {
-        clonedFd = native.cloneFileExclusive(source.fd, directory.fd, "target");
+        clonedFd = native!.cloneFileExclusive(source.fd, directory.fd, "target");
       } catch (error) {
         expect(error).toMatchObject({ code: "ENOTSUP" });
         return;
       }
       fsSync.closeSync(clonedFd);
       await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("clone-payload");
-      await expect(() => native.cloneFileExclusive(source.fd, directory.fd, "target")).toThrow(
+      await expect(() => native!.cloneFileExclusive(source.fd, directory.fd, "target")).toThrow(
         expect.objectContaining({ code: "EEXIST" }),
       );
       await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("clone-payload");
@@ -87,7 +92,7 @@ describe("native publication primitives", () => {
     const source = await fs.open(sourcePath, "r");
     const directory = await fs.open(root, fsSync.constants.O_RDONLY | fsSync.constants.O_DIRECTORY);
     try {
-      const copied = await native.copyFileRangeExclusive(source.fd, directory.fd, "target");
+      const copied = await native!.copyFileRangeExclusive(source.fd, directory.fd, "target");
       expect(copied.bytes).toBe(13);
       fsSync.closeSync(copied.fd);
       await expect(fs.readFile(path.join(root, "target"), "utf8")).resolves.toBe("range-payload");
@@ -106,7 +111,7 @@ describe("native publication primitives", () => {
     await fs.writeFile(sourcePath, "private", { mode: 0o600 });
     execFileSync("chmod", ["+a", "everyone allow read", sourcePath]);
     __setNativeLoaderForTest(() => ({
-      ...native,
+      ...native!,
       linkBeneath() {
         throw Object.assign(new Error("force copy"), { code: "EXDEV" });
       },
@@ -120,7 +125,11 @@ describe("native publication primitives", () => {
   );
 });
 
-describe.each(["native", "javascript"] as const)("%s publication fallback", (backend) => {
+const publishBackends = native
+  ? (["native", "javascript"] as const)
+  : (["javascript"] as const);
+
+describe.each(publishBackends)("%s publication fallback", (backend) => {
   it("publishes identical bytes with an exclusive 0600 target", async () => {
     const root = await tempRoot();
     const sourcePath = path.join(root, "source");
@@ -130,7 +139,7 @@ describe.each(["native", "javascript"] as const)("%s publication fallback", (bac
 
     if (backend === "native") {
       __setNativeLoaderForTest(() => ({
-        ...native,
+        ...native!,
         linkBeneath() {
           throw Object.assign(new Error("force copy"), { code: "EXDEV" });
         },

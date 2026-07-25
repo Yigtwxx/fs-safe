@@ -19,7 +19,12 @@ import {
 } from "../src/native.js";
 
 const require = createRequire(import.meta.url);
-const native = require("../native") as NativeBinding;
+let native: NativeBinding | undefined;
+try {
+  native = require("../native") as NativeBinding;
+} catch {
+  // JS-only jobs intentionally exercise the fallback without a built binding.
+}
 const tempDirs: string[] = [];
 
 type TarFixtureEntry = {
@@ -88,7 +93,7 @@ async function tempRoot(): Promise<string> {
 
 function useBackend(backend: "native" | "javascript"): void {
   if (backend === "native") {
-    __setNativeLoaderForTest(() => native);
+    __setNativeLoaderForTest(() => native!);
     configureFsSafeNative({ mode: "require" });
   } else {
     configureFsSafeNative({ mode: "off" });
@@ -101,7 +106,11 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
-describe.each(["native", "javascript"] as const)("%s archive path", (backend) => {
+const archiveBackends = native
+  ? (["native", "javascript"] as const)
+  : (["javascript"] as const);
+
+describe.each(archiveBackends)("%s archive path", (backend) => {
   it("extracts and reads the same clamped regular file", async () => {
     useBackend(backend);
     const root = await tempRoot();
@@ -289,7 +298,7 @@ describe.each(["native", "javascript"] as const)("%s archive path", (backend) =>
   });
 });
 
-describe("native-only compressed tar formats", () => {
+describe.runIf(Boolean(native))("native-only compressed tar formats", () => {
   const fixtures = {
     "tar-bzip2": "QlpoOTFBWSZTWR7OLWUAAE57kNIABIBAA3+AAIBuZt/ABAAgCCAAciIT1MmhkDQNAaeSCVNTyKeU9Qaek8oB6h6grzvOX5w+ADqMF1cEAQkPSi8X9JSUNEAhmhZFEfFXVrk06WnAZd6xiqSZl1ns0+55YMXVrY+KHgFL4hZYy28xFJSAznPLVCPxdyRThQkB7OLWUA==",
     "tar-zstd": "KLUv/WQAB7UDADKFEReQpzpAWzCQC1aaeGamglLuJoOiujuRBIXgqmerYAic+geI7xfhq/ZgabX5RhoV9CE0pyAWcvBMbNvORGdM2h6bWMCbSocRAPGAHwKkUFkZAg5E65ccFUDlwxo5gAxqHgpO4NMsGGCrmDkAOXBuxdo3ASQjp+s0",

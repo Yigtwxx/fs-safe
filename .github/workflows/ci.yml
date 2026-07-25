@@ -96,13 +96,65 @@ jobs:
       - name: Build host binding
         run: pnpm native:build
 
-      - name: Test host binding
-        if: runner.os != 'Windows'
-        run: pnpm test test/native-integration.test.ts
+      - name: Test native mode auto
+        run: node scripts/native-mode-smoke.mjs auto
 
-      - name: Test Windows host binding
-        if: runner.os == 'Windows'
-        run: node scripts/native-smoke.mjs
+      - name: Test native mode require
+        run: node scripts/native-mode-smoke.mjs require
+
+      - name: Test native mode off
+        run: node scripts/native-mode-smoke.mjs off
+
+      - name: Test native security and path equivalence
+        run: pnpm test test/native-integration.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts
+
+  native-musl:
+    name: Native check (linux-x64-musl)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and test in Alpine
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work node:24-alpine sh -euxc '
+            apk add --no-cache cargo rust musl-dev build-base python3
+            npm install --global pnpm@10.34.5
+            pnpm install --frozen-lockfile
+            cargo test --workspace --locked
+            pnpm native:build
+            node scripts/native-mode-smoke.mjs auto
+            node scripts/native-mode-smoke.mjs require
+            node scripts/native-mode-smoke.mjs off
+            pnpm test test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts
+          '
+
+  cargo-quality:
+    name: Cargo clippy and audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache Cargo
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-quality-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Clippy
+        run: cargo clippy --workspace --locked -- -D warnings
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Audit
+        run: cargo audit --deny warnings
 
   release-graph-smoke:
     name: Release graph smoke (${{ matrix.os }})
