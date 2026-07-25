@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ARCHIVE_LIMIT_ERROR_CODE,
   type ArchiveSecurityError,
@@ -12,6 +12,10 @@ import {
   resolvePackedRootDir,
 } from "../src/archive.js";
 import { withExtractionDeadline } from "../src/archive-deadline.js";
+import {
+  __resetFsSafeNativeConfigForTest,
+  configureFsSafeNative,
+} from "../src/native-config.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import {
   buildRandomTempFilePath,
@@ -21,6 +25,10 @@ import {
 } from "../src/temp-target.js";
 
 const tempDirs: string[] = [];
+
+beforeEach(() => {
+  configureFsSafeNative({ mode: "off" });
+});
 
 async function tempRoot(prefix: string): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -71,6 +79,7 @@ async function withRealpathSymlinkRebindRace<T>(params: {
 }
 
 afterEach(async () => {
+  __resetFsSafeNativeConfigForTest();
   __setFsSafeTestHooksForTest(undefined);
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { force: true, recursive: true })));
 });

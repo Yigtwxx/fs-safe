@@ -85,6 +85,33 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
     }
   });
 
+  it("fences a native clone result by identity and hash", async () => {
+    const root = await tempRoot();
+    const sourcePath = path.join(root, "source-fenced");
+    const targetPath = path.join(root, "target-fenced");
+    await fs.writeFile(sourcePath, "clone-fenced-payload");
+    __setNativeLoaderForTest(() => ({
+      ...native!,
+      linkBeneath() {
+        throw Object.assign(new Error("force clone"), { code: "EXDEV" });
+      },
+      cloneFileExclusive() {
+        fsSync.copyFileSync(sourcePath, targetPath, fsSync.constants.COPYFILE_EXCL);
+        fsSync.chmodSync(targetPath, 0o600);
+        return fsSync.openSync(targetPath, "r+");
+      },
+    }));
+    configureFsSafeNative({ mode: "require" });
+
+    const result = await publishFileExclusive({
+      sourcePath,
+      targetPath,
+      strategy: "link-or-copy",
+    });
+    expect(result.method).toBe("exclusive-copy");
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("clone-fenced-payload");
+  });
+
   it.runIf(process.platform === "linux")("copies exclusively with copy_file_range", async () => {
     const root = await tempRoot();
     const sourcePath = path.join(root, "source");

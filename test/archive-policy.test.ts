@@ -3,10 +3,18 @@ import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
 import * as tar from "tar";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { extractArchive, readArchiveEntry } from "../src/archive.js";
+import {
+  __resetFsSafeNativeConfigForTest,
+  configureFsSafeNative,
+} from "../src/native-config.js";
 
 const tempDirs: string[] = [];
+
+beforeEach(() => {
+  configureFsSafeNative({ mode: "off" });
+});
 
 async function tempRoot(prefix: string): Promise<string> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -15,6 +23,7 @@ async function tempRoot(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+  __resetFsSafeNativeConfigForTest();
   await Promise.all(tempDirs.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
 });
 
