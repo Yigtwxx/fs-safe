@@ -112,6 +112,36 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
     await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("clone-fenced-payload");
   });
 
+  it("removes a native clone when post-copy hash fencing fails", async () => {
+    const root = await tempRoot();
+    const sourcePath = path.join(root, "source-mismatch");
+    const targetPath = path.join(root, "target-mismatch");
+    await fs.writeFile(sourcePath, "clone-mismatch-payload");
+    let hashCalls = 0;
+    __setNativeLoaderForTest(() => ({
+      ...native!,
+      linkBeneath() {
+        throw Object.assign(new Error("force clone"), { code: "EXDEV" });
+      },
+      cloneFileExclusive() {
+        fsSync.copyFileSync(sourcePath, targetPath, fsSync.constants.COPYFILE_EXCL);
+        fsSync.chmodSync(targetPath, 0o600);
+        return fsSync.openSync(targetPath, "r+");
+      },
+      async sha256File(fd) {
+        const result = await native!.sha256File(fd);
+        hashCalls += 1;
+        return hashCalls === 2 ? { ...result, digest: "0".repeat(64) } : result;
+      },
+    }));
+    configureFsSafeNative({ mode: "require" });
+
+    await expect(
+      publishFileExclusive({ sourcePath, targetPath, strategy: "link-or-copy" }),
+    ).rejects.toMatchObject({ code: "path-mismatch" });
+    await expect(fs.access(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it.runIf(process.platform === "linux")("copies exclusively with copy_file_range", async () => {
     const root = await tempRoot();
     const sourcePath = path.join(root, "source");

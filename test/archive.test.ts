@@ -12,10 +12,7 @@ import {
   resolvePackedRootDir,
 } from "../src/archive.js";
 import { withExtractionDeadline } from "../src/archive-deadline.js";
-import {
-  __resetFsSafeNativeConfigForTest,
-  configureFsSafeNative,
-} from "../src/native-config.js";
+import { __resetFsSafeNativeConfigForTest, configureFsSafeNative } from "../src/native-config.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import {
   buildRandomTempFilePath,
@@ -115,6 +112,38 @@ describe("archive extraction", () => {
     const packageDir = await resolvePackedRootDir(destDir);
     await expect(fs.readFile(path.join(packageDir, "hello.txt"), "utf8")).resolves.toBe("hi");
     await expect(fs.readFile(path.join(packageDir, "my file.txt"), "utf8")).resolves.toBe("space");
+  });
+
+  it("supports buffer-only ZIP entries while stripping the archive root", async () => {
+    const root = await tempRoot("fs-safe-archive-buffer-only-");
+    const archivePath = path.join(root, "pkg.zip");
+    const destDir = path.join(root, "dest");
+    await fs.mkdir(destDir);
+    const zip = new JSZip();
+    zip.file("package/hello.txt", "buffer-only");
+    const bytes = await zip.generateAsync({ type: "nodebuffer" });
+    await fs.writeFile(archivePath, bytes);
+
+    const loaded = await JSZip.loadAsync(bytes);
+    const entry = loaded.file("package/hello.txt");
+    const prototype = Object.getPrototypeOf(entry) as object;
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, "nodeStream");
+    expect(descriptor).toBeDefined();
+    Object.defineProperty(prototype, "nodeStream", { ...descriptor, value: undefined });
+    try {
+      await extractArchive({
+        archivePath,
+        destDir,
+        kind: "zip",
+        stripComponents: 1,
+        timeoutMs: 15_000,
+      });
+    } finally {
+      Object.defineProperty(prototype, "nodeStream", descriptor!);
+    }
+    await expect(fs.readFile(path.join(destDir, "hello.txt"), "utf8")).resolves.toBe(
+      "buffer-only",
+    );
   });
 
   it("copies every byte when staging archive input after short writes", async () => {
