@@ -171,6 +171,33 @@ fn root_handle(fd: i32) -> NativeResult<HANDLE> {
     Ok(handle as HANDLE)
 }
 
+fn node_fd_from_handle(handle: OwnedHandle, flags: i32) -> NativeResult<i32> {
+    let node_module = unsafe { GetModuleHandleW(null()) };
+    if !node_module.is_null() {
+        let proc = unsafe { GetProcAddress(node_module, c"uv_open_osfhandle".as_ptr().cast()) };
+        if let Some(proc) = proc {
+            // SAFETY: uv_open_osfhandle is exported with the documented
+            // `int uv_open_osfhandle(intptr_t)` signature.
+            let open_uv_handle: unsafe extern "C" fn(isize) -> i32 =
+                unsafe { std::mem::transmute(proc) };
+            let fd = unsafe { open_uv_handle(handle.0 as isize) };
+            if fd >= 0 {
+                let _ = handle.into_raw();
+                return Ok(fd);
+            }
+        }
+    }
+    let fd = unsafe { _open_osfhandle(handle.0 as isize, flags | O_BINARY | (flags & O_APPEND)) };
+    if fd < 0 {
+        return Err(native_error(
+            "EIO",
+            "convert Windows handle to file descriptor",
+        ));
+    }
+    let _ = handle.into_raw();
+    Ok(fd)
+}
+
 fn wide_relative(path: &str) -> NativeResult<Vec<u16>> {
     let normalized = path.replace('/', "\\");
     let wide: Vec<u16> = std::ffi::OsStr::new(&normalized).encode_wide().collect();
@@ -301,20 +328,7 @@ pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i3
         disposition_from_flags(flags),
         0,
     )?;
-    // SAFETY: ownership transfers from OwnedHandle to the CRT fd on success.
-    let fd = unsafe {
-        _open_osfhandle(
-            handle.into_raw() as isize,
-            flags | O_BINARY | (flags & O_APPEND),
-        )
-    };
-    if fd < 0 {
-        return Err(native_error(
-            "EIO",
-            "convert Windows handle to file descriptor",
-        ));
-    }
-    Ok(fd)
+    node_fd_from_handle(handle, flags)
 }
 
 pub fn mkdir_beneath(root_fd: i32, rel_path: &str, _mode: u32) -> NativeResult<()> {
