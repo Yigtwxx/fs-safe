@@ -134,7 +134,7 @@ describe.each(publishBackends)("%s publication fallback", (backend) => {
     const root = await tempRoot();
     const sourcePath = path.join(root, "source");
     const targetPath = path.join(root, "target");
-    const payload = Buffer.alloc(2 * 1024 * 1024, 0x5a);
+    const payload = Buffer.alloc(256 * 1024, 0x5a);
     await fs.writeFile(sourcePath, payload, { mode: 0o644 });
 
     if (backend === "native") {
