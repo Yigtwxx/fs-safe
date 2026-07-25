@@ -35,6 +35,15 @@ describe("native helper configuration", () => {
     expect(getFsSafeNativeConfig()).toEqual({ mode: "require" });
   });
 
+  it("accepts documented boolean and compatibility mode spellings", () => {
+    process.env.FS_SAFE_NATIVE_MODE = "required";
+    expect(getFsSafeNativeConfig()).toEqual({ mode: "require" });
+    process.env.FS_SAFE_NATIVE_MODE = "never";
+    expect(getFsSafeNativeConfig()).toEqual({ mode: "off" });
+    process.env.FS_SAFE_NATIVE_MODE = "true";
+    expect(getFsSafeNativeConfig()).toEqual({ mode: "auto" });
+  });
+
   it("falls back in auto mode and fails closed in require mode", () => {
     const unavailable = vi.fn(() => {
       throw Object.assign(new Error("missing binding"), { code: "MODULE_NOT_FOUND" });
