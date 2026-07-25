@@ -75,6 +75,10 @@ try {
   runNpm(["install", "--force", "--ignore-scripts", "--no-audit", "--no-fund", "--no-package-lock"], {
     cwd: scratchDirectory,
   });
+  copyFileSync(
+    join(repositoryRoot, "scripts", "packed-final-smoke.mjs"),
+    join(scratchDirectory, "packed-final-smoke.mjs"),
+  );
 
   const nativeOutput = runNode(
     `const imported=await import('@openclaw/fs-safe-native');const n=imported.default??imported;` +
@@ -94,6 +98,7 @@ try {
       `finally{fs.rmSync(d,{recursive:true,force:true});}`,
     { NAPI_RS_NATIVE_LIBRARY_PATH: join(workspace, "must-not-load.node") },
   );
+  const finalRoundOutput = runNodeFile("packed-final-smoke.mjs");
 
   rmSync(join(scratchDirectory, "node_modules", "@openclaw", "fs-safe-native"), {
     force: true,
@@ -124,6 +129,7 @@ try {
     hostPackage: host.packageName,
     native: JSON.parse(nativeOutput),
     fallback: JSON.parse(offOutput),
+    finalRound: JSON.parse(finalRoundOutput),
     missingRequiredBinding: JSON.parse(requireOutput),
   };
   writeFileSync(proofPath, `${JSON.stringify(proof, null, 2)}\n`);
@@ -197,6 +203,15 @@ function runNode(source, additionalEnvironment = {}) {
     cwd: scratchDirectory,
     encoding: "utf8",
     env: { ...cleanEnvironment, ...additionalEnvironment },
+    stdio: "pipe",
+  }).trim();
+}
+
+function runNodeFile(filename) {
+  return execFileSync(process.execPath, [filename], {
+    cwd: scratchDirectory,
+    encoding: "utf8",
+    env: cleanEnvironment,
     stdio: "pipe",
   }).trim();
 }

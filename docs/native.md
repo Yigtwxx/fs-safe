@@ -27,8 +27,9 @@ accepting results.
   `mkdirat`/`linkat`/`renameat2`, `FICLONE`, and `copy_file_range`.
 - macOS walks components with `openat(O_NOFOLLOW)`, restarts in-root symlinks
   from the pinned root, uses `renameatx_np(RENAME_EXCL)`, and permits
-  `fclonefileat` only for simple metadata in an owned, non-shared parent. The
-  clone is normalized inside a private staging directory before publication.
+  `fclonefileat` in an owned, non-shared parent. The clone is normalized inside
+  a private staging directory: flags, ACLs, extended attributes, and broad mode
+  bits are cleared before no-replace publication.
 - Windows uses handle-relative `NtCreateFile` with `OBJ_DONT_REPARSE` and
   `FILE_OPEN_REPARSE_POINT`, then explicitly rejects reparse points. Rename and
   hardlink operations stay rooted in already-open handles. Owner/DACL reads
@@ -75,9 +76,10 @@ Importing fs-safe never executes a platform detector. Linux libc selection uses
 the Node process report, conventional musl library filenames, and the ELF
 `PT_INTERP` field of `process.execPath`. If all probes are inconclusive, the
 loader conservatively attempts the glibc package and lets normal module loading
-fail into `auto` fallback. The checked-in hardening script reapplies this prefix
-after napi-rs generation, and tests reject `child_process`, `exec`, or `spawn`
-usage in the loader.
+fail into `auto` fallback. After napi-rs generates bindings and declarations,
+the hardening script replaces its broad platform/WASI template with the
+checked-in seven-target loader this repository actually ships. Tests reject
+`child_process`, `exec`, or `spawn` usage in the loader.
 
 ## Related pages
 

@@ -121,6 +121,32 @@ modified. Clone support is filesystem- and mount-dependent, so callers must
 not infer durability or physical independence from timing; an unsupported
 clone or `copy_file_range` transparently continues down the fallback chain.
 
+If publication fails after this call created the target, it throws an
+`FsSafeError` with a `details` receipt:
+
+```ts
+type PublishFileExclusiveFailureDetails = {
+  phase:
+    | "hardlink-create" | "hardlink-verify"
+    | "copy-create" | "copy-verify"
+    | "rename-create" | "rename-verify"
+    | "directory-sync";
+  targetCreated: boolean;
+  targetIdentity?: { dev: number | bigint; ino: number | bigint };
+  cleanup: "removed" | "preserved" | "unknown";
+};
+```
+
+`"removed"` means the path still matched the identity created by this call and
+was unlinked (or was already absent). `"preserved"` means it was deliberately
+retained—for example after a successful no-replace rename—or the pathname had
+been replaced and therefore was not safe to remove. `"unknown"` means cleanup
+could not verify or remove the created identity. Callers that run a second
+application-level guard, such as SQLite snapshot validation, should branch on
+this receipt instead of inferring ownership from path existence. The original
+failure remains available as `cause`. Failures before target creation retain
+their existing error shape and do not claim a cleanup result.
+
 `"rename-noreplace"` requires the native helper and atomically moves the
 source to the target without replacement. A collision is reported as
 `EEXIST`, both files remain unchanged, and a successful call returns

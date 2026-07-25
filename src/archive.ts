@@ -1,4 +1,4 @@
-import { constants as fsConstants } from "node:fs";
+import fsSync, { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -42,6 +42,7 @@ import {
   type ZipEntry,
 } from "./archive-zip-entry.js";
 import { FsSafeError } from "./errors.js";
+import { ArchiveSecurityError } from "./archive-errors.js";
 import { extractNativeArchive } from "./archive-native.js";
 import { stageArchiveFileForExtraction } from "./archive-input.js";
 import { getNativeBinding } from "./native.js";
@@ -276,7 +277,7 @@ async function extractZip(params: {
             continue;
           }
           if (isSymlink) {
-            throw new Error(`zip entry is a link: ${entry.name}`);
+            throw new ArchiveSecurityError("entry-link", `zip entry is a link: ${entry.name}`);
           }
 
           await writeZipFileEntry({
@@ -362,13 +363,11 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               onFiltered: params.onFiltered,
             });
             const acceptedEntries: Array<{ path: string; mode: number }> = [];
-            let filterError: unknown;
             // A canonical cwd is not enough here: tar can still follow
             // pre-existing child symlinks in the live destination tree.
             // Extract into a private staging dir first, then merge through
             // the same safe-open boundary checks used by direct file writes.
-            await tar.x({
-              file: stagedArchive.path,
+            const extractor = tar.x({
               cwd: stagingDir,
               strip: Math.max(0, Math.floor(params.stripComponents ?? 0)),
               gzip: params.tarGzip,
@@ -378,8 +377,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
               preserveOwner: false,
               strict: true,
               maxMetaEntrySize: limits.maxMetaEntryBytes,
-              filter(_entryPath, entry) {
-                if (filterError) return false;
+              filter(this: { abort(error: Error): void }, _entryPath, entry) {
                 try {
                   const info = readTarEntryInfo(entry);
                   const accepted = checkTarEntrySafety(info);
@@ -404,10 +402,10 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
                   }
                   return accepted;
                 } catch (error) {
-                  // tar's filter callback is invoked from its parser event
-                  // loop; throwing here escapes the extraction promise. Keep
-                  // parsing the private stage, then reject normally below.
-                  filterError = error;
+                  // Abort through the parser so pipeline tears down both the
+                  // archive reader and unpacker instead of leaving a paused
+                  // stream behind after a policy rejection.
+                  this.abort(error instanceof Error ? error : new Error(String(error)));
                   return false;
                 }
               },
@@ -423,7 +421,13 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
                 }
               },
             });
-            if (filterError) throw filterError;
+            try {
+              await pipeline(fsSync.createReadStream(stagedArchive.path), extractor, {
+                signal: deadline.signal,
+              });
+            } catch (error) {
+              throw createPipelineTimeoutError(error, deadline);
+            }
             for (const accepted of acceptedEntries) {
               const outputPath = resolveArchiveOutputPath({
                 rootDir: stagingDir,

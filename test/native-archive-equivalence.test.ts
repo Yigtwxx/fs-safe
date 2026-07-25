@@ -100,6 +100,23 @@ function useBackend(backend: "native" | "javascript"): void {
   }
 }
 
+async function settleWithin<T>(promise: Promise<T>, milliseconds = 2_000): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`archive rejection did not settle within ${milliseconds}ms`)),
+          milliseconds,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 afterEach(async () => {
   __resetFsSafeNativeConfigForTest();
   __resetNativeLoaderForTest();
@@ -152,6 +169,59 @@ describe.each(archiveBackends)("%s archive path", (backend) => {
       await expect(
         extractArchive({ archivePath, destDir: destination, timeoutMs: 10_000 }),
       ).rejects.toBeTruthy();
+      await expect(fs.readdir(destination)).resolves.toEqual([]);
+    }
+  });
+
+  it("settles every TAR policy rejection without leaving the parser paused", async () => {
+    useBackend(backend);
+    const cases = [
+      {
+        name: "filtered-symlink",
+        entry: { path: "fleet/link", type: "2" as const, linkPath: "../outside" },
+        options: {
+          entryFilter: (entry: { kind: string }) =>
+            entry.kind === "symlink" ? ("skip" as const) : ("extract" as const),
+        },
+        expected: { name: "ArchiveSecurityError", code: "entry-filtered" },
+      },
+      {
+        name: "blocked-symlink",
+        entry: { path: "fleet/link", type: "2" as const, linkPath: "../outside" },
+        options: {},
+        expected: { name: "ArchiveSecurityError", code: "entry-link" },
+      },
+      {
+        name: "traversal",
+        entry: { path: "../outside", body: "owned" },
+        options: {},
+        expected: { name: "ArchiveSecurityError", code: "entry-path" },
+      },
+      {
+        name: "entry-limit",
+        entry: { path: "oversized", body: "too large" },
+        options: { limits: { maxEntryBytes: 1 } },
+        expected: { code: ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT },
+      },
+    ];
+
+    for (const fixture of cases) {
+      const root = await tempRoot();
+      const archivePath = path.join(root, `${fixture.name}.tar`);
+      const destination = path.join(root, "destination");
+      await fs.writeFile(archivePath, tarFixture([fixture.entry]));
+      await fs.mkdir(destination);
+
+      await expect(
+        settleWithin(
+          extractArchive({
+            archivePath,
+            destDir: destination,
+            timeoutMs: 10_000,
+            ...fixture.options,
+          }),
+        ),
+      ).rejects.toMatchObject(fixture.expected);
       await expect(fs.readdir(destination)).resolves.toEqual([]);
     }
   });

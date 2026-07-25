@@ -142,7 +142,7 @@ A handful of helpers throw their own typed errors instead of `FsSafeError`:
 
 - `JsonFileReadError` — thrown by [`readJson`](json.md). Carries `cause` so you can distinguish missing (`ENOENT`) from invalid (`SyntaxError`).
 - `ArchiveLimitError` — thrown by [`extractArchive`](archive.md) when an archive size, entry count, or extracted-byte budget is exceeded. The `code` field uses `ARCHIVE_LIMIT_ERROR_CODE` constants (e.g. `"ARCHIVE_SIZE_EXCEEDS_LIMIT"`).
-- `ArchiveSecurityError` — thrown by extraction when an entry path violates safety rules (traversal, drive prefix, blocked link type). The `code` field uses `ArchiveSecurityErrorCode` values.
+- `ArchiveSecurityError` — thrown by extraction when entry policy or destination safety fails. Entry codes are `entry-path`, `entry-link`, and `entry-filtered`; destination codes cover non-directory, symlink, and symlink-traversal failures.
 
 These are exported from their respective subpaths.
 

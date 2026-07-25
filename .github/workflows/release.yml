@@ -79,7 +79,9 @@ jobs:
             throw new Error(`native/Cargo.toml does not declare ${version}`);
           }
           const loader = readFileSync("native/index.js", "utf8");
-          if (!loader.includes(`expected ${version}`)) throw new Error("native loader version checks are stale");
+          if (!loader.includes("require('./package.json').version")) {
+            throw new Error("native loader must derive its version check from package.json");
+          }
           NODE
           package_version="$(node -p "require('./package.json').version")"
           [ "${RELEASE_TAG}" = "v${package_version}" ]

@@ -70,6 +70,7 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
       try {
         clonedFd = native!.cloneFileExclusive(source.fd, directory.fd, "target");
       } catch (error) {
+        if (process.platform === "darwin") throw error;
         expect(error).toMatchObject({ code: "ENOTSUP" });
         return;
       }
@@ -84,6 +85,33 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
       await directory.close();
     }
   });
+
+  it.runIf(process.platform === "darwin")(
+    "clones APFS files with xattrs and strips custom metadata from the target",
+    async () => {
+      const root = await tempRoot();
+      const sourcePath = path.join(root, "source-xattr");
+      const targetPath = path.join(root, "target-xattr");
+      await fs.writeFile(sourcePath, "clone-with-xattr");
+      execFileSync("xattr", ["-w", "com.openclaw.fs-safe-test", "fixture", sourcePath]);
+      const source = await fs.open(sourcePath, "r");
+      const directory = await fs.open(
+        root,
+        fsSync.constants.O_RDONLY | fsSync.constants.O_DIRECTORY,
+      );
+      try {
+        const clonedFd = native!.cloneFileExclusive(source.fd, directory.fd, "target-xattr");
+        fsSync.closeSync(clonedFd);
+      } finally {
+        await source.close();
+        await directory.close();
+      }
+      await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("clone-with-xattr");
+      expect(execFileSync("xattr", [targetPath], { encoding: "utf8" })).not.toContain(
+        "com.openclaw.fs-safe-test",
+      );
+    },
+  );
 
   it("fences a native clone result by identity and hash", async () => {
     const root = await tempRoot();

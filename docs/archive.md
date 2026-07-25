@@ -76,6 +76,13 @@ size. Returning `"skip"` rejects the whole archive unless `onFiltered` is
 explicitly `"skip-entry"`. Path traversal and archive-wide entry-count checks
 still apply to skipped entries.
 
+Policy rejection is prompt on both implementations. The JavaScript TAR path
+owns the file stream and aborts node-tar through a pipeline on filter, path,
+link, limit, validation, or timeout failure, which destroys both ends instead
+of leaving a paused parser to drain indefinitely. The native path finishes its
+bounded manifest read before TypeScript policy evaluation, so a rejected plan
+never starts the extraction worker.
+
 If `kind` is omitted, the helper calls `resolveArchiveKind(archivePath)` and throws if the extension is not recognized. Pass `kind` explicitly when the archive name doesn't carry the type (e.g. content-addressed names).
 
 ### Limits
@@ -103,6 +110,11 @@ ARCHIVE_LIMIT_ERROR_CODE.META_ENTRY_SIZE_EXCEEDS_LIMIT
 ```
 
 Catch and branch on the code to surface a meaningful response to the caller.
+
+Entry policy failures throw `ArchiveSecurityError`. Its entry-related codes
+are `"entry-path"`, `"entry-link"`, and `"entry-filtered"`; destination-race
+codes remain `"destination-not-directory"`, `"destination-symlink"`, and
+`"destination-symlink-traversal"`.
 
 ## What it defends against
 

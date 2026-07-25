@@ -1,15 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
 import type { Root } from "./root-impl.js";
 import {
-  readSidecarLockOwnershipToken,
+  readSidecarLockSnapshotSync,
+  relativeSidecarLockPath,
+  removeSidecarLockIfUnchangedSync,
   serializeSidecarLockPayload,
   sidecarLockSnapshotMatches,
   type SidecarLockSnapshot,
   type SidecarLockStaleSnapshot,
 } from "./sidecar-lock-reclaim.js";
+import {
+  computeSidecarLockDelayMs,
+  sidecarLockPayloadIsStale,
+} from "./sidecar-lock-policy.js";
 import type {
   SidecarLockCompromisedInfo,
   SidecarLockRetryOptions,
@@ -59,16 +64,7 @@ function normalizeTargetPath(targetPath: string): string {
 function boundedLockPath(lockPath: string, lockRoot?: Root): string {
   const resolved = path.resolve(lockPath);
   if (!lockRoot) return resolved;
-  const lexicalRelative = path.relative(lockRoot.rootDir, resolved);
-  const relative =
-    lexicalRelative !== ".." &&
-    !lexicalRelative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(lexicalRelative)
-      ? lexicalRelative
-      : path.relative(lockRoot.rootReal, resolved);
-  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new FsSafeError("outside-workspace", "sidecar lock path is outside lockRoot");
-  }
+  relativeSidecarLockPath(lockRoot, resolved);
   const parent = path.dirname(resolved);
   const parentReal = fs.realpathSync(parent);
   const parentRelative = path.relative(lockRoot.rootReal, parentReal);
@@ -78,43 +74,8 @@ function boundedLockPath(lockPath: string, lockRoot?: Root): string {
   return path.join(parentReal, path.basename(resolved));
 }
 
-function readSnapshot(
-  lockPath: string,
-  parsePayload?: (raw: string) => unknown,
-): SidecarLockSnapshot | null {
-  let fd: number | undefined;
-  try {
-    const before = fs.lstatSync(lockPath);
-    if (!before.isFile() || before.isSymbolicLink()) return null;
-    const noFollow =
-      process.platform !== "win32" && typeof fs.constants.O_NOFOLLOW === "number"
-        ? fs.constants.O_NOFOLLOW
-        : 0;
-    fd = fs.openSync(lockPath, fs.constants.O_RDONLY | noFollow);
-    const opened = fs.fstatSync(fd);
-    const raw = fs.readFileSync(fd, "utf8");
-    const after = fs.lstatSync(lockPath);
-    if (!sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)) return null;
-    let payload: unknown = null;
-    try {
-      payload = parsePayload ? parsePayload(raw) : (JSON.parse(raw) as unknown);
-    } catch {
-      payload = null;
-    }
-    return { raw, payload, stat: after, ownershipToken: readSidecarLockOwnershipToken(raw) };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
-}
-
 function defaultShouldReclaim(payload: unknown, lockPath: string, staleMs: number, nowMs: number): boolean {
-  if (payload && typeof payload === "object" && "createdAt" in payload) {
-    const createdAt = typeof payload.createdAt === "string" ? Date.parse(payload.createdAt) : NaN;
-    if (Number.isFinite(createdAt) && nowMs - createdAt > staleMs) return true;
-  }
+  if (sidecarLockPayloadIsStale(payload, staleMs, nowMs)) return true;
   try {
     return nowMs - fs.statSync(lockPath).mtimeMs > staleMs;
   } catch {
@@ -124,21 +85,6 @@ function defaultShouldReclaim(payload: unknown, lockPath: string, staleMs: numbe
 
 function sleep(milliseconds: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
-}
-
-function retryDelay(retry: SidecarLockRetryOptions, attempt: number): number {
-  const min = retry.minTimeout ?? 50;
-  const max = retry.maxTimeout ?? 1000;
-  const factor = retry.factor ?? 1;
-  const base = Math.min(max, Math.max(min, min * factor ** attempt));
-  return Math.min(max, Math.round(base * (retry.randomize ? 1 + Math.random() : 1)));
-}
-
-function removeIfUnchanged(lockPath: string, snapshot: SidecarLockSnapshot): boolean {
-  const current = readSnapshot(lockPath);
-  if (!current || !sidecarLockSnapshotMatches(current, snapshot)) return false;
-  fs.rmSync(lockPath);
-  return true;
 }
 
 export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
@@ -178,7 +124,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
       let released = false;
       let timer: NodeJS.Timeout | undefined;
       const verifyStillHeld = () => {
-        const current = readSnapshot(lockPath, options.parsePayload);
+        const current = readSidecarLockSnapshotSync(lockPath, options.parsePayload);
         return !!current && sidecarLockSnapshotMatches(current, snapshot);
       };
       const release = () => {
@@ -187,7 +133,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         if (timer) clearInterval(timer);
         fs.closeSync(heldFd);
         fd = undefined;
-        removeIfUnchanged(lockPath, snapshot);
+        removeSidecarLockIfUnchangedSync(lockPath, snapshot);
       };
       if (options.onCompromised && (options.compromiseCheckIntervalMs ?? 0) > 0) {
         timer = setInterval(() => {
@@ -211,10 +157,10 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         const failed = { payload: null, stat: fs.fstatSync(fd) } satisfies SidecarLockSnapshot;
         fs.closeSync(fd);
         fd = undefined;
-        removeIfUnchanged(lockPath, failed);
+        removeSidecarLockIfUnchangedSync(lockPath, failed);
       }
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const snapshot = readSnapshot(lockPath, options.parsePayload);
+      const snapshot = readSidecarLockSnapshotSync(lockPath, options.parsePayload);
       if (!snapshot) continue;
       const nowMs = Date.now();
       const reclaim = options.shouldReclaim
@@ -241,7 +187,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           const reclaimGuard = `${lockPath}.reclaim`;
           try {
             fs.mkdirSync(reclaimGuard);
-            if (removeIfUnchanged(lockPath, snapshot)) continue;
+            if (removeSidecarLockIfUnchangedSync(lockPath, snapshot)) continue;
           } finally {
             try {
               fs.rmdirSync(reclaimGuard);
@@ -265,7 +211,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           normalizedTargetPath,
         });
       }
-      sleep(retryDelay(retry, attempt));
+      sleep(computeSidecarLockDelayMs(retry, attempt));
       attempt += 1;
     }
   }

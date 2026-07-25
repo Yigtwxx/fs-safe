@@ -1,6 +1,6 @@
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
-import { ArchiveFormatError } from "./archive-errors.js";
+import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
 import { resolveArchiveOutputPath, stripArchivePath, validateArchiveEntryPath } from "./archive-entry.js";
 import type { ExtractionDeadline } from "./archive-deadline.js";
 import { stageArchiveFileForExtraction } from "./archive-input.js";
@@ -110,7 +110,10 @@ export async function extractNativeArchive(params: {
           }
           if (kind === "symlink") {
             const label = params.kind === "zip" ? "zip" : "tar";
-            throw new Error(`${label} entry is a link: ${entry.path}`);
+            throw new ArchiveSecurityError(
+              "entry-link",
+              `${label} entry is a link: ${entry.path}`,
+            );
           }
           if (!Number.isSafeInteger(entry.size) || entry.size < 0) {
             throw new ArchiveLimitError(

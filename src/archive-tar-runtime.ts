@@ -17,7 +17,6 @@ export type TarParser = NodeJS.WritableStream & {
 export type TarModule = {
   Parser: new (options: { strict: true; maxMetaEntrySize: number }) => TarParser;
   x(options: {
-    file: string;
     cwd: string;
     strip: number;
     gzip?: boolean;
@@ -27,9 +26,9 @@ export type TarModule = {
     preserveOwner: false;
     strict: true;
     maxMetaEntrySize: number;
-    filter?(entryPath: string, entry: unknown): boolean;
+    filter?(this: TarParser, entryPath: string, entry: unknown): boolean;
     onReadEntry(this: unknown, entry: unknown): void;
-  }): Promise<unknown>;
+  }): TarParser;
   t(options: {
     file: string;
     strict: true;

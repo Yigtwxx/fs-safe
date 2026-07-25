@@ -312,10 +312,10 @@ pub fn clone_file_exclusive(
     }
     let source_stat = rustix::fs::fstat(borrowed(source_fd))
         .map_err(|error| os_error(error, "inspect clone source"))?;
-    if source_stat.st_flags != 0 || macos_has_xattrs(source_fd)? {
+    if source_stat.st_flags != 0 {
         return Err(native_error(
             "ENOTSUP",
-            "cloning is disabled for sources with flags or extended attributes",
+            "cloning is disabled for sources with file flags",
         ));
     }
     let stage_path = (0..8)
@@ -516,30 +516,6 @@ fn macos_acl_has_entries(fd: i32) -> NativeResult<bool> {
             format!("enumerate parent ACL: {}", std::io::Error::last_os_error()),
         )),
     }
-}
-
-#[cfg(target_os = "macos")]
-fn macos_has_xattrs(fd: i32) -> NativeResult<bool> {
-    // SAFETY: null buffer queries the required list size.
-    let length = unsafe { libc::flistxattr(fd, std::ptr::null_mut(), 0, 0) };
-    if length < 0 {
-        let error = std::io::Error::last_os_error();
-        let code = error.raw_os_error();
-        if code == Some(libc::ENOTSUP)
-            || code == Some(libc::EOPNOTSUPP)
-            || code == Some(libc::EINVAL)
-        {
-            return Err(native_error(
-                "ENOTSUP",
-                format!("inspect source xattrs: {error}"),
-            ));
-        }
-        return Err(native_error(
-            "EIO",
-            format!("inspect source xattrs: {error}"),
-        ));
-    }
-    Ok(length > 0)
 }
 
 #[cfg(target_os = "macos")]

@@ -16,4 +16,7 @@ export {
   publishFileExclusive,
   type PublishFileExclusiveResult,
   type PublishFileExclusiveStrategy,
+  type PublishFileExclusiveCleanup,
+  type PublishFileExclusiveFailureDetails,
+  type PublishFileExclusiveFailurePhase,
 } from "./publish-file.js";

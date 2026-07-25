@@ -10,21 +10,29 @@ export function computeSidecarLockDelayMs(retry: SidecarLockRetryOptions, attemp
   return Math.min(maxTimeout, Math.round(base * jitter));
 }
 
+export function sidecarLockPayloadIsStale(
+  payload: unknown,
+  staleMs: number,
+  nowMs: number,
+): boolean {
+  const createdAt =
+    payload &&
+    typeof payload === "object" &&
+    "createdAt" in payload &&
+    typeof payload.createdAt === "string"
+      ? payload.createdAt
+      : "";
+  const createdAtMs = Date.parse(createdAt);
+  return Number.isFinite(createdAtMs) && nowMs - createdAtMs > staleMs;
+}
+
 export async function defaultSidecarLockShouldReclaim(params: {
   lockPath: string;
   payload: unknown;
   staleMs: number;
   nowMs: number;
 }): Promise<boolean> {
-  const createdAt =
-    params.payload &&
-    typeof params.payload === "object" &&
-    "createdAt" in params.payload &&
-    typeof params.payload.createdAt === "string"
-      ? params.payload.createdAt
-      : "";
-  const createdAtMs = Date.parse(createdAt);
-  if (Number.isFinite(createdAtMs) && params.nowMs - createdAtMs > params.staleMs) return true;
+  if (sidecarLockPayloadIsStale(params.payload, params.staleMs, params.nowMs)) return true;
   try {
     return params.nowMs - (await fs.stat(params.lockPath)).mtimeMs > params.staleMs;
   } catch {

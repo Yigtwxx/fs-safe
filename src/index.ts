@@ -3,6 +3,7 @@ export {
   categorizeFsSafeError,
   type FsSafeErrorCategory,
   type FsSafeErrorCode,
+  type FsSafeErrorDetails,
 } from "./errors.js";
 export {
   DEFAULT_ROOT_MAX_BYTES,

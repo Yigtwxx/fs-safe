@@ -1,3 +1,5 @@
+import { ArchiveSecurityError } from "./archive-errors.js";
+
 export type ArchiveEntryKind = "file" | "directory" | "symlink" | "other";
 export type ArchiveEntryModePolicy = "clamp" | "preserve";
 export type ArchiveFilteredEntryPolicy = "reject-archive" | "skip-entry";
@@ -38,7 +40,10 @@ export function shouldExtractArchiveEntry(params: {
     return true;
   }
   if ((params.onFiltered ?? "reject-archive") === "reject-archive") {
-    throw new Error(`archive entry rejected by filter: ${params.entry.path}`);
+    throw new ArchiveSecurityError(
+      "entry-filtered",
+      `archive entry rejected by filter: ${params.entry.path}`,
+    );
   }
   return false;
 }

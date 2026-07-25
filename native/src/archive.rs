@@ -971,8 +971,9 @@ mod tests {
 
     #[test]
     fn gzip_and_bzip2_decode_concatenated_members() {
+        type FormatFixture = (ArchiveFormat, &'static str, fn(&[u8]) -> Vec<u8>);
         let tar = fixture_tar();
-        let formats: [(ArchiveFormat, &str, fn(&[u8]) -> Vec<u8>); 2] = [
+        let formats: [FormatFixture; 2] = [
             (ArchiveFormat::Tar, "tar.gz", gzip),
             (ArchiveFormat::TarBzip2, "tar.bz2", bzip),
         ];

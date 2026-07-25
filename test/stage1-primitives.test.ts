@@ -20,6 +20,8 @@ import {
 } from "../src/secret.js";
 import { tempWorkspace } from "../src/temp.js";
 import { configureFsSafeNative } from "../src/native-config.js";
+import { FsSafeError } from "../src/errors.js";
+import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
 const tempDirs: string[] = [];
 
@@ -31,6 +33,7 @@ async function tempRoot(prefix: string): Promise<string> {
 
 afterEach(async () => {
   configureFsSafeNative({ mode: "auto" });
+  __setFsSafeTestHooksForTest();
   vi.restoreAllMocks();
   await Promise.all(tempDirs.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
 });
@@ -63,6 +66,65 @@ describe("exclusive file publication", () => {
     expect(isHardlinkFallbackError(Object.assign(new Error(), { code: "EOPNOTSUPP" }))).toBe(true);
     expect(isHardlinkFallbackError(Object.assign(new Error(), { code: "EIO" }))).toBe(false);
   });
+
+  it.each(["removed", "preserved", "unknown"] as const)(
+    "reports %s cleanup after a post-hardlink failure",
+    async (cleanup) => {
+      configureFsSafeNative({ mode: "off" });
+      const directory = await tempRoot(`fs-safe-publish-${cleanup}-`);
+      const sourcePath = path.join(directory, "source");
+      const targetPath = path.join(directory, "target");
+      const originalLinkPath = path.join(directory, "original-link");
+      await fs.writeFile(sourcePath, "source-content");
+
+      __setFsSafeTestHooksForTest({
+        async afterPublishTargetCreated(method, createdPath) {
+          expect(method).toBe("hardlink");
+          expect(createdPath).toBe(targetPath);
+          if (cleanup === "preserved") {
+            await fs.rename(targetPath, originalLinkPath);
+            await fs.writeFile(targetPath, "replacement-content");
+          }
+          throw new Error("post-publication guard failed");
+        },
+      });
+      const rm =
+        cleanup === "unknown"
+          ? vi
+              .spyOn(fs, "rm")
+              .mockRejectedValueOnce(Object.assign(new Error("cleanup denied"), { code: "EACCES" }))
+          : undefined;
+
+      try {
+        await expect(
+          publishFileExclusive({ sourcePath, targetPath, strategy: "link-required" }),
+        ).rejects.toSatisfy((error: unknown) => {
+          expect(error).toBeInstanceOf(FsSafeError);
+          expect(error).toMatchObject({
+            code: "helper-failed",
+            details: {
+              phase: "hardlink-verify",
+              targetCreated: true,
+              targetIdentity: { dev: expect.any(Number), ino: expect.any(Number) },
+              cleanup,
+            },
+          });
+          return true;
+        });
+      } finally {
+        rm?.mockRestore();
+      }
+
+      if (cleanup === "removed") {
+        await expect(fs.access(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+      } else if (cleanup === "preserved") {
+        await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("replacement-content");
+        await expect(fs.readFile(originalLinkPath, "utf8")).resolves.toBe("source-content");
+      } else {
+        await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("source-content");
+      }
+    },
+  );
 });
 
 describe("secret file additions", () => {

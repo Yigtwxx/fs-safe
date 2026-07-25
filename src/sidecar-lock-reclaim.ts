@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { Stats } from "node:fs";
+import fsSync, { type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readFileHandleBounded } from "./bounded-read.js";
@@ -70,7 +70,10 @@ export function relativeSidecarLockPath(lockRoot: Root, lockPath: string): strin
   return relative.split(path.sep).join(path.posix.sep);
 }
 
-function parseLockPayload(raw: string, parser?: (raw: string) => unknown): unknown {
+export function parseSidecarLockPayload(
+  raw: string,
+  parser?: (raw: string) => unknown,
+): unknown {
   if (parser) {
     return parser(raw);
   }
@@ -91,14 +94,18 @@ export async function readSidecarLockSnapshot(
       const opened = await options.lockRoot.open(relativeSidecarLockPath(options.lockRoot, lockPath));
       try {
         const raw = (await readFileHandleBounded(opened.handle, MAX_LOCK_PAYLOAD_BYTES)).toString("utf8");
-        return { raw, payload: parseLockPayload(raw, options.parsePayload), stat: opened.stat };
+        return {
+          raw,
+          payload: parseSidecarLockPayload(raw, options.parsePayload),
+          stat: opened.stat,
+        };
       } finally {
         await opened.handle.close().catch(() => undefined);
       }
     }
     const stat = await fs.lstat(lockPath);
     const raw = await fs.readFile(lockPath, "utf8");
-    return { raw, payload: parseLockPayload(raw, options.parsePayload), stat };
+    return { raw, payload: parseSidecarLockPayload(raw, options.parsePayload), stat };
   } catch (err) {
     if (
       (err as NodeJS.ErrnoException).code === "ENOENT" ||
@@ -108,6 +115,47 @@ export async function readSidecarLockSnapshot(
     }
     throw err;
   }
+}
+
+export function readSidecarLockSnapshotSync(
+  lockPath: string,
+  parsePayload?: (raw: string) => unknown,
+): SidecarLockSnapshot | null {
+  let fd: number | undefined;
+  try {
+    const before = fsSync.lstatSync(lockPath);
+    if (!before.isFile() || before.isSymbolicLink()) return null;
+    const noFollow =
+      process.platform !== "win32" && typeof fsSync.constants.O_NOFOLLOW === "number"
+        ? fsSync.constants.O_NOFOLLOW
+        : 0;
+    fd = fsSync.openSync(lockPath, fsSync.constants.O_RDONLY | noFollow);
+    const opened = fsSync.fstatSync(fd);
+    const raw = fsSync.readFileSync(fd, "utf8");
+    const after = fsSync.lstatSync(lockPath);
+    if (!sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)) return null;
+    return {
+      raw,
+      payload: parseSidecarLockPayload(raw, parsePayload),
+      stat: after,
+      ownershipToken: readSidecarLockOwnershipToken(raw),
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  } finally {
+    if (fd !== undefined) fsSync.closeSync(fd);
+  }
+}
+
+export function removeSidecarLockIfUnchangedSync(
+  lockPath: string,
+  observed: SidecarLockSnapshot,
+): boolean {
+  const current = readSidecarLockSnapshotSync(lockPath);
+  if (!current || !sidecarLockSnapshotMatches(current, observed)) return false;
+  fsSync.rmSync(lockPath);
+  return true;
 }
 
 export function sidecarLockSnapshotMatches(

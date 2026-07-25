@@ -12,6 +12,7 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { syncNativeFileBestEffort } from "./native-operations.js";
 import { getNativeBinding, requireNativeBinding, type NativeBinding } from "./native.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type PublishFileExclusiveStrategy =
   | "link-or-copy"
@@ -22,6 +23,31 @@ export type PublishFileExclusiveResult = {
   method: "hardlink" | "exclusive-copy" | "rename-noreplace";
   identity: Stats;
   directorySync: DirectorySyncOutcome;
+};
+
+export type PublishFileExclusiveFailurePhase =
+  | "copy-create"
+  | "copy-verify"
+  | "directory-sync"
+  | "hardlink-create"
+  | "hardlink-verify"
+  | "rename-create"
+  | "rename-verify";
+
+export type PublishFileExclusiveCleanup = "removed" | "preserved" | "unknown";
+
+export type PublishFileExclusiveFailureDetails = {
+  phase: PublishFileExclusiveFailurePhase;
+  targetCreated: boolean;
+  targetIdentity?: FileIdentityStat;
+  cleanup: PublishFileExclusiveCleanup;
+};
+
+type PublishFailureState = {
+  phase: PublishFileExclusiveFailurePhase;
+  targetCreated: boolean;
+  targetIdentity?: FileIdentityStat;
+  preserveTarget: boolean;
 };
 
 const HARDLINK_FALLBACK_CODES = new Set([
@@ -120,6 +146,7 @@ async function copyPinnedSource(params: {
   targetPath: string;
   native?: NativeBinding;
   targetNativeParent?: Awaited<ReturnType<typeof openNativeParent>>;
+  failure: PublishFailureState;
 }): Promise<{ handle: FileHandle; stat: Stats; digest: string; bytes: number }> {
   if (params.native && params.targetNativeParent) {
     for (const method of ["clone", "copy-file-range"] as const) {
@@ -153,7 +180,13 @@ async function copyPinnedSource(params: {
 
       let target: FileHandle | undefined;
       const createdIdentity = params.native.fstatIdentity(nativeFd);
+      rememberCreatedTarget(params.failure, createdIdentity, "copy-verify");
       try {
+        await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
+          "exclusive-copy",
+          params.targetPath,
+          createdIdentity,
+        );
         const identity = await fs.lstat(params.targetPath);
         target = await fs.open(params.targetPath, sourceOpenFlags());
         const opened = await target.stat();
@@ -176,9 +209,6 @@ async function copyPinnedSource(params: {
         };
       } catch (error) {
         await target?.close().catch(() => undefined);
-        await removeCreatedTargetIfUnchanged(params.targetPath, createdIdentity).catch(
-          () => undefined,
-        );
         throw error;
       } finally {
         if (nativeFd !== undefined) fsSync.closeSync(nativeFd);
@@ -188,7 +218,13 @@ async function copyPinnedSource(params: {
 
   const target = await fs.open(params.targetPath, "wx+", 0o600);
   const identity = await target.stat();
+  rememberCreatedTarget(params.failure, identity, "copy-verify");
   try {
+    await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
+      "exclusive-copy",
+      params.targetPath,
+      identity,
+    );
     const hash = createHash("sha256");
     const buffer = Buffer.allocUnsafe(64 * 1024);
     let position = 0;
@@ -217,28 +253,56 @@ async function copyPinnedSource(params: {
     return { handle: target, stat: identity, digest: hash.digest("hex"), bytes: position };
   } catch (error) {
     await target.close().catch(() => undefined);
-    await removeCreatedTargetIfUnchanged(params.targetPath, identity).catch(() => undefined);
     throw error;
   }
+}
+
+function rememberCreatedTarget(
+  state: PublishFailureState,
+  identity: FileIdentityStat,
+  phase: PublishFileExclusiveFailurePhase,
+): void {
+  state.targetCreated = true;
+  state.targetIdentity = { dev: identity.dev, ino: identity.ino };
+  state.phase = phase;
 }
 
 async function removeCreatedTargetIfUnchanged(
   targetPath: string,
   identity?: FileIdentityStat,
-): Promise<void> {
+): Promise<PublishFileExclusiveCleanup> {
   if (!identity) {
-    return;
+    return "unknown";
   }
   try {
     const current = await fs.lstat(targetPath);
     if (!current.isSymbolicLink() && sameFileIdentity(current, identity)) {
       await fs.rm(targetPath);
+      return "removed";
     }
+    return "preserved";
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "removed" : "unknown";
   }
+}
+
+function publicationFailure(
+  error: unknown,
+  state: PublishFailureState,
+  cleanup: PublishFileExclusiveCleanup,
+): FsSafeError {
+  const cause = error instanceof Error ? error : new Error(String(error));
+  const details: PublishFileExclusiveFailureDetails = {
+    phase: state.phase,
+    targetCreated: state.targetCreated,
+    ...(state.targetIdentity ? { targetIdentity: state.targetIdentity } : {}),
+    cleanup,
+  };
+  return new FsSafeError(
+    error instanceof FsSafeError ? error.code : "helper-failed",
+    `exclusive file publication failed during ${state.phase}: ${cause.message}`,
+    { cause, details },
+  );
 }
 
 export async function publishFileExclusive(params: {
@@ -265,6 +329,11 @@ export async function publishFileExclusive(params: {
   });
   let sourceNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
   let targetNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
+  const failure: PublishFailureState = {
+    phase: params.strategy === "rename-noreplace" ? "rename-create" : "hardlink-create",
+    targetCreated: false,
+    preserveTarget: false,
+  };
   try {
     const sourceIdentity = await source.stat();
     if (
@@ -293,6 +362,14 @@ export async function publishFileExclusive(params: {
         targetNativeParent!.handle.fd,
         targetNativeParent!.basename,
       );
+      rememberCreatedTarget(failure, sourceIdentity, "rename-verify");
+      // A failed post-rename fence must not delete the only remaining name.
+      failure.preserveTarget = true;
+      await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
+        "rename-noreplace",
+        targetPath,
+        sourceIdentity,
+      );
       const targetIdentity = await fs.lstat(targetPath);
       if (
         targetIdentity.isSymbolicLink() ||
@@ -311,6 +388,7 @@ export async function publishFileExclusive(params: {
       }
       await parent.assertCurrent();
       syncNativeFileBestEffort(sourceNativeParent!.handle.fd);
+      failure.phase = "directory-sync";
       return {
         method: "rename-noreplace",
         identity: targetIdentity,
@@ -329,6 +407,12 @@ export async function publishFileExclusive(params: {
       } else {
         await fs.link(sourcePath, targetPath);
       }
+      rememberCreatedTarget(failure, sourceIdentity, "hardlink-verify");
+      await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
+        "hardlink",
+        targetPath,
+        sourceIdentity,
+      );
       const targetIdentity = await fs.lstat(targetPath);
       if (
         targetIdentity.isSymbolicLink() ||
@@ -339,17 +423,23 @@ export async function publishFileExclusive(params: {
       }
       await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceIdentity });
       await parent.assertCurrent();
+      failure.phase = "directory-sync";
       return {
         method: "hardlink",
         identity: targetIdentity,
         directorySync: await parent.sync(),
       };
     } catch (error) {
-      if (!isHardlinkFallbackError(error) || params.strategy === "link-required") {
+      if (
+        failure.targetCreated ||
+        !isHardlinkFallbackError(error) ||
+        params.strategy === "link-required"
+      ) {
         throw error;
       }
     }
 
+    failure.phase = "copy-create";
     let target: FileHandle | undefined;
     let targetIdentity: Stats | undefined;
     try {
@@ -358,6 +448,7 @@ export async function publishFileExclusive(params: {
         targetPath,
         native,
         targetNativeParent,
+        failure,
       });
       target = copied.handle;
       targetIdentity = copied.stat;
@@ -376,16 +467,22 @@ export async function publishFileExclusive(params: {
       }
       await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceIdentity });
       await parent.assertCurrent();
+      failure.phase = "directory-sync";
       const directorySync = await parent.sync();
       return { method: "exclusive-copy", identity: targetPathStat, directorySync };
     } catch (error) {
       await target?.close().catch(() => undefined);
       target = undefined;
-      await removeCreatedTargetIfUnchanged(targetPath, targetIdentity).catch(() => undefined);
       throw error;
     } finally {
       await target?.close().catch(() => undefined);
     }
+  } catch (error) {
+    if (!failure.targetCreated) throw error;
+    const cleanup = failure.preserveTarget
+      ? "preserved"
+      : await removeCreatedTargetIfUnchanged(targetPath, failure.targetIdentity);
+    throw publicationFailure(error, failure, cleanup);
   } finally {
     await sourceNativeParent?.handle.close().catch(() => undefined);
     await targetNativeParent?.handle.close().catch(() => undefined);

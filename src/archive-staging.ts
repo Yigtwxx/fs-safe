@@ -6,6 +6,10 @@ import {
   createAsyncDirectoryGuard,
   type AsyncDirectoryGuard,
 } from "./directory-guard.js";
+import {
+  ArchiveSecurityError,
+  type ArchiveSecurityErrorCode,
+} from "./archive-errors.js";
 import { FsSafeError } from "./errors.js";
 import { resolveOpenedFileRealPathForHandle, root } from "./root.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
@@ -15,20 +19,7 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 const ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK = "archive entry traverses symlink in destination";
 const ARCHIVE_STAGING_MODE = 0o700;
 
-export type ArchiveSecurityErrorCode =
-  | "destination-not-directory"
-  | "destination-symlink"
-  | "destination-symlink-traversal";
-
-export class ArchiveSecurityError extends Error {
-  code: ArchiveSecurityErrorCode;
-
-  constructor(code: ArchiveSecurityErrorCode, message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.code = code;
-    this.name = "ArchiveSecurityError";
-  }
-}
+export { ArchiveSecurityError, type ArchiveSecurityErrorCode } from "./archive-errors.js";
 
 function symlinkTraversalError(originalPath: string): ArchiveSecurityError {
   return new ArchiveSecurityError(
