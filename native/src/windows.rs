@@ -14,6 +14,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     GetFileInformationByHandle, GetFileInformationByHandleEx, SetFileInformationByHandle,
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
+use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 
 use crate::{FileIdentity, NativeResult, native_error};
 
@@ -139,6 +140,23 @@ fn root_handle(fd: i32) -> NativeResult<HANDLE> {
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
     if !direct.is_null() && unsafe { GetFileInformationByHandle(direct, &mut info) } != 0 {
         return Ok(direct);
+    }
+    // Node's Windows fs descriptors are owned by libuv and are not guaranteed
+    // to belong to the addon's CRT table. Resolve libuv's public conversion
+    // function from the Node executable before trying the CRT fallback.
+    let node_module = unsafe { GetModuleHandleW(null()) };
+    if !node_module.is_null() {
+        let proc = unsafe { GetProcAddress(node_module, c"uv_get_osfhandle".as_ptr().cast()) };
+        if let Some(proc) = proc {
+            // SAFETY: uv_get_osfhandle is exported with the documented
+            // `intptr_t uv_get_osfhandle(int)` signature.
+            let get_uv_handle: unsafe extern "C" fn(i32) -> isize =
+                unsafe { std::mem::transmute(proc) };
+            let handle = unsafe { get_uv_handle(fd) };
+            if handle != -1 {
+                return Ok(handle as HANDLE);
+            }
+        }
     }
     // _get_osfhandle invokes UCRT's invalid-parameter handler for a non-CRT
     // descriptor. Override it on this thread so an invalid representation
