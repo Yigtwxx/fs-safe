@@ -68,7 +68,23 @@ describe("createPrivateDirectory", () => {
         worldWritable: false,
         groupWritable: false,
         fallbackRequired: false,
+        daclPresent: true,
+        isLocal: true,
+        aceListComplete: true,
       });
+      expect(facts.aces).toHaveLength(3);
+      expect(facts.aces).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            aceType: "allow",
+            flags: expect.objectContaining({
+              objectInherit: true,
+              containerInherit: true,
+              inheritOnly: false,
+            }),
+          }),
+        ]),
+      );
       await expect(inspectPathPermissions(target)).resolves.toMatchObject({
         source: "windows-acl",
         ownerTrusted: true,

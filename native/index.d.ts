@@ -65,6 +65,24 @@ export declare function renameNoReplace(sourceRootFd: number, sourceRelPath: str
 
 export declare function sha256File(fd: number): Promise<FileHash>
 
+export interface WindowsAccessControlEntry {
+  sid: string
+  mask: number
+  aceType: string
+  flags: WindowsAceFlags
+}
+
+export interface WindowsAceFlags {
+  raw: number
+  objectInherit: boolean
+  containerInherit: boolean
+  noPropagateInherit: boolean
+  inheritOnly: boolean
+  inherited: boolean
+  successfulAccess: boolean
+  failedAccess: boolean
+}
+
 export interface WindowsSecurityFacts {
   ownerSid: string
   ownerClass: string
@@ -73,4 +91,9 @@ export interface WindowsSecurityFacts {
   worldReadable: boolean
   groupReadable: boolean
   fallbackRequired: boolean
+  daclPresent: boolean
+  isLocal: boolean
+  aceListComplete: boolean
+  unsupportedAceTypes: Array<number>
+  aces: Array<WindowsAccessControlEntry>
 }

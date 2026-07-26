@@ -5,6 +5,7 @@
 ### Highlights
 
 - Add policy-driven archive entry filtering and mode handling, bounded single-entry archive reads, root-bounded async walking, synchronous sidecar locks, async secret reads, create-only secret writes, and exclusive file publication.
+- Add public streaming `sha256File(path | FileHandle)` hashing with optional async native acceleration, plus policy-free Windows owner/DACL facts with owner SID and per-ACE masks and inheritance flags.
 - Add native fd-relative ZIP and TAR extraction/read support with gzip, zstd, and bzip2 streaming; TypeScript evaluates the shared entry policy before Rust creates any output, and zstd/bzip2 report a typed native-required error when no binding is available.
 - Bound PAX, GNU long-name/link, and sparse metadata with one `maxMetaEntryBytes` policy shared by node-tar and the native fixed-header metering reader, including typed failures for oversized or malformed metadata.
 - Add `Root.walk()` subtree pruning and partial directory-error reporting for bounded best-effort consumers, plus a shared `maxEntryPathComponents` archive limit that rejects implicit-directory depth attacks before either extraction path creates output.
@@ -12,6 +13,7 @@
 
 ### Security and Correctness
 
+- Enforce `movePathWithCopyFallback({ sourceHardlinks: "reject" })` with a streaming, entry-capped recursive preflight before mutation, closing a shipped 0.4.x gap where the common same-filesystem rename bypassed the policy; approved trees commit through a fresh staged copy with open-time and post-copy link-count fences so a scan/rename race cannot publish a hardlinked inode.
 - Abort and tear down JavaScript TAR extraction immediately when entry policy, path validation, link rejection, or a budget fails, preventing node-tar from leaving a paused parser after rejected fleet-restore entries; both native and JavaScript paths now return the same typed archive-policy errors.
 - Attach a post-creation failure receipt to `publishFileExclusive()` errors with the failing phase, whether this call created the target, its observed identity, and whether cleanup removed, preserved, or could not classify the target.
 - Add `publishFileExclusive({ onSyncFailure: "rollback" | "preserve" })`: rollback remains the default, while preserve keeps a complete target after directory-sync failure and reports the failed sync outcome in the typed provenance receipt.

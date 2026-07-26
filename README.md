@@ -203,11 +203,11 @@ contract. Low-level helpers that OpenClaw needs to compose higher-level APIs are
 | `@openclaw/fs-safe/store` | `fileStore`, `fileStoreSync`, and `jsonStore` |
 | `@openclaw/fs-safe/secret` | sync/async strict and try-style secret reads, atomic replace, and create-only secret writes |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
-| `@openclaw/fs-safe/durability` | pinned directory identities, strict directory sync, durable nested-directory creation, exclusive publication, provenance receipts, and sync-failure policy |
+| `@openclaw/fs-safe/durability` | pinned directory identities, strict directory sync, durable nested-directory creation, exclusive publication, streaming SHA-256, provenance receipts, and sync-failure policy |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `withTempWorkspace`, `resolveSecureTempRoot` |
 | `@openclaw/fs-safe/secure-file` | fd-pinned absolute file reads with owner, mode, ACL, trusted-dir, size, and timeout checks |
 | `@openclaw/fs-safe/file-lock` | async/sync sidecar locks, root-bounded sidecars, ownership verification, and stale policy |
-| `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection, private-directory creation, and remediation helpers |
+| `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection, raw owner/ACE facts, private-directory creation, and remediation helpers |
 | `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
 | `@openclaw/fs-safe/archive` | policy-driven ZIP/TAR extraction, clamp/filter policy, metadata/path-depth limits, native gzip/zstd/bzip2, and bounded entry reads |
 | `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, root-file open, bounded descriptor reads, install paths, filename sanitizing, temp-file targets, sibling-temp writes, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |

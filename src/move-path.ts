@@ -3,6 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { FsSafeError } from "./errors.js";
 import { guardedRename } from "./guarded-mutation.js";
 
 export type MovePathWithCopyFallbackOptions = {
@@ -33,6 +34,7 @@ type EntryIdentity = {
   ino: number;
   mode: number;
   mtimeMs: number;
+  nlink: number;
   size: number;
 };
 
@@ -45,12 +47,68 @@ type CopiedEntryManifest =
 
 type CleanupCopiedEntryResult = "removed" | "stale";
 
+const MAX_HARDLINK_PREFLIGHT_ENTRIES = 50_000;
+
+function hardlinkedSourceError(sourcePath: string): FsSafeError {
+  return new FsSafeError("hardlink", `Refusing to move hardlinked file: ${sourcePath}`);
+}
+
+function hardlinkWalkTooLargeError(): FsSafeError {
+  return new FsSafeError(
+    "too-large",
+    `Source hardlink preflight exceeds ${MAX_HARDLINK_PREFLIGHT_ENTRIES} entries`,
+  );
+}
+
+async function preflightSourceHardlinks(sourcePath: string): Promise<void> {
+  const pending = [sourcePath];
+  let discovered = 1;
+
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    const stat = await fs.lstat(current);
+    if (stat.isFile() && stat.nlink > 1) {
+      throw hardlinkedSourceError(current);
+    }
+    if (!stat.isDirectory()) {
+      continue;
+    }
+    const directory = await fs.opendir(current);
+    for await (const entry of directory) {
+      discovered += 1;
+      if (discovered > MAX_HARDLINK_PREFLIGHT_ENTRIES) {
+        throw hardlinkWalkTooLargeError();
+      }
+      pending.push(path.join(current, entry.name));
+    }
+  }
+}
+
+function isSameOrDescendant(parentPath: string, candidatePath: string): boolean {
+  const relative = path.relative(parentPath, candidatePath);
+  return (
+    relative === "" ||
+    (!path.isAbsolute(relative) && !relative.startsWith(`..${path.sep}`) && relative !== "..")
+  );
+}
+
+async function assertCopyDestinationOutsideSource(sourcePath: string, targetPath: string) {
+  const sourceReal = await fs.realpath(sourcePath);
+  const normalizedTarget = path.resolve(targetPath);
+  const targetParentReal = await fs.realpath(path.dirname(normalizedTarget));
+  const targetCandidate = path.join(targetParentReal, path.basename(normalizedTarget));
+  if (isSameOrDescendant(sourceReal, targetCandidate)) {
+    throw new FsSafeError("invalid-path", "Move destination must not be inside the source");
+  }
+}
+
 function entryIdentity(stat: {
   ctimeMs: number;
   dev: number;
   ino: number;
   mode: number;
   mtimeMs: number;
+  nlink: number;
   size: number;
 }): EntryIdentity {
   return {
@@ -59,6 +117,7 @@ function entryIdentity(stat: {
     ino: stat.ino,
     mode: stat.mode,
     mtimeMs: stat.mtimeMs,
+    nlink: stat.nlink,
     size: stat.size,
   };
 }
@@ -68,6 +127,7 @@ function sameIdentity(a: EntryIdentity, b: EntryIdentity): boolean {
     a.dev === b.dev &&
     a.ino === b.ino &&
     a.mode === b.mode &&
+    a.nlink === b.nlink &&
     a.size === b.size &&
     a.mtimeMs === b.mtimeMs &&
     a.ctimeMs === b.ctimeMs
@@ -102,6 +162,9 @@ function regularReadFlags(): number {
     fsConstants.O_RDONLY |
     (typeof fsConstants.O_NOFOLLOW === "number" && process.platform !== "win32"
       ? fsConstants.O_NOFOLLOW
+      : 0) |
+    (typeof fsConstants.O_NONBLOCK === "number" && process.platform !== "win32"
+      ? fsConstants.O_NONBLOCK
       : 0)
   );
 }
@@ -118,6 +181,7 @@ async function copyRegularFilePinned(params: {
   from: string;
   identity: EntryIdentity;
   mode: number;
+  rejectHardlinks: boolean;
   to: string;
 }): Promise<void> {
   let destinationCreated = false;
@@ -133,6 +197,9 @@ async function copyRegularFilePinned(params: {
   }
   try {
     const openedStat = await sourceHandle.stat();
+    if (params.rejectHardlinks && openedStat.nlink > 1) {
+      throw hardlinkedSourceError(params.from);
+    }
     if (!openedStat.isFile() || !sameIdentity(params.identity, entryIdentity(openedStat))) {
       throw sourceChangedError(params.from);
     }
@@ -158,7 +225,11 @@ async function copyRegularFilePinned(params: {
 
     // Re-check the opened handle before the staged tree can be committed. If
     // the source changed while we copied, the caller should retry the move.
-    if (!sameIdentity(params.identity, entryIdentity(await sourceHandle.stat()))) {
+    const finalSourceStat = await sourceHandle.stat();
+    if (params.rejectHardlinks && finalSourceStat.nlink > 1) {
+      throw hardlinkedSourceError(params.from);
+    }
+    if (!sameIdentity(params.identity, entryIdentity(finalSourceStat))) {
       throw sourceChangedError(params.from);
     }
     await fs.chmod(params.to, modeBits(params.mode)).catch(() => undefined);
@@ -175,7 +246,10 @@ async function copyRegularFilePinned(params: {
 async function copyEntryWithManifest(
   from: string,
   to: string,
-  options: { sourceHardlinks: "allow" | "reject" },
+  options: {
+    sourceHardlinks: "allow" | "reject";
+    budget?: { discovered: number };
+  },
 ): Promise<CopiedEntryManifest> {
   const sourceStat = await fs.lstat(from);
   const identity = entryIdentity(sourceStat);
@@ -191,7 +265,15 @@ async function copyEntryWithManifest(
   if (sourceStat.isDirectory()) {
     await fs.mkdir(to, { mode: modeBits(sourceStat.mode) || 0o755 });
     const children: Array<{ name: string; manifest: CopiedEntryManifest }> = [];
-    for (const child of await fs.readdir(from)) {
+    const childNames: string[] = [];
+    const directory = await fs.opendir(from);
+    for await (const entry of directory) {
+      if (options.budget && ++options.budget.discovered > MAX_HARDLINK_PREFLIGHT_ENTRIES) {
+        throw hardlinkWalkTooLargeError();
+      }
+      childNames.push(entry.name);
+    }
+    for (const child of childNames) {
       children.push({
         name: child,
         manifest: await copyEntryWithManifest(path.join(from, child), path.join(to, child), options),
@@ -210,10 +292,16 @@ async function copyEntryWithManifest(
     throw new Error(`Refusing to move non-file path with copy fallback: ${from}`);
   }
   if (options.sourceHardlinks === "reject" && sourceStat.nlink > 1) {
-    throw new Error(`Refusing to move hardlinked file with copy fallback: ${from}`);
+    throw hardlinkedSourceError(from);
   }
 
-  await copyRegularFilePinned({ from, identity, mode: sourceStat.mode, to });
+  await copyRegularFilePinned({
+    from,
+    identity,
+    mode: sourceStat.mode,
+    rejectHardlinks: options.sourceHardlinks === "reject",
+    to,
+  });
   return { ...identity, kind: "leaf" };
 }
 
@@ -273,26 +361,40 @@ async function cleanupCopiedEntry(
 export async function movePathWithCopyFallback(
   options: MovePathWithCopyFallbackOptions,
 ): Promise<void> {
-  let fallbackReason: MoveCopyFallbackReason | undefined;
-  try {
-    await guardedRename({ from: options.from, to: options.to });
-    return;
-  } catch (error) {
-    fallbackReason = moveCopyFallbackReasonForRenameError(error);
-    if (!fallbackReason) {
-      throw error;
-    }
+  const sourcePath = path.resolve(options.from);
+  const targetPath = path.resolve(options.to);
+  const rejectHardlinks = options.sourceHardlinks === "reject";
+  if (rejectHardlinks) {
+    await preflightSourceHardlinks(sourcePath);
   }
-  const targetDir = path.dirname(path.resolve(options.to));
+
+  if (!rejectHardlinks) {
+    try {
+      await guardedRename({ from: sourcePath, to: targetPath });
+      return;
+    } catch (error) {
+      if (!moveCopyFallbackReasonForRenameError(error)) {
+        throw error;
+      }
+    }
+  } else {
+    // A pathname preflight cannot make nlink and rename one atomic operation.
+    // Commit a fresh inode through the copy path so a post-scan hardlink can
+    // never become the published target; the copy loop fences nlink again.
+  }
+  await assertCopyDestinationOutsideSource(sourcePath, targetPath);
+  const targetDir = path.dirname(targetPath);
   const staged = path.join(targetDir, `.fs-safe-move-${process.pid}-${randomUUID()}.tmp`);
   try {
-    const manifest = await copyEntryWithManifest(options.from, staged, {
+    const manifest = await copyEntryWithManifest(sourcePath, staged, {
       sourceHardlinks: options.sourceHardlinks ?? "allow",
+      ...(rejectHardlinks ? { budget: { discovered: 1 } } : {}),
     });
-    await guardedRename({ from: staged, to: options.to });
-    const cleanupResult = await cleanupCopiedEntry(options.from, manifest);
+    await assertCopyDestinationOutsideSource(sourcePath, targetPath);
+    await guardedRename({ from: staged, to: targetPath });
+    const cleanupResult = await cleanupCopiedEntry(sourcePath, manifest);
     if (cleanupResult === "stale") {
-      throw sourceChangedError(options.from);
+      throw sourceChangedError(sourcePath);
     }
   } finally {
     await fs.rm(staged, { recursive: true, force: true }).catch(() => undefined);

@@ -22,3 +22,8 @@ export {
   type PublishFileExclusiveFailurePhase,
   type PublishFileExclusiveSyncFailurePolicy,
 } from "./publish-file.js";
+export {
+  sha256File,
+  type Sha256FileInput,
+  type Sha256FileResult,
+} from "./file-hash.js";

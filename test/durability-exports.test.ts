@@ -8,6 +8,7 @@ describe("durability exports", () => {
       "isHardlinkFallbackError",
       "pinDirectory",
       "publishFileExclusive",
+      "sha256File",
       "syncDirectory",
       "syncDirectoryBestEffort",
       "syncDirectoryBestEffortSync",

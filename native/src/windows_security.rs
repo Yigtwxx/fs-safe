@@ -6,6 +6,26 @@ use crate::into_napi;
 use crate::native_error;
 
 #[napi(object)]
+pub struct WindowsAceFlags {
+    pub raw: u32,
+    pub object_inherit: bool,
+    pub container_inherit: bool,
+    pub no_propagate_inherit: bool,
+    pub inherit_only: bool,
+    pub inherited: bool,
+    pub successful_access: bool,
+    pub failed_access: bool,
+}
+
+#[napi(object)]
+pub struct WindowsAccessControlEntry {
+    pub sid: String,
+    pub mask: u32,
+    pub ace_type: String,
+    pub flags: WindowsAceFlags,
+}
+
+#[napi(object)]
 pub struct WindowsSecurityFacts {
     pub owner_sid: String,
     pub owner_class: String,
@@ -14,6 +34,25 @@ pub struct WindowsSecurityFacts {
     pub world_readable: bool,
     pub group_readable: bool,
     pub fallback_required: bool,
+    pub dacl_present: bool,
+    pub is_local: bool,
+    pub ace_list_complete: bool,
+    pub unsupported_ace_types: Vec<u32>,
+    pub aces: Vec<WindowsAccessControlEntry>,
+}
+
+#[cfg(any(windows, test))]
+fn ace_flags(raw: u8) -> WindowsAceFlags {
+    WindowsAceFlags {
+        raw: raw.into(),
+        object_inherit: raw & 0x01 != 0,
+        container_inherit: raw & 0x02 != 0,
+        no_propagate_inherit: raw & 0x04 != 0,
+        inherit_only: raw & 0x08 != 0,
+        inherited: raw & 0x10 != 0,
+        successful_access: raw & 0x40 != 0,
+        failed_access: raw & 0x80 != 0,
+    }
 }
 
 #[napi(js_name = "createPrivateDirectory")]
@@ -66,14 +105,15 @@ mod windows {
         SetEntriesInAclW, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN,
     };
     use windows_sys::Win32::Security::{
-        ACCESS_ALLOWED_ACE, ACL, CONTAINER_INHERIT_ACE, CreateWellKnownSid,
-        DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetTokenInformation,
-        InitializeSecurityDescriptor, IsWellKnownSid, OBJECT_INHERIT_ACE,
-        OWNER_SECURITY_INFORMATION, PSID, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES,
-        SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE, SetSecurityDescriptorControl,
-        SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, TOKEN_QUERY, TOKEN_USER, TokenUser,
-        WinAnonymousSid, WinAuthenticatedUserSid, WinBuiltinAdministratorsSid, WinBuiltinGuestsSid,
-        WinBuiltinUsersSid, WinInteractiveSid, WinLocalSystemSid, WinNetworkSid, WinWorldSid,
+        ACCESS_ALLOWED_ACE, ACCESS_DENIED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE,
+        CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetLengthSid,
+        GetTokenInformation, InitializeSecurityDescriptor, IsValidSid, IsWellKnownSid,
+        OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PSID, SE_DACL_PROTECTED,
+        SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE,
+        SetSecurityDescriptorControl, SetSecurityDescriptorDacl, SetSecurityDescriptorOwner,
+        TOKEN_QUERY, TOKEN_USER, TokenUser, WinAnonymousSid, WinAuthenticatedUserSid,
+        WinBuiltinAdministratorsSid, WinBuiltinGuestsSid, WinBuiltinUsersSid, WinInteractiveSid,
+        WinLocalSystemSid, WinNetworkSid, WinWorldSid,
     };
     use windows_sys::Win32::Storage::FileSystem::{
         CreateDirectoryW, CreateFileW, FILE_ALL_ACCESS, FILE_FLAG_BACKUP_SEMANTICS,
@@ -82,7 +122,7 @@ mod windows {
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-    use super::WindowsSecurityFacts;
+    use super::{WindowsAccessControlEntry, WindowsSecurityFacts, ace_flags};
     use crate::{NativeResult, native_error};
 
     const GENERIC_READ: u32 = 0x8000_0000;
@@ -101,7 +141,6 @@ mod windows {
     const FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;
     const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
     const ACCESS_DENIED_ACE_TYPE: u8 = 1;
-    const INHERIT_ONLY_ACE: u8 = 0x08;
     const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
 
     fn wide(value: &str) -> NativeResult<Vec<u16>> {
@@ -228,6 +267,51 @@ mod windows {
             != 0
     }
 
+    fn parse_basic_ace(
+        raw: *mut c_void,
+        header: &ACE_HEADER,
+    ) -> NativeResult<Option<(WindowsAccessControlEntry, PSID)>> {
+        let sid_offset = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
+        if (header.AceSize as usize) < sid_offset + 8 {
+            return Ok(None);
+        }
+        let (mask, sid, ace_type) = match header.AceType {
+            ACCESS_ALLOWED_ACE_TYPE => {
+                let ace = unsafe { &*(raw.cast::<ACCESS_ALLOWED_ACE>()) };
+                (
+                    ace.Mask,
+                    (&ace.SidStart as *const u32).cast_mut().cast::<c_void>(),
+                    "allow",
+                )
+            }
+            ACCESS_DENIED_ACE_TYPE => {
+                let ace = unsafe { &*(raw.cast::<ACCESS_DENIED_ACE>()) };
+                (
+                    ace.Mask,
+                    (&ace.SidStart as *const u32).cast_mut().cast::<c_void>(),
+                    "deny",
+                )
+            }
+            _ => return Ok(None),
+        };
+        if unsafe { IsValidSid(sid) } == 0 {
+            return Ok(None);
+        }
+        let sid_length = unsafe { GetLengthSid(sid) } as usize;
+        if sid_length == 0 || sid_offset + sid_length > header.AceSize as usize {
+            return Ok(None);
+        }
+        Ok(Some((
+            WindowsAccessControlEntry {
+                sid: sid_string(sid)?,
+                mask,
+                ace_type: ace_type.to_owned(),
+                flags: ace_flags(header.AceFlags),
+            },
+            sid,
+        )))
+    }
+
     fn open_security_handle(path: &[u16]) -> NativeResult<HANDLE> {
         let handle = unsafe {
             CreateFileW(
@@ -268,9 +352,9 @@ mod windows {
 
     pub fn read_owner_and_dacl(path: &str) -> NativeResult<WindowsSecurityFacts> {
         let path = wide(path)?;
+        let current = current_user_sid()?;
         let handle = open_security_handle(&path)?;
         let local = is_local_handle(handle).unwrap_or(false);
-        let current = current_user_sid()?;
         let mut owner = null_mut();
         let mut dacl: *mut ACL = null_mut();
         let mut descriptor = null_mut();
@@ -308,29 +392,34 @@ mod windows {
                 world_readable: dacl.is_null(),
                 group_readable: false,
                 fallback_required: !local,
+                dacl_present: !dacl.is_null(),
+                is_local: local,
+                ace_list_complete: true,
+                unsupported_ace_types: Vec::new(),
+                aces: Vec::new(),
             };
             if !dacl.is_null() {
                 let count = unsafe { (*dacl).AceCount } as u32;
                 for index in 0..count {
                     let mut raw = null_mut();
-                    if unsafe { GetAce(dacl, index, &mut raw) } == 0 {
+                    if unsafe { GetAce(dacl, index, &mut raw) } == 0 || raw.is_null() {
                         facts.fallback_required = true;
+                        facts.ace_list_complete = false;
                         continue;
                     }
-                    let header =
-                        unsafe { &*(raw.cast::<windows_sys::Win32::Security::ACE_HEADER>()) };
-                    if header.AceFlags & INHERIT_ONLY_ACE != 0 {
-                        continue;
-                    }
-                    if header.AceType == ACCESS_DENIED_ACE_TYPE {
-                        continue;
-                    }
-                    if header.AceType != ACCESS_ALLOWED_ACE_TYPE {
+                    let header = unsafe { &*(raw.cast::<ACE_HEADER>()) };
+                    let Some((entry, sid)) = parse_basic_ace(raw, header)? else {
                         facts.fallback_required = true;
+                        facts.ace_list_complete = false;
+                        facts.unsupported_ace_types.push(header.AceType.into());
+                        continue;
+                    };
+                    let mask = entry.mask;
+                    let inherit_only = entry.flags.inherit_only;
+                    facts.aces.push(entry);
+                    if inherit_only || header.AceType == ACCESS_DENIED_ACE_TYPE {
                         continue;
                     }
-                    let ace = unsafe { &*(raw.cast::<ACCESS_ALLOWED_ACE>()) };
-                    let sid = (&ace.SidStart as *const u32).cast_mut().cast::<c_void>();
                     let trusted = unsafe { EqualSid(sid, current.sid) } != 0
                         || unsafe { IsWellKnownSid(sid, WinLocalSystemSid) } != 0
                         || unsafe { IsWellKnownSid(sid, WinBuiltinAdministratorsSid) } != 0;
@@ -338,11 +427,11 @@ mod windows {
                         continue;
                     }
                     if is_world_sid(sid) {
-                        facts.world_readable |= can_read(ace.Mask);
-                        facts.world_writable |= can_write(ace.Mask);
+                        facts.world_readable |= can_read(mask);
+                        facts.world_writable |= can_write(mask);
                     } else {
-                        facts.group_readable |= can_read(ace.Mask);
-                        facts.group_writable |= can_write(ace.Mask);
+                        facts.group_readable |= can_read(mask);
+                        facts.group_writable |= can_write(mask);
                     }
                 }
             }
@@ -433,5 +522,22 @@ mod windows {
             };
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ace_flags;
+
+    #[test]
+    fn decodes_ace_inheritance_and_audit_flags() {
+        let flags = ace_flags(0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x40 | 0x80);
+        assert!(flags.object_inherit);
+        assert!(flags.container_inherit);
+        assert!(flags.no_propagate_inherit);
+        assert!(flags.inherit_only);
+        assert!(flags.inherited);
+        assert!(flags.successful_access);
+        assert!(flags.failed_access);
     }
 }

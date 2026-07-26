@@ -81,9 +81,17 @@ try {
   );
 
   const nativeOutput = runNode(
-    `const imported=await import('@openclaw/fs-safe-native');const n=imported.default??imported;` +
+    `import fs from 'node:fs';import os from 'node:os';import path from 'node:path';` +
+      `import {configureFsSafeNative} from '@openclaw/fs-safe';` +
+      `import {sha256File} from '@openclaw/fs-safe/durability';` +
+      `const imported=await import('@openclaw/fs-safe-native');const n=imported.default??imported;` +
       `if(typeof n.openBeneath!=='function')throw new Error('openBeneath missing');` +
-      `console.log(JSON.stringify({nativeBinding:'loaded',openBeneath:typeof n.openBeneath}));`,
+      `configureFsSafeNative({mode:'require'});const d=fs.mkdtempSync(path.join(os.tmpdir(),'fs-safe-hash-'));` +
+      `try{const p=path.join(d,'input');fs.writeFileSync(p,'abc');const h=await sha256File(p);` +
+      `if(h.digest!=='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')` +
+      `throw new Error('native hash mismatch');` +
+      `console.log(JSON.stringify({nativeBinding:'loaded',openBeneath:typeof n.openBeneath,publicHash:h}));}` +
+      `finally{fs.rmSync(d,{recursive:true,force:true});}`,
   );
   const offOutput = runNode(
     `import fs from 'node:fs';import os from 'node:os';import path from 'node:path';` +

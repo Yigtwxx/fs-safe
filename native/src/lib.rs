@@ -143,7 +143,10 @@ pub use archive::{
 pub use fast_file::{
     FileHash, NativeCopyResult, clone_file_exclusive, copy_file_range_exclusive, sha256_file,
 };
-pub use windows_security::{WindowsSecurityFacts, create_private_directory, read_owner_and_dacl};
+pub use windows_security::{
+    WindowsAccessControlEntry, WindowsAceFlags, WindowsSecurityFacts, create_private_directory,
+    read_owner_and_dacl,
+};
 
 #[cfg(unix)]
 use unix as platform;

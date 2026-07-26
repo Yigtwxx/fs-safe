@@ -4,17 +4,58 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { extractArchive } from "@openclaw/fs-safe/archive";
+import { movePathWithCopyFallback } from "@openclaw/fs-safe/atomic";
 import { configureFsSafeNative, root as createRoot } from "@openclaw/fs-safe";
-import { publishFileExclusive } from "@openclaw/fs-safe/durability";
+import { publishFileExclusive, sha256File } from "@openclaw/fs-safe/durability";
+import { readOwnerAndDacl } from "@openclaw/fs-safe/permissions";
 import { __setFsSafeTestHooksForTest } from "@openclaw/fs-safe/test-hooks";
 
 process.env.NODE_ENV = "test";
 configureFsSafeNative({ mode: "off" });
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-final-smoke-"));
-const results = { archive: null, publication: [], walk: null };
+const results = { archive: null, dacl: null, hash: null, moveHardlinks: null, publication: [], walk: null };
 
 try {
+  const hashPath = path.join(root, "hash-input");
+  await fs.writeFile(hashPath, "abc");
+  results.hash = await sha256File(hashPath);
+  assert.deepEqual(results.hash, {
+    bytes: 3,
+    digest: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+  });
+
+  if (process.platform === "win32") {
+    assert.throws(
+      () => readOwnerAndDacl(root),
+      (error) => error?.code === "helper-unavailable",
+    );
+    results.dacl = { mode: "off", errorCode: "helper-unavailable" };
+  } else {
+    results.dacl = readOwnerAndDacl(root);
+    assert.deepEqual(results.dacl, {
+      status: "unsupported-platform",
+      platform: process.platform,
+    });
+  }
+
+  const moveSource = path.join(root, "hardlinked-source");
+  const moveAlias = path.join(root, "hardlinked-alias");
+  const moveTarget = path.join(root, "hardlinked-target");
+  await fs.writeFile(moveSource, "hardlinked");
+  await fs.link(moveSource, moveAlias);
+  await assert.rejects(
+    movePathWithCopyFallback({
+      from: moveSource,
+      to: moveTarget,
+      sourceHardlinks: "reject",
+    }),
+    (error) => error?.code === "hardlink",
+  );
+  assert.equal(await pathExists(moveSource), true);
+  assert.equal(await pathExists(moveTarget), false);
+  results.moveHardlinks = { sameFilesystemRejected: true, errorCode: "hardlink" };
+
   const archivePath = path.join(root, "fleet-restore.tar");
   const destination = path.join(root, "restore");
   await fs.writeFile(archivePath, symlinkTar("fleet/link", "../outside"));

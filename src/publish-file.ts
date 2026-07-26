@@ -9,6 +9,7 @@ import {
   type DirectorySyncOutcome,
 } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
+import { hashFileHandle } from "./file-hash.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { syncNativeFileBestEffort } from "./native-operations.js";
 import { getNativeBinding, requireNativeBinding, type NativeBinding } from "./native.js";
@@ -114,24 +115,6 @@ async function assertPinnedSourceCurrent(params: {
   }
 }
 
-async function hashHandle(
-  handle: FileHandle,
-  native?: NativeBinding,
-): Promise<{ bytes: number; digest: string }> {
-  if (native) return await native.sha256File(handle.fd);
-  const hash = createHash("sha256");
-  const buffer = Buffer.allocUnsafe(64 * 1024);
-  let position = 0;
-  while (true) {
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
-    if (bytesRead === 0) {
-      return { bytes: position, digest: hash.digest("hex") };
-    }
-    hash.update(buffer.subarray(0, bytesRead));
-    position += bytesRead;
-  }
-}
-
 async function copyPinnedSource(params: {
   source: FileHandle;
   targetPath: string;
@@ -189,7 +172,7 @@ async function copyPinnedSource(params: {
         ) {
           throw new FsSafeError("path-mismatch", "native publication target changed after copy");
         }
-        const hashed = await hashHandle(target, params.native);
+        const hashed = await hashFileHandle(target, params.native);
         fsSync.closeSync(nativeFd);
         nativeFd = undefined;
         return {
@@ -445,8 +428,8 @@ export async function publishFileExclusive(params: {
       target = copied.handle;
       targetIdentity = copied.stat;
       const targetPathStat = await fs.lstat(targetPath);
-      const copiedBack = await hashHandle(target, native);
-      const sourceAfter = await hashHandle(source, native);
+      const copiedBack = await hashFileHandle(target, native);
+      const sourceAfter = await hashFileHandle(source, native);
       if (
         targetPathStat.isSymbolicLink() ||
         !sameFileIdentity(targetPathStat, targetIdentity) ||

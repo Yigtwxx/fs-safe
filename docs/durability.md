@@ -147,6 +147,43 @@ modified. Clone support is filesystem- and mount-dependent, so callers must
 not infer durability or physical independence from timing; an unsupported
 clone or `copy_file_range` transparently continues down the fallback chain.
 
+## Streaming SHA-256
+
+`sha256File()` hashes either a pathname string or an already-open Node
+`FileHandle`. A backup verifier can pin the file itself, compare its size, and
+keep ownership of the handle:
+
+```ts
+import { open } from "node:fs/promises";
+import { sha256File } from "@openclaw/fs-safe/durability";
+
+const snapshot = await open(stagedArchive, "r");
+try {
+  const before = await snapshot.stat();
+  const hash = await sha256File(snapshot);
+  if (hash.bytes !== before.size || hash.digest !== manifest.sha256) {
+    throw new Error("staged backup does not match its manifest");
+  }
+} finally {
+  await snapshot.close();
+}
+```
+
+The result is `{ bytes, digest }`, where `digest` is lowercase hexadecimal.
+The handle overload never closes the caller's descriptor and uses positioned
+reads, so it does not alter the descriptor's current offset. The path overload
+rejects symbolic links and non-regular files, verifies the opened descriptor
+still names the requested path, and closes its own handle. POSIX opens are
+nonblocking, so a raced FIFO or device is rejected after descriptor inspection
+rather than waiting for a writer.
+
+When the optional binding is active, hashing runs as an async native task and
+does not occupy the JavaScript event loop with digest updates. With native mode
+`off`, or in `auto` when no binding loads, the fallback performs asynchronous
+positioned reads in 64 KiB chunks but updates Node's `Hash` on the JavaScript
+thread. Both paths stream constant-size buffers rather than loading the file
+into memory. Native mode `require` keeps its usual fail-closed loader semantics.
+
 If publication fails after this call created the target, it throws an
 `FsSafeError` with a `details` receipt:
 

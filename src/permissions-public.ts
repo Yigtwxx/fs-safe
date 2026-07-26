@@ -17,3 +17,9 @@ export {
   createPrivateDirectory,
   type CreatePrivateDirectoryOptions,
 } from "./private-directory.js";
+export {
+  readOwnerAndDacl,
+  type OwnerAndDaclResult,
+  type WindowsAccessControlEntry,
+  type WindowsAceFlags,
+} from "./owner-dacl.js";

@@ -168,5 +168,15 @@ For each consumer workflow that matters:
 4. Exercise archive traversal/link/depth limits, publication sync failure, and
    partial-walk reporting with production-shaped fixtures.
 
+For downstream staging and backup consumers:
+
+- [ ] Replace private whole-file hashing with `sha256File(path | FileHandle)`
+      from `durability`; native mode keeps digest work off the event loop and
+      the JavaScript fallback remains streaming.
+- [ ] If Windows trust policy depends on exact principals, consume
+      `readOwnerAndDacl()` from `permissions`, reject incomplete/null/remote
+      descriptors as your policy requires, skip inherit-only ACEs where
+      appropriate, and apply the application's own SID allowlist.
+
 The [Testing](testing.md) page documents the test hooks and mode setup used by
 fs-safe itself.

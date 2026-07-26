@@ -77,6 +77,51 @@ the world/group read/write facts consumed by secure reads. Descriptor forms it
 cannot classify equivalently fall back to the established owner/.NET and
 `icacls` path; `mode: "off"` exercises that fallback deterministically.
 
+## Policy-free owner and DACL facts
+
+`readOwnerAndDacl()` exposes the direct Windows descriptor facts needed by a
+consumer that owns a principal allowlist. It deliberately does not decide
+which SID is trusted or calculate effective access. For example, snapshot
+staging can reject an incomplete descriptor and ignore inherit-only ACEs before
+applying its own exact SID policy:
+
+```ts
+import { readOwnerAndDacl } from "@openclaw/fs-safe/permissions";
+
+const facts = readOwnerAndDacl(stagingDirectory);
+if (facts.status === "unsupported-platform") {
+  throw new Error(`Windows ACL facts unavailable on ${facts.platform}`);
+}
+if (!facts.isLocal || !facts.daclPresent || !facts.complete) {
+  throw new Error("staging DACL cannot be evaluated completely");
+}
+
+for (const ace of facts.aces) {
+  if (ace.flags.inheritOnly) continue;
+  if (!trustedSids.has(ace.sid)) {
+    throw new Error(`unexpected staging principal: ${ace.sid}`);
+  }
+  evaluateMaskAndDenyOrder(ace.aceType, ace.mask);
+}
+```
+
+On Windows the supported result contains `ownerSid`, `daclPresent`, `isLocal`,
+`complete`, `unsupportedAceTypes`, and ordered basic allow/deny `aces`. Each ACE
+has `{ sid, mask, aceType, flags }`; `flags` retains the raw byte and decoded
+`objectInherit`, `containerInherit`, `noPropagateInherit`, `inheritOnly`,
+`inherited`, `successfulAccess`, and `failedAccess` facts. SID strings are
+lowercase Windows SID notation. `daclPresent: false` represents a null DACL,
+which grants unrestricted access; it must not be mistaken for an empty DACL.
+
+Object-specific and other ACE layouts are not guessed: they are omitted,
+`complete` becomes false, and their numeric types appear in
+`unsupportedAceTypes`, allowing a security-sensitive caller to fail closed.
+Non-Windows systems return `{ status: "unsupported-platform", platform }`.
+Windows requires the optional native binding; if it is unavailable or forced
+off, the call throws `FsSafeError("helper-unavailable")`. The existing coarse
+`inspectPathPermissions()` API still owns its compatibility fallback and trust
+classification.
+
 ## Private directories
 
 ```ts

@@ -54,7 +54,7 @@ await fs.remove("notes/archive/today.txt");
 | [Native helper policy](native-helper.md) | Choose `auto`, `off`, or `require` for optional native primitives. |
 | [Native architecture](native.md) | Understand the thin syscall layer, beneath model, platform mechanisms, and fallback boundary. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
-| [`@openclaw/fs-safe/durability`](durability.md) | Pinned directory identities, durable creation, exclusive publication, provenance receipts, and sync-failure policy. |
+| [`@openclaw/fs-safe/durability`](durability.md) | Pinned directory identities, durable creation, exclusive publication, streaming SHA-256, provenance receipts, and sync-failure policy. |
 | [`writeExternalFileWithinRoot`](output.md) | Stage external-library file output in private temp storage, then finalize under a root. |
 | [`writeJson` / `readJson*`](json.md) | JSON state files with strict and lenient read variants. |
 | [`@openclaw/fs-safe/store`](store.md) | Overview of `fileStore`, `fileStoreSync`, and `jsonStore`. |
@@ -66,7 +66,7 @@ await fs.remove("notes/archive/today.txt");
 | [`walkDirectory` / `Root.walk`](walk.md) | Standalone inventories plus root-bounded pruning, budgets, and partial-error reporting. |
 | [`extractArchive`](archive.md) | Policy-driven ZIP/TAR extraction with clamp/filter, metadata/path-depth, link, count, and byte limits. |
 | [Secret files](secret-file.md) | Mode-0600 credentials with size and TOCTOU defense. |
-| [Permissions](permissions.md) | POSIX mode and Windows ACL inspection/remediation helpers. |
+| [Permissions](permissions.md) | POSIX mode helpers plus Windows ACL inspection, raw owner/ACE facts, remediation, and private-directory creation. |
 | [`acquireFileLock`](sidecar-lock.md) | Cross-process file lock with retry and fail-closed stale-lock handling. |
 | [`FsSafeError`](errors.md) | Closed code union (with `policy` / `operational` category) you can branch on. |
 | [`pathScope()`](path-scope.md) | Lower-level absolute-path boundary helper; lives behind `@openclaw/fs-safe/advanced`. |
