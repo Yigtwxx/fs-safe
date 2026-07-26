@@ -28,6 +28,7 @@ pub struct WindowsAccessControlEntry {
 #[napi(object)]
 pub struct WindowsSecurityFacts {
     pub owner_sid: String,
+    pub current_user_sid: String,
     pub owner_class: String,
     pub world_writable: bool,
     pub group_writable: bool,
@@ -386,6 +387,7 @@ mod windows {
             };
             let mut facts = WindowsSecurityFacts {
                 owner_sid: sid_string(owner)?,
+                current_user_sid: sid_string(current.sid)?,
                 owner_class: owner_class.to_owned(),
                 world_writable: dacl.is_null(),
                 group_writable: false,

@@ -37,6 +37,7 @@ describe("readOwnerAndDacl", () => {
         ({
           readOwnerAndDacl: () => ({
             ownerSid: "s-1-5-21-owner",
+            currentUserSid: "s-1-5-21-current-user",
             ownerClass: "foreign",
             worldWritable: true,
             groupWritable: true,
@@ -72,6 +73,7 @@ describe("readOwnerAndDacl", () => {
     expect(result).toEqual({
       status: "supported",
       ownerSid: "s-1-5-21-owner",
+      currentUserSid: "s-1-5-21-current-user",
       daclPresent: true,
       isLocal: true,
       complete: true,

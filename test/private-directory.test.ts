@@ -64,6 +64,8 @@ describe("createPrivateDirectory", () => {
       await createPrivateDirectory(target);
       const facts = native!.readOwnerAndDacl(target);
       expect(facts.ownerClass).toBe("current-user");
+      expect(facts.currentUserSid).toMatch(/^s-/);
+      expect(facts.ownerSid).toBe(facts.currentUserSid);
       expect(facts).toMatchObject({
         worldWritable: false,
         groupWritable: false,

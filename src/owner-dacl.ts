@@ -23,6 +23,7 @@ export type OwnerAndDaclResult =
   | {
       status: "supported";
       ownerSid: string;
+      currentUserSid: string;
       daclPresent: boolean;
       isLocal: boolean;
       complete: boolean;
@@ -50,6 +51,7 @@ export function readOwnerAndDacl(targetPath: string): OwnerAndDaclResult {
   return {
     status: "supported",
     ownerSid: facts.ownerSid,
+    currentUserSid: facts.currentUserSid,
     daclPresent: facts.daclPresent,
     isLocal: facts.isLocal,
     complete: facts.aceListComplete,

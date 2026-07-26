@@ -105,9 +105,12 @@ for (const ace of facts.aces) {
 }
 ```
 
-On Windows the supported result contains `ownerSid`, `daclPresent`, `isLocal`,
-`complete`, `unsupportedAceTypes`, and ordered basic allow/deny `aces`. Each ACE
-has `{ sid, mask, aceType, flags }`; `flags` retains the raw byte and decoded
+On Windows the supported result contains `ownerSid`, `currentUserSid`,
+`daclPresent`, `isLocal`, `complete`, `unsupportedAceTypes`, and ordered basic
+allow/deny `aces`. `currentUserSid` is the process token's `TokenUser` SID, so
+callers can compare it with the owner or their own allowlist without fs-safe
+applying trust policy. Each ACE has `{ sid, mask, aceType, flags }`; `flags`
+retains the raw byte and decoded
 `objectInherit`, `containerInherit`, `noPropagateInherit`, `inheritOnly`,
 `inherited`, `successfulAccess`, and `failedAccess` facts. SID strings are
 lowercase Windows SID notation. `daclPresent: false` represents a null DACL,

@@ -85,6 +85,7 @@ export interface WindowsAceFlags {
 
 export interface WindowsSecurityFacts {
   ownerSid: string
+  currentUserSid: string
   ownerClass: string
   worldWritable: boolean
   groupWritable: boolean
