@@ -62,20 +62,22 @@ Use the main entry for the common surface, or the focused subpaths when you want
 
 | Subpath | Contents |
 |---|---|
-| `@openclaw/fs-safe` | Small common surface: `root`, root types, and errors. |
-| `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types. |
+| `@openclaw/fs-safe` | Common root, config, output, lock, native-mode, and error exports. |
+| `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, and root-walk types. |
 | `@openclaw/fs-safe/config` | Process-global native helper and lock defaults. |
 | `@openclaw/fs-safe/path` | `isPathInside`, `safeRealpathSync`, `isWithinDir`, error helpers. |
+| `@openclaw/fs-safe/output` | Guarded staging/finalization for libraries that require an absolute output path. |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants. |
 | `@openclaw/fs-safe/store` | `fileStore()`, `fileStoreSync()`, and `jsonStore<T>()`. |
 | `@openclaw/fs-safe/secret` | Secret file read/write helpers. |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `writeTextAtomic`, `replaceDirectoryAtomic`, `movePathWithCopyFallback`. |
+| `@openclaw/fs-safe/durability` | Pinned directories, strict sync, durable directory creation, and exclusive publication. |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `withTempWorkspace`, sync variants, `resolveSecureTempRoot`. |
 | `@openclaw/fs-safe/secure-file` | `readSecureFile` for pinned absolute file reads with permissions checks. |
 | `@openclaw/fs-safe/file-lock` | `acquireFileLock`, `withFileLock`, `createFileLockManager`, and related lock types. |
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection/remediation helpers. |
 | `@openclaw/fs-safe/walk` | `walkDirectory`, `walkDirectorySync`, related types. Budget-bounded, not root-bounded. |
-| `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, limits, preflight helpers. |
+| `@openclaw/fs-safe/archive` | `extractArchive`, `readArchiveEntry`, kind resolution, policy types, limits, and preflight helpers. |
 | `@openclaw/fs-safe/advanced` | Lower-level composition helpers: path scopes, root-file open, install paths, local-root readers, temp-file targets, sibling-temp writes, regular-file helpers, `pathExists`, `withTimeout`, and related advanced types. This surface is less stable than the focused public subpaths. |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode`. |
 | `@openclaw/fs-safe/types` | Shared types: `DirEntry`, `PathStat`, `BasePathOptions`, … |
@@ -86,6 +88,9 @@ Use the main entry for the common surface, or the focused subpaths when you want
 `@openclaw/fs-safe` lists `jszip` and `tar` as optional dependencies for [archive extraction](archive.md). They are loaded lazily and only required when ZIP/TAR helpers run. Installs that omit optional dependencies can still import and use every non-archive subpath; archive calls fail with a clear missing-optional-dependency message.
 
 There are no peer dependencies. Native helpers are optional prebuilt packages, so consumers do not run a native build during installation.
+
+Upgrading an existing consumer? Follow [Migrating to 0.5](migrating-to-0.5.md)
+before choosing a native mode or accepting the new archive clamp default.
 
 ## Native helper policy
 

@@ -4,7 +4,7 @@ export type FsSafeNativeConfig = {
   mode: FsSafeNativeMode;
 };
 
-/** @deprecated Use {@link FsSafeNativeConfig}. Removed in fs-safe 0.6. */
+/** @deprecated Compatibility bridge for 0.4 upgrades. Use {@link FsSafeNativeConfig}. */
 export type FsSafePythonConfig = {
   mode: FsSafeNativeMode;
   pythonPath?: string;
@@ -48,7 +48,7 @@ function warnLegacyPythonConfiguration(source: string, mappedMode: FsSafeNativeM
   }
   legacyWarningEmitted = true;
   process.emitWarning(
-    `${source} is deprecated and will be removed in fs-safe 0.6; mapped to native mode ` +
+    `${source} is a deprecated 0.4 compatibility bridge; mapped to native mode ` +
       `"${mappedMode}". Use configureFsSafeNative({ mode: "${mappedMode}" }) or ` +
       `FS_SAFE_NATIVE_MODE=${mappedMode}. Python interpreter paths are no longer used.`,
     { code: "FS_SAFE_PYTHON_DEPRECATED", type: "DeprecationWarning" },
@@ -69,7 +69,7 @@ function readLegacyPythonMode(): FsSafeNativeMode | undefined {
 }
 
 /**
- * @deprecated Use configureFsSafeNative. This 0.5 migration bridge is removed in fs-safe 0.6.
+ * @deprecated Compatibility bridge for 0.4 upgrades. Use configureFsSafeNative.
  */
 export function configureFsSafePython(config: Partial<FsSafePythonConfig>): void {
   const mappedMode = config.mode ?? "auto";

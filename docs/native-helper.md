@@ -29,13 +29,21 @@ Configure the mode once during startup. Loading is lazy and cached; changing fro
 
 ## Native boundary
 
-The native package exposes policy-free synchronous primitives: `openBeneath`, `mkdirBeneath`, `linkBeneath`, `renameNoReplace`, and `fstatIdentity`. The TypeScript layer owns policy, retries, cleanup, error normalization, and the decision to fall back.
+The native package exposes policy-free filesystem mechanisms: beneath-root
+open/mkdir/link, no-replace rename, identity reads, archive decode/execution,
+clone/copy/hash workers, and Windows security descriptor calls. The TypeScript
+layer owns policy, retries, filters, budgets, modes, cleanup, error
+normalization, and the decision to fall back.
 
 - Linux uses `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS` and `renameat2(RENAME_NOREPLACE)`.
 - macOS resolves components with `O_NOFOLLOW`, restarts in-root symlinks from the pinned root descriptor, and uses `renameatx_np(RENAME_EXCL)`.
 - Windows uses handle-relative `NtCreateFile`, rejects reparse points, and uses `FileRenameInfoEx` with replacement disabled.
 
-Native primitives currently back create-only pinned writes, async sidecar creation, guarded hardlink publication, and the explicit `rename-noreplace` publication strategy. Other operations retain their existing guarded JavaScript implementations.
+Native primitives back create-only pinned writes, async sidecar creation,
+guarded publication, archive acceleration, and direct Windows ACL operations.
+Equivalent JavaScript paths remain available for documented fallback-capable
+features. See [Native architecture](native.md#javascript-fallback-guarantees-and-delta)
+for the exact difference.
 
 ## Migration from the Python helper
 
@@ -51,15 +59,16 @@ contract is unchanged, so migrate startup configuration directly:
 | `OPENCLAW_FS_SAFE_PYTHON_MODE` | `OPENCLAW_FS_SAFE_NATIVE_MODE` |
 | `pythonPath`, `FS_SAFE_PYTHON`, and the OpenClaw interpreter-path aliases | Remove; prebuilt bindings do not use an interpreter path |
 
-During 0.5.x, `configureFsSafePython` and the legacy Python environment names
+In 0.5, `configureFsSafePython` and the legacy Python environment names
 remain only as an upgrade bridge. On the first config read they emit one
 `DeprecationWarning` with code `FS_SAFE_PYTHON_DEPRECATED`, state the mapped
 native mode, and then apply that mode. A legacy interpreter path without an
 explicit mode maps to `auto` and the path itself is ignored. Native config has
 the normal precedence over legacy environment config.
 
-This bridge is removed in 0.6. There is no silent or permanent alias, so
-deployments should change their configuration while upgrading to 0.5.
+There is no silent alias and no Python execution fallback. The bridge exists
+only to make shipped 0.4 configuration visible and predictable while the
+consumer performs its 0.5 upgrade.
 
 ## Related pages
 
@@ -68,3 +77,4 @@ deployments should change their configuration while upgrading to 0.5.
 - [Writing](writing.md)
 - [File locks](sidecar-lock.md)
 - [Durability](durability.md)
+- [Migrating to 0.5](migrating-to-0.5.md)

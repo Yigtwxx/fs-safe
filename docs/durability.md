@@ -88,17 +88,43 @@ target. It pins the source with `O_NOFOLLOW`, optionally verifies
 `expectedSourceIdentity`, tries a hardlink first, then synchronizes the target
 parent directory.
 
+For example, a backup archive is complete before publication. If directory
+sync fails, keeping that complete file is more useful than conditionally
+deleting it by pathname:
+
 ```ts
-const result = await publishFileExclusive({
-  sourcePath: stagedPath,
-  targetPath: finalPath,
-  strategy: "link-or-copy",
-  parentReceipt,
-});
-// result.method: "hardlink" | "exclusive-copy"
-// result.identity: the verified target Stats
-// result.directorySync: strict directory-sync outcome
+import { FsSafeError } from "@openclaw/fs-safe/errors";
+import { publishFileExclusive } from "@openclaw/fs-safe/durability";
+
+try {
+  const result = await publishFileExclusive({
+    sourcePath: stagedArchive,
+    targetPath: finalArchive,
+    strategy: "link-or-copy",
+    onSyncFailure: "preserve",
+    parentReceipt: backupDirectory,
+  });
+  recordDurableBackup(result.identity, result.directorySync);
+} catch (error) {
+  if (
+    error instanceof FsSafeError &&
+    error.details?.phase === "directory-sync" &&
+    error.details.cleanup === "preserved"
+  ) {
+    recordCompleteButPossiblyNonDurableBackup(finalArchive, error.details);
+  } else {
+    throw error;
+  }
+}
 ```
+
+### Strategies
+
+| Strategy | Behavior | Native requirement |
+|---|---|---|
+| `link-required` | Create a same-filesystem hardlink or propagate the failure. | No; guarded JS `link` fallback remains. |
+| `link-or-copy` | Try hardlink, then clone, Linux `copy_file_range`, then the JS byte loop for classified unsupported errors. | No; acceleration is optional. |
+| `rename-noreplace` | Atomically move the source without replacing an existing target. Success consumes `sourcePath`. | Yes. |
 
 `"link-required"` propagates an unsupported hardlink failure.
 `"link-or-copy"` falls back only for `EPERM`, `EXDEV`, `ENOTSUP`,
@@ -134,6 +160,7 @@ type PublishFileExclusiveFailureDetails = {
   targetCreated: boolean;
   targetIdentity?: { dev: number | bigint; ino: number | bigint };
   cleanup: "removed" | "preserved" | "unknown";
+  directorySync?: { status: "failed"; code?: string };
 };
 ```
 
@@ -146,6 +173,40 @@ application-level guard, such as SQLite snapshot validation, should branch on
 this receipt instead of inferring ownership from path existence. The original
 failure remains available as `cause`. Failures before target creation retain
 their existing error shape and do not claim a cleanup result.
+
+### Directory-sync failure policy
+
+`onSyncFailure` applies only after target creation and content/identity fencing
+have succeeded but synchronizing the containing directory throws:
+
+```ts
+type PublishFileExclusiveSyncFailurePolicy = "rollback" | "preserve";
+```
+
+A returned `{ status: "unsupported", code? }` is an explicit successful
+publication outcome, not a thrown sync failure, so this option does not rewrite
+or clean up that target.
+
+- `rollback` is the default. fs-safe removes the target only if its current
+  identity still matches the file created by this call. A replacement is never
+  removed. The error reports `cleanup: "removed"`, `"preserved"`, or
+  `"unknown"` and `directorySync: { status: "failed", code? }`.
+- `preserve` never attempts that unlink. The error reports
+  `targetCreated: true`, `cleanup: "preserved"`, the created identity, and the
+  failed directory-sync outcome. The file is complete and fenced, but its
+  directory entry is not proven crash-durable.
+
+Choose `rollback` when the pathname must mean “durably committed” and a failed
+commit should disappear from the live process view. Choose `preserve` when the
+payload itself remains valuable—backup archives are the common case—and the
+caller can record, retry, or independently validate durability. Neither choice
+can make a failed directory sync succeed: rollback deletion is also not proven
+durable, and a preserved name may disappear after a crash. Always use the
+typed receipt rather than inferring ownership from `exists()`.
+
+`rename-noreplace` always preserves its target after a successful rename,
+because removing it would discard the source's only remaining name; its typed
+failure receipt makes that explicit regardless of `onSyncFailure`.
 
 `"rename-noreplace"` requires the native helper and atomically moves the
 source to the target without replacement. A collision is reported as
@@ -161,3 +222,9 @@ retention policy, multi-file transaction, or application commit protocol. They
 do not decide application commit protocols, marker formats, permission policy,
 or whether an unsupported platform is acceptable. Keep those decisions at the
 owning product boundary.
+
+## See also
+
+- [Migrating to 0.5](migrating-to-0.5.md) — choosing a publication policy during upgrade.
+- [Native architecture](native.md) — clone/copy/hash mechanisms and fallback guarantees.
+- [Errors](errors.md) — typed operational failure handling.

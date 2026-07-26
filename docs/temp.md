@@ -66,6 +66,21 @@ new directory at the old name, cleanup returns `"identity-mismatch"` and leaves
 the replacement untouched. Disposal hooks perform the same check and ignore
 the returned status.
 
+When cleanup is part of a retention or audit decision, inspect the receipt
+instead of treating cleanup as fire-and-forget:
+
+```ts
+const workspace = await tempWorkspace({ rootDir: "/var/lib/app/tmp", prefix: "restore-" });
+try {
+  await restoreInto(workspace.dir);
+} finally {
+  const cleanup = await workspace.cleanup();
+  if (cleanup === "identity-mismatch") {
+    alertOperator("restore workspace path was replaced; replacement preserved");
+  }
+}
+```
+
 The sync variant `tempWorkspaceSync` exposes the same surface with sync return
 types and a `FileStoreSync` at `workspace.store`.
 

@@ -13,12 +13,23 @@ class FsSafeError extends Error {
   readonly name: "FsSafeError";
   readonly code: FsSafeErrorCode;
   readonly category: "policy" | "operational";
+  readonly details?: Readonly<Record<string, unknown>>;
 
-  constructor(code: FsSafeErrorCode, message: string, options?: { cause?: unknown });
+  constructor(
+    code: FsSafeErrorCode,
+    message: string,
+    options?: { cause?: unknown; details?: Readonly<Record<string, unknown>> },
+  );
 }
 ```
 
 `cause` is available through the standard `Error` `cause` property when the failure was triggered by a `NodeJS.ErrnoException` (e.g. a wrapped `EACCES`). Inspect it for the original `code` / `errno` / `syscall` if you need finer-grained reporting.
+
+`details` is an operation-specific receipt, not an alternate error code. For
+example, `publishFileExclusive()` uses it to report the failing phase, created
+target identity, cleanup decision, and failed directory-sync outcome. Narrow
+by `code` and a documented details field before consuming it; do not assume all
+`FsSafeError` instances carry the same keys.
 
 `category` separates caller-policy failures from operational failures:
 
@@ -61,7 +72,7 @@ type FsSafeErrorCode =
 | `denied-path` | A root mutation matched `denyMutations.paths` or `denyMutations.prefixes`. | Caller configured application-sensitive paths that must not be written, removed, moved, or created. |
 | `device-path` | A read/open target is a known unsafe device or process-fd path. | `/dev/zero`, `/dev/random`, `/dev/stdin`, `/dev/fd/*`, `/proc/*/fd/*`, or a Windows reserved device name. |
 | `hardlink` | Read or copy with `hardlinks: "reject"` saw `nlink > 1`. | File is hardlinked — possibly an alias of an out-of-tree inode. |
-| `helper-failed` | Internal POSIX helper failed after startup. | Inspect `cause`; retrying may be unsafe if the operation may have partially completed. |
+| `helper-failed` | A native mechanism or multi-step operational helper failed. | Inspect `cause` and any operation-specific `details`; retrying may be unsafe if the operation partially completed. |
 | `helper-unavailable` | Required native binding could not be loaded. | Missing/incompatible optional platform package or `FS_SAFE_NATIVE_MODE=require`. `auto` falls back where possible; `require` fails closed. |
 | `insecure-permissions` | A secure file or path permission check found a mode/ACL that allows broader access than requested. | File or directory is group/world writable/readable; Windows ACL grants broad read. |
 | `invalid-path` | Input was empty, contained NUL, was an unparseable URL, or otherwise unusable. | Caller didn't validate input; input was a network path on Windows. |
@@ -77,7 +88,7 @@ type FsSafeErrorCode =
 | `secret-exists` | `createSecretFileAtomic()` found an existing final path. | First-writer-wins secret creation lost a race or the credential was already initialized. |
 | `symlink` | Path component is a symlink, policy is `reject`. | Caller followed a symlink they shouldn't have, or `symlinks: "reject"` is set. |
 | `timeout` | An operation with a wall-clock budget overran. | Secure file read or timed operation exceeded `timeoutMs`. |
-| `too-large` | Read exceeded `maxBytes`. | Caller gave a too-permissive file or didn't size-cap correctly. |
+| `too-large` | A read or bounded walk exceeded its configured budget. | Caller gave a too-permissive file or traversal limit. |
 | `unsupported-platform` | The requested operation is not supported on the current platform. | E.g. POSIX-only helper invoked on Windows. |
 
 ## Branching
@@ -141,7 +152,7 @@ A common pattern is to wrap your domain code in a single try/catch that maps bot
 A handful of helpers throw their own typed errors instead of `FsSafeError`:
 
 - `JsonFileReadError` — thrown by [`readJson`](json.md). Carries `cause` so you can distinguish missing (`ENOENT`) from invalid (`SyntaxError`).
-- `ArchiveLimitError` — thrown by [`extractArchive`](archive.md) when an archive size, entry count, or extracted-byte budget is exceeded. The `code` field uses `ARCHIVE_LIMIT_ERROR_CODE` constants (e.g. `"ARCHIVE_SIZE_EXCEEDS_LIMIT"`).
+- `ArchiveLimitError` — thrown by [`extractArchive`](archive.md) when an archive size, entry count, path depth, metadata, or extracted-byte budget is exceeded. The `code` field uses the string values exposed by `ARCHIVE_LIMIT_ERROR_CODE` (for example `archive-entry-path-components-exceeds-limit`).
 - `ArchiveSecurityError` — thrown by extraction when entry policy or destination safety fails. Entry codes are `entry-path`, `entry-link`, and `entry-filtered`; destination codes cover non-directory, symlink, and symlink-traversal failures.
 
 These are exported from their respective subpaths.

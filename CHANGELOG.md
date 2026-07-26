@@ -14,6 +14,7 @@
 
 - Abort and tear down JavaScript TAR extraction immediately when entry policy, path validation, link rejection, or a budget fails, preventing node-tar from leaving a paused parser after rejected fleet-restore entries; both native and JavaScript paths now return the same typed archive-policy errors.
 - Attach a post-creation failure receipt to `publishFileExclusive()` errors with the failing phase, whether this call created the target, its observed identity, and whether cleanup removed, preserved, or could not classify the target.
+- Add `publishFileExclusive({ onSyncFailure: "rollback" | "preserve" })`: rollback remains the default, while preserve keeps a complete target after directory-sync failure and reports the failed sync outcome in the typed provenance receipt.
 - Close the pinned publication source on parent-pinning failure so every acquired descriptor is released on every exit path.
 - Remove the native loader's PATH-resolved `ldd` execution. Linux libc detection now uses the Node process report, conventional musl library filenames, and the Node executable's ELF interpreter without spawning a process at import time; an inconclusive probe conservatively attempts glibc and falls back normally in `auto` mode.
 - Default archive extraction to `entryModes: "clamp"`, normalizing directories to `0o755` and files to `0o644` or `0o755` while always stripping setuid, setgid, and sticky bits; use `"preserve"` to retain safe archived rwx bits.
@@ -25,11 +26,12 @@
 
 ### Compatibility
 
-- Remove the persistent Python helper and its `pythonPath` configuration. Replace `configureFsSafePython`, `FS_SAFE_PYTHON_MODE`, and the OpenClaw Python aliases with `configureFsSafeNative` and `FS_SAFE_NATIVE_MODE`; 0.5.x warns once and maps the former `auto`, `require`, and `off` policies as a temporary migration bridge that will be removed in 0.6.
+- Remove the persistent Python helper and its `pythonPath` configuration. Replace `configureFsSafePython`, `FS_SAFE_PYTHON_MODE`, and the OpenClaw Python aliases with `configureFsSafeNative` and `FS_SAFE_NATIVE_MODE`; 0.5 warns once and maps the former `auto`, `require`, and `off` policies solely as an upgrade bridge for shipped 0.4 consumers.
 - Add `publishFileExclusive({ strategy: "rename-noreplace" })`; this strategy requires the native helper, atomically moves the source, and never replaces an existing destination.
 
 ### Docs and Tooling
 
+- Add an ordered 0.4-to-0.5 migration checklist and reconcile every new archive, native, publication, walk, lock, secret, permission, and temp-workspace contract with realistic examples and cross-links.
 - Convert the repository to a pnpm workspace, test the Rust crate on Linux, macOS, and Windows, and publish all platform bindings, the native loader, and the root package through one protected-tag release pipeline with npm provenance.
 - Replace unused napi-rs Android, FreeBSD, OpenHarmony, WASI, and unsupported-architecture loader branches with a checked-in loader for the seven packages actually published, and make publication benchmarks report the exercised clone/copy/JavaScript tier plus filesystem environment.
 

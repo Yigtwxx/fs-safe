@@ -64,7 +64,11 @@ createIcaclsResetCommand(targetPath, { isDir, env });
 resolveWindowsUserPrincipal(env);
 ```
 
-The default Windows inspector calls `icacls.exe /sid` and classifies principals as trusted, world, or group. Trusted defaults include the current user, SYSTEM, and Administrators. The parser is on the advanced surface so tests and CLIs can process captured `icacls` output without spawning a process.
+The fallback Windows inspector calls `icacls.exe <path>` using its supported
+path-only inspection syntax and classifies principals as trusted, world, or
+group. Trusted defaults include the current user, SYSTEM, and Administrators.
+The parser is on the advanced surface so tests and CLIs can process captured
+`icacls` output without spawning a process.
 
 When the optional native binding is available, `inspectPathPermissions()`
 reads the owner and DACL directly with Windows security APIs. It classifies the
@@ -76,9 +80,13 @@ cannot classify equivalently fall back to the established owner/.NET and
 ## Private directories
 
 ```ts
+import path from "node:path";
 import { createPrivateDirectory } from "@openclaw/fs-safe/permissions";
 
-await createPrivateDirectory("C:\\Users\\me\\AppData\\Local\\MyApp\\private");
+const sqliteDirectory =
+  "C:\\Users\\me\\AppData\\Local\\OpenClaw\\private-databases";
+await createPrivateDirectory(sqliteDirectory);
+await openSqlite(path.join(sqliteDirectory, "sessions.sqlite"));
 ```
 
 On Windows with native support, this creates the directory and applies a
@@ -121,3 +129,5 @@ type PermissionCheck = {
 
 - [Secure file reads](secure-file.md) — fd-pinned reads that enforce these checks.
 - [Errors](errors.md) — permission-related `FsSafeError` codes.
+- [Native architecture](native.md) — direct Windows security descriptor mechanisms.
+- [Migrating to 0.5](migrating-to-0.5.md) — native-only feature checklist.

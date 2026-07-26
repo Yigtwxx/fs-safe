@@ -125,3 +125,4 @@ directories.
 
 - [`fileStore`](file-store.md) — managed stores use bounded walking for pruning.
 - [Path scopes](path-scope.md) — boundary checks for known absolute paths.
+- [Migrating to 0.5](migrating-to-0.5.md) — adopting bounded pruning and partial-result handling.

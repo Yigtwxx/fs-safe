@@ -66,6 +66,22 @@ Set process-wide defaults for sidecar lock options. This does **not** turn locki
 
 `staleRecovery` defaults to `"fail-closed"`. The opt-in `"remove-if-unchanged"` mode requires caller approval and serializes the final snapshot check and unlink with an exclusive `.reclaim` guard. A reclaim guard left by a killed reclaimer fails closed and requires externally coordinated cleanup.
 
+For a daemon that should wait briefly for normal contention but never delete a
+stale owner without per-lock approval:
+
+```ts
+configureFsSafeLocks({
+  staleRecovery: "fail-closed",
+  staleMs: 2 * 60_000,
+  timeoutMs: 15_000,
+  retry: { retries: 30, minTimeout: 50, maxTimeout: 1_000, randomize: true },
+});
+```
+
+Individual lock calls can override any default. Switching the global stale
+recovery mode does not provide the application-owned liveness proof required
+by `shouldRemoveStaleLock`.
+
 ## `getFsSafeLockConfig()`
 
 ```ts
@@ -86,7 +102,7 @@ FS_SAFE_NATIVE_MODE=auto      # auto | off | require | true | false | on | 1 | 0
 
 ### Python-helper migration bridge
 
-The 0.5.x line detects the former `FS_SAFE_PYTHON_MODE`, `FS_SAFE_PYTHON`,
+Version 0.5 detects the former `FS_SAFE_PYTHON_MODE`, `FS_SAFE_PYTHON`,
 `OPENCLAW_FS_SAFE_PYTHON_MODE`, `OPENCLAW_FS_SAFE_PYTHON`,
 `OPENCLAW_PINNED_PYTHON`, and `OPENCLAW_PINNED_WRITE_PYTHON` names. It emits one
 `FS_SAFE_PYTHON_DEPRECATED` warning and maps `auto`, `off`, or `require` to the
@@ -94,9 +110,10 @@ same native mode; interpreter paths are ignored. The deprecated
 `configureFsSafePython()` export behaves the same way.
 
 Replace these inputs with `configureFsSafeNative()` or
-`FS_SAFE_NATIVE_MODE`. The migration bridge is removed in 0.6. See [Migrating
-from the Python helper](native-helper.md#migration-from-the-python-helper) for
-the full mapping.
+`FS_SAFE_NATIVE_MODE` during the 0.5 upgrade. The bridge exists only so shipped
+0.4 configuration fails loudly and maps predictably; it is not a supported
+Python execution path. Follow the [0.5 migration checklist](migrating-to-0.5.md)
+for the full upgrade.
 
 ## Related pages
 
@@ -104,3 +121,4 @@ the full mapping.
 - [File lock](sidecar-lock.md) — the per-resource lock API that consumes lock defaults.
 - [Root API](root.md) — the API whose POSIX hardening the helper backs.
 - [Errors](errors.md) — `helper-unavailable` and `helper-failed`.
+- [Migrating to 0.5](migrating-to-0.5.md) — ordered consumer upgrade checklist.

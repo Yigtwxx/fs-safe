@@ -1,6 +1,9 @@
 # Testing
 
-`@openclaw/fs-safe/test-hooks` exposes a small set of test-only injection points. They are inert in production: the hooks only activate when `process.env.NODE_ENV === "test"`. Outside test mode, calls to set hooks are no-ops, so leaking a test setup line into production is safe but ineffective.
+`@openclaw/fs-safe/test-hooks` exposes test-only injection points. Registration
+is allowed only when `process.env.NODE_ENV === "test"` or
+`process.env.VITEST === "true"`; registering a non-empty hook set elsewhere
+throws. Production code must not import this subpath.
 
 ```ts
 import {
@@ -26,6 +29,10 @@ type FsSafeTestHooks = {
   afterPreOpenLstat?: (filePath: string) => Promise<void> | void;
   beforeOpen?: (filePath: string, flags: number) => Promise<void> | void;
   afterOpen?: (filePath: string, handle: import("node:fs/promises").FileHandle) => Promise<void> | void;
+  afterPublishTargetCreated?: (method, targetPath, identity) => Promise<void> | void;
+  beforePublishDirectorySync?: (method, targetPath, identity) => Promise<void> | void;
+  // Additional archive, store, root-fallback, temp, and trash race hooks are
+  // documented on the focused Test hooks reference page.
 };
 
 function __setFsSafeTestHooksForTest(hooks?: FsSafeTestHooks): void;
@@ -37,6 +44,8 @@ Hooks are called at well-defined points in the library's hot paths:
 - **`afterPreOpenLstat`** — runs after the pre-open `lstat`. A common use is to swap the path's target via `fs.symlink`/`fs.unlink` to drive a TOCTOU race.
 - **`beforeOpen`** — runs before `fs.open` with the exact flags the root read path will use.
 - **`afterOpen`** — runs after the file handle is opened. Useful to wrap handle methods or inject a size race before a stream is consumed.
+- **`afterPublishTargetCreated`** — runs after exclusive publication created a target but before its final fences.
+- **`beforePublishDirectorySync`** — runs after target verification and immediately before strict parent sync; useful for exercising `onSyncFailure`.
 
 `__setFsSafeTestHooksForTest(undefined)` clears all hooks. Always clean up between tests.
 
@@ -115,6 +124,8 @@ afterEach(() => {
 ```
 
 A global hook clear in your test setup file is a good safety net.
+
+See the [complete Test hooks reference](test-hooks.md) for every optional hook.
 
 ## Patterns for testing fs-safe-using code
 

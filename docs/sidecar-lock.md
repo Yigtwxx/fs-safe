@@ -84,7 +84,7 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
 
 type FileLockRetryOptions = {
   retries?: number;       // number of retry attempts after the first failure
-  factor?: number;        // exponential backoff factor (default 2)
+  factor?: number;        // exponential backoff factor (default 1: constant delay)
   minTimeout?: number;    // initial delay (ms)
   maxTimeout?: number;    // delay cap (ms)
   randomize?: boolean;    // jitter
@@ -130,16 +130,25 @@ block the calling thread; use the async API in request-serving code.
 Always release in a `finally`:
 
 ```ts
-const handle = await acquireFileLock(targetPath, {
+import { acquireFileLockSync } from "@openclaw/fs-safe/file-lock";
+
+const handle = acquireFileLockSync("/var/lib/app/schema.json", {
   staleMs: 60_000,
-  payload: () => ({ pid: process.pid }),
+  timeoutMs: 5_000,
+  retry: { retries: 20, minTimeout: 25, maxTimeout: 250 },
+  payload: () => ({ pid: process.pid, operation: "schema-migration" }),
 });
 try {
-  await doExclusiveWork();
+  if (!handle.verifyStillHeld()) throw new Error("migration lock was replaced");
+  migrateSchemaSynchronously();
 } finally {
-  await handle.release();
+  handle.release();
 }
 ```
+
+The sync payload, reclaim, and parsing callbacks must also be synchronous. This
+shape is appropriate for a short boot migration; it is a poor fit for a server
+request because retry backoff uses a blocking wait.
 
 If your process dies before `release()` runs and skips the exit handler, the sidecar remains. Once `staleMs` elapses (or your `shouldReclaim` returns true), acquisition fails closed by default instead of deleting by path.
 
@@ -278,3 +287,4 @@ await withFileLock(
 
 - [Atomic writes](atomic.md) — single-writer atomicity that often replaces the need for a lock entirely.
 - `createAsyncLock` from `@openclaw/fs-safe/advanced` — in-process serialization for a single Node process.
+- [Migrating to 0.5](migrating-to-0.5.md) — choosing sync versus async lock APIs.

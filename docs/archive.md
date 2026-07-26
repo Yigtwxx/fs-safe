@@ -77,6 +77,29 @@ size. Returning `"skip"` rejects the whole archive unless `onFiltered` is
 explicitly `"skip-entry"`. Path traversal and archive-wide entry-count checks
 still apply to skipped entries.
 
+For example, a fleet restore can omit regenerated cache entries while rejecting
+any other policy mismatch by default:
+
+```ts
+await extractArchive({
+  archivePath: snapshotPath,
+  destDir: restoreRoot,
+  timeoutMs: 30_000,
+  entryFilter: ({ path: entryPath, kind }) =>
+    kind === "directory" && entryPath === "state/cache"
+      ? "skip"
+      : entryPath.startsWith("state/cache/")
+        ? "skip"
+        : "extract",
+  onFiltered: "skip-entry",
+  limits: { maxEntries: 50_000, maxEntryPathComponents: 64 },
+});
+```
+
+If skipping was not explicitly part of the restore contract, omit
+`onFiltered`; the first `"skip"` then rejects the complete archive with
+`ArchiveSecurityError("entry-filtered")`.
+
 Policy rejection is prompt on both implementations. The JavaScript TAR path
 owns the file stream and aborts node-tar through a pipeline on filter, path,
 link, limit, validation, or timeout failure, which destroys both ends instead
@@ -161,6 +184,22 @@ bzip2 TAR extension with no native binding throws the typed
 `FsSafeError("helper-unavailable")` with installation guidance. This includes
 `mode: "off"`; those two formats have no JavaScript fallback.
 
+For a service whose input contract requires zstd, configure native mode before
+the first archive call so a packaging mistake fails at the boundary:
+
+```ts
+import { configureFsSafeNative } from "@openclaw/fs-safe/config";
+import { extractArchive } from "@openclaw/fs-safe/archive";
+
+configureFsSafeNative({ mode: "require" });
+await extractArchive({
+  archivePath: "/srv/restore/snapshot.tar.zst",
+  destDir: "/srv/restore/staging",
+  kind: "tar-zstd",
+  timeoutMs: 60_000,
+});
+```
+
 ## `readArchiveEntry`
 
 `readArchiveEntry(archivePath, entryPath, { maxBytes, kind? })` reads one
@@ -172,9 +211,11 @@ With a native binding it uses the same Rust decoders as extraction, including
 zstd and bzip2 TAR. Without native it retains the JS ZIP/TAR/gzip implementation.
 
 ```ts
-const manifest = await readArchiveEntry(uploadPath, "package/manifest.json", {
+const rawManifest = await readArchiveEntry(uploadPath, "package/manifest.json", {
   maxBytes: 64 * 1024,
 });
+const manifest = JSON.parse(rawManifest.toString("utf8")) as PluginManifest;
+validatePluginManifest(manifest);
 ```
 
 ## Lower-level building blocks
@@ -272,4 +313,5 @@ await withTempWorkspace({ rootDir: "/srv/site/tmp", prefix: "extract-" }, async 
 - [Atomic writes](atomic.md) — `replaceDirectoryAtomic` for staged directory replacement.
 - [Temp workspaces](temp.md) — extract into a private workspace and commit as one step.
 - [Errors](errors.md) — `FsSafeError` codes the underlying writes can raise.
+- [Migrating to 0.5](migrating-to-0.5.md) — clamp-default and native-format upgrade checklist.
 - [`extractArchive` source](https://github.com/openclaw/fs-safe/blob/main/src/archive.ts).
