@@ -23,6 +23,11 @@ export type FsSafeTestHooks = {
     targetPath: string,
     identity: FileIdentityStat,
   ) => Promise<void> | void;
+  beforePublishDirectorySync?: (
+    method: "hardlink" | "exclusive-copy" | "rename-noreplace",
+    targetPath: string,
+    identity: FileIdentityStat,
+  ) => Promise<void> | void;
 };
 
 let fsSafeTestHooks: FsSafeTestHooks | undefined;

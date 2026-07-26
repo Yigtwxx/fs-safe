@@ -12,7 +12,23 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { syncNativeFileBestEffort } from "./native-operations.js";
 import { getNativeBinding, requireNativeBinding, type NativeBinding } from "./native.js";
+import {
+  directorySyncFailure,
+  publicationFailure,
+  rememberCreatedTarget,
+  type PublishFailureState,
+  type PublishFileExclusiveCleanup,
+  type PublishFileExclusiveSyncFailurePolicy,
+} from "./publish-file-failure.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+
+export type {
+  PublishFileExclusiveCleanup,
+  PublishFileExclusiveDirectorySyncFailure,
+  PublishFileExclusiveFailureDetails,
+  PublishFileExclusiveFailurePhase,
+  PublishFileExclusiveSyncFailurePolicy,
+} from "./publish-file-failure.js";
 
 export type PublishFileExclusiveStrategy =
   | "link-or-copy"
@@ -23,31 +39,6 @@ export type PublishFileExclusiveResult = {
   method: "hardlink" | "exclusive-copy" | "rename-noreplace";
   identity: Stats;
   directorySync: DirectorySyncOutcome;
-};
-
-export type PublishFileExclusiveFailurePhase =
-  | "copy-create"
-  | "copy-verify"
-  | "directory-sync"
-  | "hardlink-create"
-  | "hardlink-verify"
-  | "rename-create"
-  | "rename-verify";
-
-export type PublishFileExclusiveCleanup = "removed" | "preserved" | "unknown";
-
-export type PublishFileExclusiveFailureDetails = {
-  phase: PublishFileExclusiveFailurePhase;
-  targetCreated: boolean;
-  targetIdentity?: FileIdentityStat;
-  cleanup: PublishFileExclusiveCleanup;
-};
-
-type PublishFailureState = {
-  phase: PublishFileExclusiveFailurePhase;
-  targetCreated: boolean;
-  targetIdentity?: FileIdentityStat;
-  preserveTarget: boolean;
 };
 
 const HARDLINK_FALLBACK_CODES = new Set([
@@ -257,16 +248,6 @@ async function copyPinnedSource(params: {
   }
 }
 
-function rememberCreatedTarget(
-  state: PublishFailureState,
-  identity: FileIdentityStat,
-  phase: PublishFileExclusiveFailurePhase,
-): void {
-  state.targetCreated = true;
-  state.targetIdentity = { dev: identity.dev, ino: identity.ino };
-  state.phase = phase;
-}
-
 async function removeCreatedTargetIfUnchanged(
   targetPath: string,
   identity?: FileIdentityStat,
@@ -286,23 +267,26 @@ async function removeCreatedTargetIfUnchanged(
   }
 }
 
-function publicationFailure(
-  error: unknown,
-  state: PublishFailureState,
-  cleanup: PublishFileExclusiveCleanup,
-): FsSafeError {
-  const cause = error instanceof Error ? error : new Error(String(error));
-  const details: PublishFileExclusiveFailureDetails = {
-    phase: state.phase,
-    targetCreated: state.targetCreated,
-    ...(state.targetIdentity ? { targetIdentity: state.targetIdentity } : {}),
-    cleanup,
-  };
-  return new FsSafeError(
-    error instanceof FsSafeError ? error.code : "helper-failed",
-    `exclusive file publication failed during ${state.phase}: ${cause.message}`,
-    { cause, details },
-  );
+async function syncPublishedParent(params: {
+  parent: Awaited<ReturnType<typeof pinDirectory>>;
+  failure: PublishFailureState;
+  method: PublishFileExclusiveResult["method"];
+  targetPath: string;
+}): Promise<DirectorySyncOutcome> {
+  params.failure.phase = "directory-sync";
+  try {
+    await getFsSafeTestHooks()?.beforePublishDirectorySync?.(
+      params.method,
+      params.targetPath,
+      params.failure.targetIdentity!,
+    );
+    // PinnedDirectory.sync() revalidates descriptor/path identity immediately
+    // before and after fsync; keep that check inside the shared sync boundary.
+    return await params.parent.sync();
+  } catch (error) {
+    params.failure.directorySync = directorySyncFailure(error);
+    throw error;
+  }
 }
 
 export async function publishFileExclusive(params: {
@@ -310,6 +294,7 @@ export async function publishFileExclusive(params: {
   targetPath: string;
   expectedSourceIdentity?: FileIdentityStat;
   strategy: PublishFileExclusiveStrategy;
+  onSyncFailure?: PublishFileExclusiveSyncFailurePolicy;
   parentReceipt?: DirectoryReceipt;
 }): Promise<PublishFileExclusiveResult> {
   const sourcePath = path.resolve(params.sourcePath);
@@ -387,13 +372,16 @@ export async function publishFileExclusive(params: {
           throw error;
         }
       }
-      await parent.assertCurrent();
       syncNativeFileBestEffort(sourceNativeParent!.handle.fd);
-      failure.phase = "directory-sync";
       return {
         method: "rename-noreplace",
         identity: targetIdentity,
-        directorySync: await parent.sync(),
+        directorySync: await syncPublishedParent({
+          parent,
+          failure,
+          method: "rename-noreplace",
+          targetPath,
+        }),
       };
     }
 
@@ -423,12 +411,15 @@ export async function publishFileExclusive(params: {
         throw new FsSafeError("path-mismatch", "hardlink publication target changed");
       }
       await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceIdentity });
-      await parent.assertCurrent();
-      failure.phase = "directory-sync";
       return {
         method: "hardlink",
         identity: targetIdentity,
-        directorySync: await parent.sync(),
+        directorySync: await syncPublishedParent({
+          parent,
+          failure,
+          method: "hardlink",
+          targetPath,
+        }),
       };
     } catch (error) {
       if (
@@ -467,9 +458,12 @@ export async function publishFileExclusive(params: {
         throw new FsSafeError("path-mismatch", "exclusive publication copy failed content fencing");
       }
       await assertPinnedSourceCurrent({ sourcePath, handle: source, identity: sourceIdentity });
-      await parent.assertCurrent();
-      failure.phase = "directory-sync";
-      const directorySync = await parent.sync();
+      const directorySync = await syncPublishedParent({
+        parent,
+        failure,
+        method: "exclusive-copy",
+        targetPath,
+      });
       return { method: "exclusive-copy", identity: targetPathStat, directorySync };
     } catch (error) {
       await target?.close().catch(() => undefined);
@@ -480,7 +474,9 @@ export async function publishFileExclusive(params: {
     }
   } catch (error) {
     if (!failure.targetCreated) throw error;
-    const cleanup = failure.preserveTarget
+    const preserveSyncFailure =
+      failure.phase === "directory-sync" && params.onSyncFailure === "preserve";
+    const cleanup = failure.preserveTarget || preserveSyncFailure
       ? "preserved"
       : await removeCreatedTargetIfUnchanged(targetPath, failure.targetIdentity);
     throw publicationFailure(error, failure, cleanup);

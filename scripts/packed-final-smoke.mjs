@@ -125,6 +125,44 @@ try {
     results.publication.push({ cleanup, phase: "hardlink-verify", targetCreated: true });
   }
 
+  for (const onSyncFailure of ["rollback", "preserve"]) {
+    const directory = path.join(root, `publish-sync-${onSyncFailure}`);
+    const sourcePath = path.join(directory, "source");
+    const targetPath = path.join(directory, "target");
+    await fs.mkdir(directory);
+    await fs.writeFile(sourcePath, "complete-archive");
+    __setFsSafeTestHooksForTest({
+      beforePublishDirectorySync() {
+        throw Object.assign(new Error("directory sync failed"), { code: "EIO" });
+      },
+    });
+    const expectedCleanup = onSyncFailure === "preserve" ? "preserved" : "removed";
+    try {
+      await assert.rejects(
+        publishFileExclusive({
+          sourcePath,
+          targetPath,
+          strategy: "link-required",
+          onSyncFailure,
+        }),
+        (error) =>
+          error?.details?.phase === "directory-sync" &&
+          error?.details?.targetCreated === true &&
+          error?.details?.cleanup === expectedCleanup &&
+          error?.details?.directorySync?.status === "failed" &&
+          error?.details?.directorySync?.code === "EIO",
+      );
+    } finally {
+      __setFsSafeTestHooksForTest();
+    }
+    assert.equal(await pathExists(targetPath), onSyncFailure === "preserve");
+    results.publication.push({
+      onSyncFailure,
+      cleanup: expectedCleanup,
+      directorySync: { status: "failed", code: "EIO" },
+    });
+  }
+
   console.log(JSON.stringify(results));
 } finally {
   __setFsSafeTestHooksForTest();
@@ -191,4 +229,14 @@ function writeOctal(block, offset, length, value) {
 
 function writeString(block, offset, length, value) {
   block.write(value, offset, Math.min(length, Buffer.byteLength(value)), "utf8");
+}
+
+async function pathExists(filePath) {
+  try {
+    await fs.lstat(filePath);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
 }

@@ -151,6 +151,87 @@ describe("exclusive file publication", () => {
       }
     },
   );
+
+  it.each([
+    ["rollback", "removed"],
+    ["preserve", "preserved"],
+  ] as const)(
+    "%s sync-failure policy reports %s cleanup for an unchanged target",
+    async (onSyncFailure, cleanup) => {
+      configureFsSafeNative({ mode: "off" });
+      const directory = await tempRoot(`fs-safe-publish-sync-${onSyncFailure}-`);
+      const sourcePath = path.join(directory, "source");
+      const targetPath = path.join(directory, "target");
+      await fs.writeFile(sourcePath, "complete-archive");
+      __setFsSafeTestHooksForTest({
+        beforePublishDirectorySync(method, createdPath) {
+          expect(method).toBe("hardlink");
+          expect(createdPath).toBe(targetPath);
+          throw Object.assign(new Error("directory sync failed"), { code: "EIO" });
+        },
+      });
+
+      await expect(
+        publishFileExclusive({
+          sourcePath,
+          targetPath,
+          strategy: "link-required",
+          onSyncFailure,
+        }),
+      ).rejects.toMatchObject({
+        code: "helper-failed",
+        details: {
+          phase: "directory-sync",
+          targetCreated: true,
+          cleanup,
+          directorySync: { status: "failed", code: "EIO" },
+        },
+      });
+
+      if (onSyncFailure === "rollback") {
+        await expect(fs.access(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+      } else {
+        await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("complete-archive");
+      }
+    },
+  );
+
+  it("preserves a replacement target when the parent identity changes during sync", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const directory = await tempRoot("fs-safe-publish-sync-drift-");
+    const sourcePath = path.join(directory, "source");
+    const targetPath = path.join(directory, "target");
+    const movedDirectory = `${directory}.moved`;
+    tempDirs.push(movedDirectory);
+    await fs.writeFile(sourcePath, "complete-archive");
+    __setFsSafeTestHooksForTest({
+      async beforePublishDirectorySync() {
+        await fs.rename(directory, movedDirectory);
+        await fs.mkdir(directory);
+        await fs.writeFile(targetPath, "replacement");
+      },
+    });
+
+    await expect(
+      publishFileExclusive({
+        sourcePath,
+        targetPath,
+        strategy: "link-required",
+        onSyncFailure: "rollback",
+      }),
+    ).rejects.toMatchObject({
+      details: {
+        phase: "directory-sync",
+        targetCreated: true,
+        cleanup: "preserved",
+        directorySync: { status: "failed", code: "path-mismatch" },
+      },
+    });
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("replacement");
+    await expect(fs.readFile(path.join(movedDirectory, "target"), "utf8")).resolves.toBe(
+      "complete-archive",
+    );
+  });
 });
 
 describe("secret file additions", () => {
