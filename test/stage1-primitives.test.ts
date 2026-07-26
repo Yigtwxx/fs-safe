@@ -196,19 +196,18 @@ describe("exclusive file publication", () => {
     },
   );
 
-  it("preserves a replacement target when the parent identity changes during sync", async () => {
+  it("preserves a replacement target when its identity changes during sync failure", async () => {
     configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-publish-sync-drift-");
     const sourcePath = path.join(directory, "source");
     const targetPath = path.join(directory, "target");
-    const movedDirectory = `${directory}.moved`;
-    tempDirs.push(movedDirectory);
+    const originalLinkPath = path.join(directory, "original-link");
     await fs.writeFile(sourcePath, "complete-archive");
     __setFsSafeTestHooksForTest({
       async beforePublishDirectorySync() {
-        await fs.rename(directory, movedDirectory);
-        await fs.mkdir(directory);
+        await fs.rename(targetPath, originalLinkPath);
         await fs.writeFile(targetPath, "replacement");
+        throw Object.assign(new Error("target identity changed"), { code: "path-mismatch" });
       },
     });
 
@@ -228,10 +227,49 @@ describe("exclusive file publication", () => {
       },
     });
     await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("replacement");
-    await expect(fs.readFile(path.join(movedDirectory, "target"), "utf8")).resolves.toBe(
+    await expect(fs.readFile(originalLinkPath, "utf8")).resolves.toBe(
       "complete-archive",
     );
   });
+
+  it.runIf(process.platform !== "win32")(
+    "detects parent replacement inside the shared directory-sync boundary",
+    async () => {
+      configureFsSafeNative({ mode: "off" });
+      const directory = await tempRoot("fs-safe-publish-parent-drift-");
+      const movedDirectory = `${directory}.moved`;
+      tempDirs.push(movedDirectory);
+      const sourcePath = path.join(directory, "source");
+      const targetPath = path.join(directory, "target");
+      await fs.writeFile(sourcePath, "complete-archive");
+      __setFsSafeTestHooksForTest({
+        async beforePublishDirectorySync() {
+          await fs.rename(directory, movedDirectory);
+          await fs.mkdir(directory);
+          await fs.writeFile(targetPath, "replacement");
+        },
+      });
+
+      await expect(
+        publishFileExclusive({
+          sourcePath,
+          targetPath,
+          strategy: "link-required",
+          onSyncFailure: "rollback",
+        }),
+      ).rejects.toMatchObject({
+        details: {
+          phase: "directory-sync",
+          cleanup: "preserved",
+          directorySync: { status: "failed", code: "path-mismatch" },
+        },
+      });
+      await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("replacement");
+      await expect(fs.readFile(path.join(movedDirectory, "target"), "utf8")).resolves.toBe(
+        "complete-archive",
+      );
+    },
+  );
 });
 
 describe("secret file additions", () => {
