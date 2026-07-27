@@ -21,6 +21,11 @@ optional.
   import fs-safe, but native-only features and missing JS archive decoders fail
   with actionable errors.
 
+If you call `resolveRootPath()` or `resolveRootPathSync()` directly, upgrade to
+0.5: versions through 0.4.7 could approve an in-root symlink traversal that
+resolved outside the root. `root()` handles were not affected. See the
+[affected versions and exposure](security-model.md#affected-versions-exposure).
+
 ## 2. Replace Python helper configuration
 
 Change startup configuration before the first filesystem operation:
