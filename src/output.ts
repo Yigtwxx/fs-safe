@@ -21,9 +21,20 @@ export type ExternalFileWriteResult<T = void> = {
   result: T;
 };
 
+const NON_PORTABLE_FILE_NAME_CHARACTERS = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/u;
+
 function tempFileNameForTarget(targetPath: string, fallbackFileName?: string): string {
   const fallback = sanitizeUntrustedFileName(fallbackFileName ?? "output.bin", "output.bin");
   return sanitizeUntrustedFileName(path.basename(targetPath), fallback);
+}
+
+function sanitizedTargetPath(targetPath: string, fallbackFileName?: string): string {
+  const basename = path.basename(targetPath);
+  if (!NON_PORTABLE_FILE_NAME_CHARACTERS.test(basename)) {
+    return targetPath;
+  }
+  const sanitized = tempFileNameForTarget(targetPath, fallbackFileName);
+  return sanitized === basename ? targetPath : path.join(path.dirname(targetPath), sanitized);
 }
 
 function ensureTrailingSep(value: string): string {
@@ -74,12 +85,13 @@ export async function writeExternalFileWithinRoot<T = void>(
     throw new FsSafeError("invalid-path", "target path is required");
   }
   assertFileTargetPath(requestedTargetPath);
-  const targetPath = toRootPathInput({
+  const rawTargetPath = toRootPathInput({
     rootDir: targetRoot.rootDir,
     rootReal: targetRoot.rootReal,
     targetPath: requestedTargetPath,
   });
-  assertFileTargetPath(targetPath);
+  assertFileTargetPath(rawTargetPath);
+  const targetPath = sanitizedTargetPath(rawTargetPath, options.fallbackFileName);
   const finalPath = await targetRoot.resolve(targetPath);
   if (options.staging === "sibling") {
     const parentPath = path.dirname(targetPath);

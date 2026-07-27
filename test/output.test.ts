@@ -133,24 +133,33 @@ describe("writeExternalFileWithinRoot", () => {
     });
   });
 
-  it("sanitizes the configured fallback used for external staging names", async () => {
-    const rootDir = await tempRoot("fs-safe-output-fallback-name-");
-    const controlName = "\u0001";
-    let stagedName = "";
+  it.each(["workspace", "sibling"] as const)(
+    "uses one portable sanitized name for %s staging and the final target",
+    async (staging) => {
+      const rootDir = await tempRoot("fs-safe-output-fallback-name-");
+      const controlName = "\u0001";
+      let stagedName = "";
 
-    await writeExternalFileWithinRoot({
-      rootDir,
-      path: controlName,
-      fallbackFileName: "../safe-output.bin",
-      write: async (candidate) => {
-        stagedName = path.basename(candidate);
-        await fs.writeFile(candidate, "safe", "utf8");
-      },
-    });
+      const result = await writeExternalFileWithinRoot({
+        rootDir,
+        path: controlName,
+        fallbackFileName: 'safe<>:"|?*\u0085-output.bin',
+        staging,
+        write: async (candidate) => {
+          stagedName = path.basename(candidate);
+          await fs.writeFile(candidate, "safe", "utf8");
+        },
+      });
 
-    expect(stagedName).toBe("safe-output.bin");
-    await expect(fs.readFile(path.join(rootDir, controlName), "utf8")).resolves.toBe("safe");
-  });
+      expect(stagedName).not.toMatch(/[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/u);
+      expect(stagedName).toContain("safe-output.bin");
+      expect(result.path).toBe(path.join(await fs.realpath(rootDir), "safe-output.bin"));
+      await expect(fs.readFile(result.path, "utf8")).resolves.toBe("safe");
+      await expect(fs.stat(path.join(rootDir, controlName))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
 
   it("preserves caller-provided destination filename spacing", async () => {
     const rootDir = await tempRoot("fs-safe-output-spaces-");

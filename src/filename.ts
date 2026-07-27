@@ -1,5 +1,7 @@
 import path from "node:path";
 
+const WINDOWS_INVALID_FILE_NAME_CHARACTERS = new Set('<>:"/\\|?*');
+
 export function sanitizeUntrustedFileName(fileName: string, fallbackName: string): string {
   const trimmed = typeof fileName === "string" ? fileName.trim() : "";
   if (!trimmed) {
@@ -10,7 +12,11 @@ export function sanitizeUntrustedFileName(fileName: string, fallbackName: string
   let cleaned = "";
   for (let i = 0; i < base.length; i++) {
     const code = base.charCodeAt(i);
-    if (code < 0x20 || code === 0x7f) {
+    if (
+      code < 0x20 ||
+      (code >= 0x7f && code <= 0x9f) ||
+      WINDOWS_INVALID_FILE_NAME_CHARACTERS.has(base[i]!)
+    ) {
       continue;
     }
     cleaned += base[i];

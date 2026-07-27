@@ -51,9 +51,11 @@ root"; callers should choose the filename before calling this API.
 Use `maxBytes` when the external producer can create arbitrarily large files,
 and `mode` when the finalized file needs a specific POSIX mode. Both staging
 modes enforce them after the producer returns and before committing the target.
-`fallbackFileName` supplies the sanitized staged-file tail when the requested
-target basename sanitizes to an empty or special name; it does not rename the
-final target.
+Requested basenames containing C0/C1 controls or Windows-invalid characters are
+sanitized portably; `fallbackFileName` supplies the name when nothing remains.
+The same sanitized basename is used for producer staging, guarded internal
+temps, the final rename target, and the returned `path`; raw and staged names
+never diverge.
 
 ## Choosing a staging mode
 
