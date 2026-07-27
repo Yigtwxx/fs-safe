@@ -268,7 +268,7 @@ publication policy, creation callback, and platform contract.
 
 ## Atomic writes
 
-`replaceFileAtomic()` writes a sibling temp file, optionally fsyncs it, and renames it over the destination. Mode preservation, rename retry / copy fallback on `EPERM`, parent-directory fsync, and a `beforeRename` hook for backup or observer flows are all opt-in. `movePathWithCopyFallback()` stages cross-device moves before commit and removes only the copied source entries, so concurrent source additions or replacements are preserved.
+`replaceFileAtomic()` writes a sibling temp file, optionally fsyncs it, and renames it over the destination. Mode preservation, pinned-destination hardlink rejection, rename retry / copy fallback on `EPERM`, bounded original-content restoration after a torn fallback, parent-directory fsync, and a `beforeRename` hook for backup or observer flows are all opt-in. `movePathWithCopyFallback()` stages cross-device moves before commit and removes only the copied source entries, so concurrent source additions or replacements are preserved.
 
 ```ts
 import { replaceFileAtomic } from "@openclaw/fs-safe/atomic";
@@ -295,16 +295,19 @@ import { writeExternalFileWithinRoot } from "@openclaw/fs-safe/output";
 await writeExternalFileWithinRoot({
   rootDir: "/safe/workspace/downloads",
   path: "reports/today.pdf",
+  staging: "sibling",
   write: async (filePath) => {
     await download.saveAs(filePath);
   },
 });
 ```
 
-The callback receives a private temp file path, not the final destination. After
-the callback returns, fs-safe finalizes the staged file with `Root.copyIn()`,
-creating missing parents by default and rejecting traversal, symlink parent
-escapes, hardlinked final targets, and size-limit violations.
+The callback receives a staged path, not the final destination. The default
+`"workspace"` mode uses private temp storage plus `Root.copyIn()` for
+cross-device-tolerant finalization. `"sibling"` stages in the target directory,
+fsyncs the completed file, and atomically renames it over the target. Choose it
+when the destination directory is itself the writable boundary and atomic
+replacement matters.
 
 Use it when the final filename is known before the external writer runs. If the
 filename depends on sniffing the produced bytes, write to a private temp

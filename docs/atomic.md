@@ -43,6 +43,9 @@ type ReplaceFileAtomicOptions = {
   renameMaxRetries?: number;
   renameRetryBaseDelayMs?: number;
   copyFallbackOnPermissionError?: boolean;
+  copyFallbackRestore?: "restore-original" | "none"; // default: "none"
+  maxRestoreBytes?: number;          // required with "restore-original"
+  destinationHardlinks?: "reject";
   syncTempFile?: boolean;           // fsync(temp) before rename
   syncParentDir?: boolean;          // fsync(parent) after rename (POSIX only)
   beforeRename?: (params: { filePath: string; tempPath: string }) => Promise<void>;
@@ -74,6 +77,25 @@ replacement. The fallback removes the old destination, opens the replacement
 with exclusive/no-follow flags where the platform supports them, and refuses
 known symlink destinations so it does not write through a replaced destination
 link.
+
+Set `destinationHardlinks: "reject"` when an existing regular-file destination
+must not have aliases. The policy reads `nlink` from a pinned destination
+descriptor, not pathname metadata, before rename and rechecks it in the copy
+fallback.
+
+The default `copyFallbackRestore: "none"` preserves the existing fallback
+contract: a failed copy can leave a partial destination. For state files where
+preserving the old bytes is more important, choose `"restore-original"` and set
+an explicit `maxRestoreBytes` memory budget. If the destination exists, fs-safe
+snapshots it through a pinned descriptor, overwrites through that same
+descriptor, and synchronizes the result. Any write or sync failure triggers a
+restore and another sync through the same descriptor.
+
+Restore failures are `FsSafeError("helper-failed")` values with typed
+`details.cleanup` set to `"restored"` or `"restore-failed"`. An original larger
+than `maxRestoreBytes` fails with `too-large` before mutation. A missing
+destination has no original to restore and follows the exclusive-create copy
+fallback.
 
 ### Sync variant
 

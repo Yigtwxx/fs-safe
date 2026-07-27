@@ -31,6 +31,23 @@ target identity, cleanup decision, and failed directory-sync outcome. Narrow
 by `code` and a documented details field before consuming it; do not assume all
 `FsSafeError` instances carry the same keys.
 
+`replaceFileAtomic({ copyFallbackRestore: "restore-original" })` reports a
+failed copy fallback with the exported `ReplaceFileAtomicRestoreFailureDetails`
+shape:
+
+```ts
+type ReplaceFileAtomicRestoreFailureDetails = {
+  cleanup: "restored" | "restore-failed";
+};
+```
+
+Both outcomes use `code: "helper-failed"`. `"restored"` means the original
+snapshot was written back and fsynced through the pinned destination handle.
+`"restore-failed"` means both the replacement and recovery failed; `cause` is
+an `AggregateError` containing both failures. A snapshot that exceeds
+`maxRestoreBytes` fails earlier with `too-large` and does not overwrite the
+destination.
+
 `category` separates caller-policy failures from operational failures:
 
 - `"policy"` — unsafe input or target state, such as `outside-workspace`, `symlink`, `hardlink`, or `too-large`.

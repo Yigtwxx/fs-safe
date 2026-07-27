@@ -12,4 +12,10 @@ describe("sanitizeUntrustedFileName", () => {
     expect(sanitizeUntrustedFileName(" ", "fallback.bin")).toBe("fallback.bin");
     expect(sanitizeUntrustedFileName("..", "fallback.bin")).toBe("fallback.bin");
   });
+
+  it("strips C1 controls and Windows-invalid characters on every platform", () => {
+    expect(
+      sanitizeUntrustedFileName('re<po>r:t"|?*\u0085\u009f.pdf', "fallback.bin"),
+    ).toBe("report.pdf");
+  });
 });

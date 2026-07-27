@@ -13,6 +13,8 @@
 
 ### Security and Correctness
 
+- Add pinned-destination hardlink rejection and bounded original-content restoration to `replaceFileAtomic()` and its sync variant, including typed `restored` / `restore-failed` receipts for torn copy-fallback writes.
+- Add sibling staging to `writeExternalFileWithinRoot()`: external producers can write a randomized file in the target directory for fsynced same-filesystem atomic replacement, while private workspace staging remains the cross-device-tolerant default; staged and final basenames share portable C0/C1 and Windows-invalid-character sanitization on every host.
 - Enforce `movePathWithCopyFallback({ sourceHardlinks: "reject" })` with a streaming, entry-capped recursive preflight before mutation, closing a shipped 0.4.x gap where the common same-filesystem rename bypassed the policy; approved trees commit through a fresh staged copy with open-time and post-copy link-count fences so a scan/rename race cannot publish a hardlinked inode.
 - Abort and tear down JavaScript TAR extraction immediately when entry policy, path validation, link rejection, or a budget fails, preventing node-tar from leaving a paused parser after rejected fleet-restore entries; both native and JavaScript paths now return the same typed archive-policy errors.
 - Attach a post-creation failure receipt to `publishFileExclusive()` errors with the failing phase, whether this call created the target, its observed identity, and whether cleanup removed, preserved, or could not classify the target.

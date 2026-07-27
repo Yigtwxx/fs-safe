@@ -42,6 +42,125 @@ describe("writeExternalFileWithinRoot", () => {
     await expect(fs.stat(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("stages beside the target and atomically replaces an existing file", async () => {
+    const rootDir = await tempRoot("fs-safe-output-sibling-");
+    const targetDir = path.join(rootDir, "downloads");
+    const targetPath = path.join(targetDir, "report.txt");
+    await fs.mkdir(targetDir);
+    await fs.writeFile(targetPath, "old", "utf8");
+    let stagedPath = "";
+
+    const result = await writeExternalFileWithinRoot({
+      rootDir,
+      path: "downloads/report.txt",
+      staging: "sibling",
+      write: async (candidate) => {
+        stagedPath = candidate;
+        expect(path.dirname(candidate)).toBe(await fs.realpath(targetDir));
+        expect(path.basename(candidate)).toMatch(/^\.fs-safe-output-.*-report\.txt\.part$/);
+        await fs.writeFile(candidate, "new", "utf8");
+        await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("old");
+        return "written";
+      },
+    });
+
+    expect(result).toEqual({
+      path: path.join(await fs.realpath(rootDir), "downloads", "report.txt"),
+      result: "written",
+    });
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("new");
+    await expect(fs.stat(stagedPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("creates missing target parents for sibling staging", async () => {
+    const rootDir = await tempRoot("fs-safe-output-sibling-parent-");
+
+    await writeExternalFileWithinRoot({
+      rootDir,
+      path: "nested/deeper/output.txt",
+      staging: "sibling",
+      write: async (candidate) => {
+        await fs.writeFile(candidate, "created", "utf8");
+      },
+    });
+
+    await expect(fs.readFile(path.join(rootDir, "nested/deeper/output.txt"), "utf8"))
+      .resolves.toBe("created");
+  });
+
+  it("enforces sibling byte limits before replacing the destination", async () => {
+    const rootDir = await tempRoot("fs-safe-output-sibling-limit-");
+    const targetPath = path.join(rootDir, "output.bin");
+    await fs.writeFile(targetPath, "old", "utf8");
+
+    await expect(
+      writeExternalFileWithinRoot({
+        rootDir,
+        path: "output.bin",
+        staging: "sibling",
+        maxBytes: 3,
+        write: async (candidate) => {
+          await fs.writeFile(candidate, "too large", "utf8");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "too-large" });
+
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("old");
+    expect((await fs.readdir(rootDir)).filter((name) => name.startsWith(".fs-safe-output-")))
+      .toEqual([]);
+  });
+
+  it("cleans a sibling partial when the external writer fails", async () => {
+    const rootDir = await tempRoot("fs-safe-output-sibling-fail-");
+    let stagedPath = "";
+
+    await expect(
+      writeExternalFileWithinRoot({
+        rootDir,
+        path: "output.bin",
+        staging: "sibling",
+        write: async (candidate) => {
+          stagedPath = candidate;
+          await fs.writeFile(candidate, "partial", "utf8");
+          throw new Error("producer failed");
+        },
+      }),
+    ).rejects.toThrow("producer failed");
+
+    await expect(fs.stat(stagedPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(path.join(rootDir, "output.bin"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it.each(["workspace", "sibling"] as const)(
+    "uses one portable sanitized name for %s staging and the final target",
+    async (staging) => {
+      const rootDir = await tempRoot("fs-safe-output-fallback-name-");
+      const controlName = "\u0001";
+      let stagedName = "";
+
+      const result = await writeExternalFileWithinRoot({
+        rootDir,
+        path: controlName,
+        fallbackFileName: 'safe<>:"|?*\u0085-output.bin',
+        staging,
+        write: async (candidate) => {
+          stagedName = path.basename(candidate);
+          await fs.writeFile(candidate, "safe", "utf8");
+        },
+      });
+
+      expect(stagedName).not.toMatch(/[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/u);
+      expect(stagedName).toContain("safe-output.bin");
+      expect(result.path).toBe(path.join(await fs.realpath(rootDir), "safe-output.bin"));
+      await expect(fs.readFile(result.path, "utf8")).resolves.toBe("safe");
+      await expect(fs.stat(path.join(rootDir, controlName))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
   it("preserves caller-provided destination filename spacing", async () => {
     const rootDir = await tempRoot("fs-safe-output-spaces-");
     const fileName = " report .txt ";
@@ -245,6 +364,34 @@ describe("writeExternalFileWithinRoot", () => {
 
       await expect(fs.stat(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
       await expect(fs.readdir(outsideDir)).resolves.toEqual([]);
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "atomically replaces a symlink destination without following it",
+    async () => {
+      const rootDir = await tempRoot("fs-safe-output-sibling-link-root-");
+      const outsideDir = await tempRoot("fs-safe-output-sibling-link-outside-");
+      const outsidePath = path.join(outsideDir, "outside.txt");
+      const targetPath = path.join(rootDir, "output.txt");
+      await fs.writeFile(outsidePath, "outside", "utf8");
+      await fs.symlink(outsidePath, targetPath);
+      let called = false;
+
+      await writeExternalFileWithinRoot({
+        rootDir,
+        path: "output.txt",
+        staging: "sibling",
+        write: async (candidate) => {
+          called = true;
+          await fs.writeFile(candidate, "replacement", "utf8");
+        },
+      });
+
+      expect(called).toBe(true);
+      await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside");
+      expect((await fs.lstat(targetPath)).isSymbolicLink()).toBe(false);
+      await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("replacement");
     },
   );
 

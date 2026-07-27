@@ -147,6 +147,38 @@ modified. Clone support is filesystem- and mount-dependent, so callers must
 not infer durability or physical independence from timing; an unsupported
 clone or `copy_file_range` transparently continues down the fallback chain.
 
+## Recoverable atomic-replace fallback
+
+`replaceFileAtomic()` normally publishes a synchronized sibling temp with an
+atomic rename. Some Windows filesystems and file owners reject that rename with
+`EPERM` or `EEXIST`; `copyFallbackOnPermissionError: true` permits a non-atomic
+copy fallback.
+
+Callers that cannot tolerate a torn in-place fallback can add:
+
+```ts
+await replaceFileAtomic({
+  filePath: statePath,
+  content: nextState,
+  syncTempFile: true,
+  syncParentDir: true,
+  copyFallbackOnPermissionError: true,
+  copyFallbackRestore: "restore-original",
+  maxRestoreBytes: 4 * 1024 * 1024,
+  destinationHardlinks: "reject",
+});
+```
+
+The existing regular-file destination is pinned before its link count is
+accepted. Its original bytes are read within `maxRestoreBytes`, then the new
+bytes are written and synchronized through the same descriptor. If a write or
+sync tears, fs-safe rewrites the snapshot and fsyncs it before throwing. Inspect
+`details.cleanup`: `"restored"` means the original bytes were put back and
+synchronized; `"restore-failed"` means the replacement and recovery both
+failed, so the destination must be treated as indeterminate. This is recovery
+from a live-process I/O failure, not a transaction or a substitute for an
+application backup protocol.
+
 ## Streaming SHA-256
 
 `sha256File()` hashes either a pathname string or an already-open Node
