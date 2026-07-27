@@ -3,7 +3,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
-import { configureFsSafePython, root as openRoot } from "../src/index.js";
+import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import {
   ESCAPING_DIRECTORY_PAYLOADS,
   ESCAPING_WRITE_PAYLOADS,
@@ -24,7 +24,7 @@ async function makeTempLayout(prefix: string) {
 }
 
 afterEach(async () => {
-  configureFsSafePython({ mode: "auto", pythonPath: undefined });
+  configureFsSafeNative({ mode: "auto" });
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { force: true, recursive: true })));
 });
 
@@ -241,7 +241,7 @@ describe("write, move, and delete boundary bypass attempts", () => {
   }, 15000);
 
   it.runIf(process.platform !== "win32")("keeps literal '..'-prefixed read paths available when the helper is disabled", async () => {
-    configureFsSafePython({ mode: "off" });
+    configureFsSafeNative({ mode: "off" });
     const layout = await makeTempLayout("fs-safe-write-helper-off-literal");
     const safeRoot = await openRoot(layout.root);
     await fsp.writeFile(path.join(layout.root, "..%2fpwned.txt"), "literal");

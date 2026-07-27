@@ -386,12 +386,12 @@ async function replaceFileAtomicUnserialized(
   const unregisterTempPath = registerTempPathForExit(tempPath);
   let tempExists = false;
   let originalError: unknown;
-
   await fsModule.mkdir(dir, { recursive: true, mode: dirMode });
   await fsModule.chmod(dir, dirMode).catch(() => undefined);
   try {
     tempExists = true;
     await fsModule.writeFile(tempPath, options.content, { mode, flag: "wx" });
+    unregisterTempPath.setIdentity(await fsModule.lstat(tempPath));
     if (options.syncTempFile) {
       await syncTempFile(fsModule, tempPath);
     }
@@ -442,7 +442,6 @@ export function replaceFileAtomicSync(
   const unregisterTempPath = registerTempPathForExit(tempPath);
   let tempExists = false;
   let originalError: unknown;
-
   fsModule.mkdirSync(dir, { recursive: true, mode: dirMode });
   try {
     fsModule.chmodSync(dir, dirMode);
@@ -452,6 +451,7 @@ export function replaceFileAtomicSync(
   try {
     tempExists = true;
     fsModule.writeFileSync(tempPath, options.content, { mode, flag: "wx" });
+    unregisterTempPath.setIdentity(fsModule.lstatSync(tempPath));
     if (options.syncTempFile) {
       syncTempFileSync(fsModule, tempPath);
     }

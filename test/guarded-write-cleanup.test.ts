@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { configureFsSafePython } from "../src/pinned-python-config.js";
+import { configureFsSafeNative } from "../src/native-config.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
 
 const tempDirs: string[] = [];
@@ -38,7 +38,7 @@ async function replaceParentAfterOpen(params: {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  configureFsSafePython({ mode: "auto", pythonPath: undefined });
+  configureFsSafeNative({ mode: "auto" });
   Object.defineProperty(process, "platform", originalPlatformDescriptor);
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
@@ -48,7 +48,7 @@ const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "pla
 describe("guarded fallback write cleanup", () => {
   it.runIf(process.platform !== "win32")("closes pinned no-overwrite handles when post guards fail", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
-    configureFsSafePython({ mode: "off" });
+    configureFsSafeNative({ mode: "off" });
     const base = await tempRoot("fs-safe-pinned-post-guard-");
     const parentPath = path.join(base, "nested");
     const movedParentPath = path.join(base, "nested-real");

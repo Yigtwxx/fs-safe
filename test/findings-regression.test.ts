@@ -5,7 +5,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractArchive } from "../src/archive.js";
-import { configureFsSafePython, root as openRoot } from "../src/index.js";
+import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import { prepareArchiveDestinationDir, prepareArchiveOutputPath, mergeExtractedTreeIntoDestination } from "../src/archive-staging.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { writeJsonSync } from "../src/json.js";
@@ -40,14 +40,14 @@ async function writeOldFile(filePath: string, content = "old"): Promise<void> {
 afterEach(async () => {
   vi.restoreAllMocks();
   Object.defineProperty(process, "platform", originalPlatformDescriptor);
-  configureFsSafePython({ mode: "auto", pythonPath: undefined });
+  configureFsSafeNative({ mode: "auto" });
   __setFsSafeTestHooksForTest(undefined);
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { recursive: true, force: true })));
 });
 
 describe("security finding regressions", () => {
   it.runIf(process.platform !== "win32")("guards Root fallback mutators against parent swaps", async () => {
-    configureFsSafePython({ mode: "off" });
+    configureFsSafeNative({ mode: "off" });
     const base = await tempRoot("fs-safe-root-fallback-race-");
     const outside = await tempRoot("fs-safe-root-fallback-outside-");
     await fsp.mkdir(path.join(base, "nested"));
@@ -147,7 +147,7 @@ describe("security finding regressions", () => {
   });
 
   it.runIf(process.platform !== "win32")("uses unguessable no-follow temp files in pinned write fallback", async () => {
-    configureFsSafePython({ mode: "off" });
+    configureFsSafeNative({ mode: "off" });
     const base = await tempRoot("fs-safe-pinned-write-fallback-");
     const outside = await tempRoot("fs-safe-pinned-write-outside-");
     const outsideFile = path.join(outside, "outside.txt");
@@ -168,8 +168,8 @@ describe("security finding regressions", () => {
     await expect(fsp.readFile(outsideFile, "utf8")).resolves.toBe("outside");
   });
 
-  it("validates pinned write fallback payloads even when Python mode is off", async () => {
-    configureFsSafePython({ mode: "off" });
+  it("validates pinned write fallback payloads even when native mode is off", async () => {
+    configureFsSafeNative({ mode: "off" });
     const base = await tempRoot("fs-safe-pinned-write-validation-");
     await expect(
       runPinnedWriteHelper({

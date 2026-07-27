@@ -51,7 +51,22 @@ fs.readJson<T>(rel, options?)  // parsed T
 fs.open(rel, options?)         // { handle, realPath, stat, [Symbol.asyncDispose] }
 fs.readAbsolute(absPath, options?) // ReadResult; absPath must already be inside the root
 fs.reader(options?)            // (path) => Promise<Buffer>; useful for loader APIs
+fs.walk(rel, options)          // root-bounded AsyncIterable<{ relativePath, kind, size }>
 ```
+
+`walk()` is the incremental, root-bounded recursive scan. It supports entry and
+depth budgets, cancellation, and `symlinkPolicy: "skip" |
+"follow-within-root"`. Budget exhaustion yields a `"truncated"` marker by
+default or throws `FsSafeError("too-large")` with `limitBehavior: "throw"`.
+Use `entryFilter(entry)` to return `"include"`, `"skip"`, or
+`"skip-subtree"`. `"skip"` omits the current entry but still descends into a
+directory; `"skip-subtree"` omits a directory and all of its descendants.
+Directory reads remain fail-fast by default. With
+`onDirectoryError: "skip-and-report"`, the iterator instead yields
+`{ relativePath, kind: "directory-error", size: 0, error }` and continues with
+the remaining tree.
+See [Directory walking](walk.md) for the pure-Node guarantees and the contrast
+with the standalone best-effort walkers.
 
 `open()` returns a Node `FileHandle` for streaming. Prefer `await using` for cleanup:
 
@@ -100,25 +115,22 @@ fs.resolve(rel)                  // absolute path inside the root, after canonic
 
 These do not pin a later operation. They are safe to expose to UIs and decision points; for the actual read or write, use the verb methods so the operation pins identity at the point of use.
 
-## Python helper mode
+## Native helper mode
 
-On POSIX, mutation and inspection methods that need fd-relative directory
-operations go through one persistent Python helper process. This avoids a
-spawn-per-call cost while still using `openat`/`renameat`/`unlinkat`-style
-operations that Node's `fs` API does not expose ergonomically.
+Create-only writes prefer the optional native helper for fd-relative opens and
+atomic no-replace rename. Operations without native wiring retain their guarded
+JavaScript implementations.
 
 ```ts
-import { configureFsSafePython } from "@openclaw/fs-safe/config";
+import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 
-configureFsSafePython({ mode: "off" });     // Node-only fallback path
-configureFsSafePython({ mode: "require" }); // fail if fd-relative helper unavailable
+configureFsSafeNative({ mode: "off" });     // guarded JavaScript path
+configureFsSafeNative({ mode: "require" }); // fail if the binding is unavailable
 ```
 
-`auto` is the default. Configure the mode before creating roots. Without the
-helper, root methods still run, but same-UID races that swap parent directories
-between validation and mutation are harder to close completely. Use `require`
-when that downgrade should be treated as a deployment failure. See
-[Python helper policy](python-helper.md) for deployment guidance.
+`auto` is the default. Configure the mode before creating roots. See the
+[native helper policy](native-helper.md) for supported platforms, the native
+surface, and the precise fallback boundary.
 
 ### Properties
 

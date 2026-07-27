@@ -1,4 +1,8 @@
-packages: []
+packages:
+  - native
+  - npm/*
+
+linkWorkspacePackages: true
 
 allowBuilds:
   esbuild: true

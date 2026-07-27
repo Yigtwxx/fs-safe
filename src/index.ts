@@ -3,6 +3,7 @@ export {
   categorizeFsSafeError,
   type FsSafeErrorCategory,
   type FsSafeErrorCode,
+  type FsSafeErrorDetails,
 } from "./errors.js";
 export {
   DEFAULT_ROOT_MAX_BYTES,
@@ -27,16 +28,28 @@ export {
   type RootRemoveOptions,
   type RootWriteJsonOptions,
   type RootWriteOptions,
+  type RootWalkDataEntry,
+  type RootWalkDataEntryKind,
+  type RootWalkDirectoryErrorBehavior,
+  type RootWalkEntry,
+  type RootWalkEntryFilter,
+  type RootWalkEntryFilterResult,
+  type RootWalkEntryKind,
+  type RootWalkLimitBehavior,
+  type RootWalkOptions,
+  type RootWalkSymlinkPolicy,
   type SymlinkPolicy,
   type WritableOpenMode,
   type WritableOpenResult,
 } from "./root.js";
 export {
   configureFsSafePython,
-  getFsSafePythonConfig,
+  configureFsSafeNative,
+  getFsSafeNativeConfig,
   type FsSafePythonConfig,
-  type FsSafePythonMode,
-} from "./pinned-python-config.js";
+  type FsSafeNativeConfig,
+  type FsSafeNativeMode,
+} from "./native-config.js";
 export {
   writeExternalFileWithinRoot,
   type ExternalFileWriteOptions,

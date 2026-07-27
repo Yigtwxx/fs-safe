@@ -5,7 +5,10 @@ describe("durability exports", () => {
   it("exposes the public directory durability surface", () => {
     expect(Object.keys(durability).toSorted()).toEqual([
       "ensureDurableDirectory",
+      "isHardlinkFallbackError",
       "pinDirectory",
+      "publishFileExclusive",
+      "sha256File",
       "syncDirectory",
       "syncDirectoryBestEffort",
       "syncDirectoryBestEffortSync",

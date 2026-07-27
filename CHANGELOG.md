@@ -1,6 +1,41 @@
 # Changelog
 
-## 0.4.8 - Unreleased
+## 0.5.0 - Unreleased
+
+### Highlights
+
+- Add policy-driven archive entry filtering and mode handling, bounded single-entry archive reads, root-bounded async walking, synchronous sidecar locks, async secret reads, create-only secret writes, and exclusive file publication.
+- Add public streaming `sha256File(path | FileHandle)` hashing with optional async native acceleration, plus policy-free Windows owner/DACL facts with owner and current-process-user SIDs and per-ACE masks and inheritance flags.
+- Add native fd-relative ZIP and TAR extraction/read support with gzip, zstd, and bzip2 streaming; TypeScript evaluates the shared entry policy before Rust creates any output, and zstd/bzip2 report a typed native-required error when no binding is available.
+- Bound PAX, GNU long-name/link, and sparse metadata with one `maxMetaEntryBytes` policy shared by node-tar and the native fixed-header metering reader, including typed failures for oversized or malformed metadata.
+- Add `Root.walk()` subtree pruning and partial directory-error reporting for bounded best-effort consumers, plus a shared `maxEntryPathComponents` archive limit that rejects implicit-directory depth attacks before either extraction path creates output.
+- Ship the optional `@openclaw/fs-safe-native` helper and seven platform packages from this repository for fd-relative opens, guarded directory creation and hardlinks, atomic no-replace rename, and file identity checks.
+
+### Security and Correctness
+
+- Enforce `movePathWithCopyFallback({ sourceHardlinks: "reject" })` with a streaming, entry-capped recursive preflight before mutation, closing a shipped 0.4.x gap where the common same-filesystem rename bypassed the policy; approved trees commit through a fresh staged copy with open-time and post-copy link-count fences so a scan/rename race cannot publish a hardlinked inode.
+- Abort and tear down JavaScript TAR extraction immediately when entry policy, path validation, link rejection, or a budget fails, preventing node-tar from leaving a paused parser after rejected fleet-restore entries; both native and JavaScript paths now return the same typed archive-policy errors.
+- Attach a post-creation failure receipt to `publishFileExclusive()` errors with the failing phase, whether this call created the target, its observed identity, and whether cleanup removed, preserved, or could not classify the target.
+- Add `publishFileExclusive({ onSyncFailure: "rollback" | "preserve" })`: rollback remains the default, while preserve keeps a complete target after directory-sync failure and reports the failed sync outcome in the typed provenance receipt.
+- Close the pinned publication source on parent-pinning failure so every acquired descriptor is released on every exit path.
+- Remove the native loader's PATH-resolved `ldd` execution. Linux libc detection now uses the Node process report, conventional musl library filenames, and the Node executable's ELF interpreter without spawning a process at import time; an inconclusive probe conservatively attempts glibc and falls back normally in `auto` mode.
+- Default archive extraction to `entryModes: "clamp"`, normalizing directories to `0o755` and files to `0o644` or `0o755` while always stripping setuid, setgid, and sticky bits; use `"preserve"` to retain safe archived rwx bits.
+- Prefer native create-only commits, sidecar acquisition, hardlink publication, and the explicit `rename-noreplace` publication strategy when the platform binding is available, while retaining guarded JavaScript fallbacks for `auto` and `off` modes.
+- Accelerate exclusive publication fallbacks with macOS `fclonefileat`, Linux `FICLONE` and `copy_file_range`, then the unchanged JavaScript byte loop; all paths retain exclusive creation, identity fencing, mode normalization, and SHA-256 verification through an async native hash task when available.
+- Add direct Windows owner/DACL inspection and protected private-directory creation for the current owner, LocalSystem, and Administrators, while retaining the existing .NET/`icacls` behavior when native mode is unavailable, forced off, or encounters an unsupported descriptor form.
+- Keep the public private-directory creator Windows-only and native-only so POSIX pathname races or inherited ACLs cannot weaken its privacy guarantee.
+- Build Linux native opens on `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`, macOS opens on an in-root `O_NOFOLLOW` component walk, and Windows opens on handle-relative `NtCreateFile` with reparse-point rejection.
+
+### Compatibility
+
+- Remove the persistent Python helper and its `pythonPath` configuration. Replace `configureFsSafePython`, `FS_SAFE_PYTHON_MODE`, and the OpenClaw Python aliases with `configureFsSafeNative` and `FS_SAFE_NATIVE_MODE`; 0.5 warns once and maps the former `auto`, `require`, and `off` policies solely as an upgrade bridge for shipped 0.4 consumers.
+- Add `publishFileExclusive({ strategy: "rename-noreplace" })`; this strategy requires the native helper, atomically moves the source, and never replaces an existing destination.
+
+### Docs and Tooling
+
+- Add an ordered 0.4-to-0.5 migration checklist and reconcile every new archive, native, publication, walk, lock, secret, permission, and temp-workspace contract with realistic examples and cross-links.
+- Convert the repository to a pnpm workspace, test the Rust crate on Linux, macOS, and Windows, and publish all platform bindings, the native loader, and the root package through one protected-tag release pipeline with npm provenance.
+- Replace unused napi-rs Android, FreeBSD, OpenHarmony, WASI, and unsupported-architecture loader branches with a checked-in loader for the seven packages actually published, and make publication benchmarks report the exercised clone/copy/JavaScript tier plus filesystem environment.
 
 ## 0.4.7 - 2026-07-24
 

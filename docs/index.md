@@ -38,7 +38,8 @@ await fs.remove("notes/archive/today.txt");
 ## Pick your path
 
 - **First time?** [Install](install.md), then walk through the [Quickstart](quickstart.md). Five minutes from `pnpm add` to a working root.
-- **Designing a workspace feature.** Read the [Security model](security-model.md) before you trust the boundary, the [Python helper policy](python-helper.md) before you pick deployment defaults, and the [Errors](errors.md) reference so you know what to catch.
+- **Upgrading from 0.4?** Follow [Migrating to 0.5](migrating-to-0.5.md) in order, including the archive clamp-default audit.
+- **Designing a workspace feature.** Read the [Security model](security-model.md) before you trust the boundary, the [native helper policy](native-helper.md) before you pick deployment defaults, and the [Errors](errors.md) reference so you know what to catch.
 - **Replacing ad-hoc atomic writes.** Jump to [Atomic writes](atomic.md) or, for keyed JSON state, [JSON files](json.md).
 - **Extracting an upload.** Start at [Archive extraction](archive.md) — handles ZIP and TAR with traversal, link, count, and byte limits.
 - **Running an agent in a sandbox.** [Private temp workspaces](temp.md) plus [secret files](secret-file.md) cover the common scratch-and-credentials shape.
@@ -48,11 +49,12 @@ await fs.remove("notes/archive/today.txt");
 
 | Surface | Use it for |
 |---|---|
-| [`root()`](root.md) | One boundary for read/write/move/remove inside a trusted directory. |
-| [`@openclaw/fs-safe/config`](config.md) | Process-global Python helper and lock-option defaults. |
-| [Python helper policy](python-helper.md) | Choose `auto`, `off`, or `require` for POSIX fd-relative hardening. |
+| [`root()`](root.md) | One boundary for read/write/move/remove and bounded recursive walking inside a trusted directory. |
+| [`@openclaw/fs-safe/config`](config.md) | Process-global native helper and lock-option defaults. |
+| [Native helper policy](native-helper.md) | Choose `auto`, `off`, or `require` for optional native primitives. |
+| [Native architecture](native.md) | Understand the thin syscall layer, beneath model, platform mechanisms, and fallback boundary. |
 | [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
-| [Directory durability](durability.md) | Pinned directory identities, explicit sync outcomes, and durable nested-directory creation. |
+| [`@openclaw/fs-safe/durability`](durability.md) | Pinned directory identities, durable creation, exclusive publication, streaming SHA-256, provenance receipts, and sync-failure policy. |
 | [`writeExternalFileWithinRoot`](output.md) | Stage external-library file output in private temp storage, then finalize under a root. |
 | [`writeJson` / `readJson*`](json.md) | JSON state files with strict and lenient read variants. |
 | [`@openclaw/fs-safe/store`](store.md) | Overview of `fileStore`, `fileStoreSync`, and `jsonStore`. |
@@ -61,15 +63,16 @@ await fs.remove("notes/archive/today.txt");
 | [Private file-store mode](private-file-store.md) | `fileStore({ private: true })` for private JSON/text state at 0600 under 0700 dirs. |
 | [`tempWorkspace`](temp.md) | 0700 scratch dir with auto-cleanup. |
 | [`readSecureFile`](secure-file.md) | Absolute file reads with fd pinning, permissions, owner, size, and timeout checks. |
-| [`walkDirectory`](walk.md) | Budget-bounded recursive directory scan with symlink policy and filters. |
-| [`extractArchive`](archive.md) | ZIP/TAR extraction with size, count, link, and traversal limits. |
+| [`walkDirectory` / `Root.walk`](walk.md) | Standalone inventories plus root-bounded pruning, budgets, and partial-error reporting. |
+| [`extractArchive`](archive.md) | Policy-driven ZIP/TAR extraction with clamp/filter, metadata/path-depth, link, count, and byte limits. |
 | [Secret files](secret-file.md) | Mode-0600 credentials with size and TOCTOU defense. |
-| [Permissions](permissions.md) | POSIX mode and Windows ACL inspection/remediation helpers. |
+| [Permissions](permissions.md) | POSIX mode helpers plus Windows ACL inspection, raw owner/ACE facts, remediation, and private-directory creation. |
 | [`acquireFileLock`](sidecar-lock.md) | Cross-process file lock with retry and fail-closed stale-lock handling. |
 | [`FsSafeError`](errors.md) | Closed code union (with `policy` / `operational` category) you can branch on. |
 | [`pathScope()`](path-scope.md) | Lower-level absolute-path boundary helper; lives behind `@openclaw/fs-safe/advanced`. |
 | [`@openclaw/fs-safe/advanced`](advanced.md) | Directory of lower-level composition helpers (path scopes, regular-file I/O, install paths, sibling-temp writes, …). |
 | [`@openclaw/fs-safe/test-hooks`](test-hooks.md) | Test-only injection hooks for reproducing open/lstat races. |
+| [Migrating to 0.5](migrating-to-0.5.md) | End-to-end checklist for Python removal and 0.4 API behavior changes. |
 
 ## Status
 

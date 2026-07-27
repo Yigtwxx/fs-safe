@@ -13,9 +13,8 @@ import {
   writeJsonDurableQueueEntry,
 } from "../src/json-durable-queue.js";
 import { resolveSafeRelativePath } from "../src/path.js";
-import { __resetPinnedPythonWorkerForTest } from "../src/pinned-python.js";
 import { summarizeWindowsAcl } from "../src/permissions.js";
-import { configureFsSafePython, root as openRoot } from "../src/index.js";
+import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import { resolveExistingPathsWithinRoot, resolvePathWithinRoot } from "../src/root-paths.js";
 import { readSecureFile } from "../src/secure-file.js";
 import { withTimeout } from "../src/timing.js";
@@ -30,8 +29,7 @@ async function tempRoot(prefix: string): Promise<string> {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  __resetPinnedPythonWorkerForTest();
-  configureFsSafePython({ mode: "auto", pythonPath: undefined });
+  configureFsSafeNative({ mode: "auto" });
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
@@ -375,7 +373,7 @@ describe("clawpatch regression coverage", () => {
   });
 
   it.runIf(process.platform !== "win32")("uses atomic no-clobber writes for root create", async () => {
-    configureFsSafePython({ mode: "require" });
+    configureFsSafeNative({ mode: "auto" });
     const rootDir = await tempRoot("fs-safe-root-create-noclobber-");
     const scoped = await openRoot(rootDir);
     await scoped.create("created.txt", "first");
@@ -387,7 +385,7 @@ describe("clawpatch regression coverage", () => {
   });
 
   it.runIf(process.platform !== "win32")("keeps already-exists for no-clobber creates in read-only parents", async () => {
-    configureFsSafePython({ mode: "require" });
+    configureFsSafeNative({ mode: "auto" });
     const rootDir = await tempRoot("fs-safe-root-create-existing-readonly-");
     const parent = path.join(rootDir, "readonly");
     await fs.mkdir(parent);
@@ -405,7 +403,7 @@ describe("clawpatch regression coverage", () => {
   });
 
   it.runIf(process.platform !== "win32")("rolls back no-clobber move links when source unlink fails", async () => {
-    configureFsSafePython({ mode: "require" });
+    configureFsSafeNative({ mode: "auto" });
     const rootDir = await tempRoot("fs-safe-root-move-link-rollback-");
     const srcDir = path.join(rootDir, "src");
     const dstDir = path.join(rootDir, "dst");
@@ -427,8 +425,8 @@ describe("clawpatch regression coverage", () => {
   });
 
   it.runIf(process.platform !== "win32")("rejects no-clobber directory moves instead of racing rename", async () => {
-    for (const mode of ["require", "off"] as const) {
-      configureFsSafePython({ mode });
+    for (const mode of ["auto", "off"] as const) {
+      configureFsSafeNative({ mode });
       const rootDir = await tempRoot(`fs-safe-root-move-dir-noclobber-${mode}-`);
       await fs.mkdir(path.join(rootDir, "from"));
       const scoped = await openRoot(rootDir);
@@ -440,35 +438,19 @@ describe("clawpatch regression coverage", () => {
   });
 
 
-  it.runIf(process.platform !== "win32")("cleans no-clobber copy fallback destinations after helper copy failure", async () => {
-    __resetPinnedPythonWorkerForTest();
+  it("cleans no-clobber fallback destinations after a write failure", async () => {
     const rootDir = await tempRoot("fs-safe-root-create-copy-fail-");
-    const wrapperPath = path.join(rootDir, "python-wrapper.mjs");
-    await fs.writeFile(
-      wrapperPath,
-      `#!/usr/bin/env node
-import { spawn } from "node:child_process";
-
-const args = process.argv.slice(2);
-const sourceIndex = args.indexOf("-c") + 1;
-if (sourceIndex <= 0 || sourceIndex >= args.length) {
-  process.exit(64);
-}
-const source = args[sourceIndex]
-  .replaceAll("os.link(temp_name, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)", "raise OSError(errno.EPERM, 'link unsupported')")
-  .replaceAll("os.link(name, new_name, src_dir_fd=source_fd, dst_dir_fd=target_fd, follow_symlinks=False)", "raise OSError(errno.EPERM, 'link unsupported')")
-  .replaceAll("        os.fsync(dest_fd)", "        raise OSError(errno.EIO, 'test dest fsync failure')");
-args[sourceIndex] = source;
-const child = spawn("python3", args, { stdio: "inherit" });
-child.on("exit", (code, signal) => {
-  if (signal) process.kill(process.pid, signal);
-  process.exit(code ?? 1);
-});
-`,
-      { mode: 0o700 },
-    );
-    await fs.chmod(wrapperPath, 0o700);
-    configureFsSafePython({ mode: "require", pythonPath: wrapperPath });
+    configureFsSafeNative({ mode: "off" });
+    const realOpen = fs.open.bind(fs);
+    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await realOpen(...args);
+      if (path.basename(String(args[0])) === "created.txt") {
+        vi.spyOn(handle, "writeFile").mockRejectedValueOnce(
+          Object.assign(new Error("test write failure"), { code: "EIO" }),
+        );
+      }
+      return handle;
+    });
     const scoped = await openRoot(rootDir);
 
     await expect(scoped.create("created.txt", "payload")).rejects.toBeTruthy();

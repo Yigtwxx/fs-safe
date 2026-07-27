@@ -1,10 +1,10 @@
 import fsSync from "node:fs";
-import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { sameFileIdentity } from "./file-identity.js";
 import {
   readSidecarLockSnapshot,
+  relativeSidecarLockPath,
   releaseSidecarReclaimGuard,
   removeSidecarLockIfUnchanged,
   removeStaleSidecarLockIfAllowed,
@@ -16,81 +16,49 @@ import {
   type SidecarLockSnapshot,
   type SidecarLockStaleSnapshot,
 } from "./sidecar-lock-reclaim.js";
-
+import { FsSafeError } from "./errors.js";
+import { createNativeExclusiveFile, type NativeFileHandle } from "./native-operations.js";
+import type { Root } from "./root-impl.js";
+import type {
+  SidecarLockAcquireOptions,
+  SidecarLockHandle,
+  SidecarLockHeldEntry,
+  SidecarLockRetryOptions,
+  WithSidecarLockOptions,
+} from "./sidecar-lock-types.js";
+import {
+  computeSidecarLockDelayMs,
+  defaultSidecarLockShouldReclaim,
+} from "./sidecar-lock-policy.js";
 export type { SidecarLockStaleSnapshot } from "./sidecar-lock-reclaim.js";
-
-export type SidecarLockRetryOptions = {
-  retries?: number;
-  factor?: number;
-  minTimeout?: number;
-  maxTimeout?: number;
-  randomize?: boolean;
-};
-
-export type SidecarLockStaleRecovery = "fail-closed" | "remove-if-unchanged";
-
-export type SidecarLockAcquireOptions<TPayload extends Record<string, unknown>> = {
-  targetPath: string;
-  lockPath?: string;
-  staleMs: number;
-  timeoutMs?: number;
-  retry?: SidecarLockRetryOptions;
-  staleRecovery?: SidecarLockStaleRecovery;
-  allowReentrant?: boolean;
-  payload: () => TPayload | Promise<TPayload>;
-  shouldReclaim?: (params: {
-    lockPath: string;
-    normalizedTargetPath: string;
-    payload: Record<string, unknown> | null;
-    staleMs: number;
-    nowMs: number;
-    heldByThisProcess: boolean;
-  }) => boolean | Promise<boolean>;
-  shouldRemoveStaleLock?: (snapshot: SidecarLockStaleSnapshot) => boolean | Promise<boolean>;
-  metadata?: Record<string, unknown>;
-};
-
-export type SidecarLockHandle = {
-  lockPath: string;
-  normalizedTargetPath: string;
-  release: () => Promise<void>;
-  [Symbol.asyncDispose](): Promise<void>;
-};
-
-export type SidecarLockHeldEntry = {
-  normalizedTargetPath: string;
-  lockPath: string;
-  acquiredAt: number;
-  metadata: Record<string, unknown>;
-  forceRelease: () => Promise<boolean>;
-};
-
-export type WithSidecarLockOptions<TPayload extends Record<string, unknown>> = Omit<
-  SidecarLockAcquireOptions<TPayload>,
-  "targetPath"
-> & {
-  managerKey?: string;
-};
-
+export type {
+  SidecarLockAcquireOptions,
+  SidecarLockCompromisedInfo,
+  SidecarLockHandle,
+  SidecarLockHeldEntry,
+  SidecarLockRetryOptions,
+  SidecarLockStaleRecovery,
+  WithSidecarLockOptions,
+} from "./sidecar-lock-types.js";
 type HeldLock = {
   count: number;
-  handle: FileHandle;
+  handle: NativeFileHandle;
   lockPath: string;
   snapshot: SidecarLockSnapshot;
   acquiredAt: number;
   metadata: Record<string, unknown>;
   releasePromise?: Promise<void>;
+  lockRoot?: Root;
+  parsePayload?: (raw: string) => unknown;
+  compromiseTimer?: NodeJS.Timeout;
 };
-
 type SidecarLockManagerState = {
   cleanupRegistered: boolean;
   held: Map<string, HeldLock>;
   reclaimCleanupRegistered: boolean;
   reclaimGuards: Set<string>;
 };
-
 const GLOBAL_STATE_KEY = Symbol.for("fsSafe.sidecarLockManagers");
-
 function getGlobalManagers(): Map<string, SidecarLockManagerState> {
   const globalWithState = globalThis as typeof globalThis & {
     [GLOBAL_STATE_KEY]?: Map<string, SidecarLockManagerState>;
@@ -172,34 +140,6 @@ async function resolveNormalizedTargetPath(targetPath: string): Promise<string> 
   }
 }
 
-function computeDelayMs(retry: SidecarLockRetryOptions, attempt: number): number {
-  const minTimeout = retry.minTimeout ?? 50;
-  const maxTimeout = retry.maxTimeout ?? 1000;
-  const factor = retry.factor ?? 1;
-  const base = Math.min(maxTimeout, Math.max(minTimeout, minTimeout * factor ** attempt));
-  const jitter = retry.randomize ? 1 + Math.random() : 1;
-  return Math.min(maxTimeout, Math.round(base * jitter));
-}
-
-async function defaultShouldReclaim(params: {
-  lockPath: string;
-  payload: Record<string, unknown> | null;
-  staleMs: number;
-  nowMs: number;
-}): Promise<boolean> {
-  const createdAt = typeof params.payload?.createdAt === "string" ? params.payload.createdAt : "";
-  const createdAtMs = Date.parse(createdAt);
-  if (Number.isFinite(createdAtMs) && params.nowMs - createdAtMs > params.staleMs) {
-    return true;
-  }
-  try {
-    const stat = await fs.stat(params.lockPath);
-    return params.nowMs - stat.mtimeMs > params.staleMs;
-  } catch {
-    return true;
-  }
-}
-
 function releaseAllReclaimGuardsSync(state: SidecarLockManagerState): void {
   for (const reclaimGuardPath of state.reclaimGuards) {
     try {
@@ -215,7 +155,7 @@ function releaseAllLocksSync(state: SidecarLockManagerState): void {
   for (const [normalizedTargetPath, held] of state.held) {
     void held.handle.close().catch(() => undefined);
     try {
-      if (snapshotMatchesSync(held.lockPath, held.snapshot)) {
+      if (!held.lockRoot && snapshotMatchesSync(held.lockPath, held.snapshot)) {
         fsSync.rmSync(held.lockPath, { force: true });
       }
     } catch {
@@ -249,9 +189,16 @@ async function releaseHeldLock(
     return true;
   }
   state.held.delete(normalizedTargetPath);
+  if (held.compromiseTimer) {
+    clearInterval(held.compromiseTimer);
+    held.compromiseTimer = undefined;
+  }
   held.releasePromise = (async () => {
     await held.handle.close().catch(() => undefined);
-    await removeSidecarLockIfUnchanged(held.lockPath, held.snapshot);
+    await removeSidecarLockIfUnchanged(held.lockPath, held.snapshot, {
+      lockRoot: held.lockRoot,
+      parsePayload: held.parsePayload,
+    });
   })();
   try {
     await held.releasePromise;
@@ -288,9 +235,15 @@ export function createSidecarLockManager(key: string) {
       held.count += 1;
       const release = () =>
         releaseHeldLock(state, normalizedTargetPath, held).then(() => undefined);
+      const verifyStillHeld = async () =>
+        await sidecarLockSnapshotStillPresent(held.lockPath, held.snapshot, {
+          lockRoot: held.lockRoot,
+          parsePayload: held.parsePayload,
+        });
       return {
         lockPath,
         normalizedTargetPath,
+        verifyStillHeld,
         release,
         [Symbol.asyncDispose]: release,
       };
@@ -320,7 +273,7 @@ export function createSidecarLockManager(key: string) {
         options.timeoutMs === undefined || options.timeoutMs === Number.POSITIVE_INFINITY
           ? Number.POSITIVE_INFINITY
           : Math.max(0, options.timeoutMs - elapsed);
-      const delay = Math.min(computeDelayMs(retry, attempt), remaining);
+      const delay = Math.min(computeSidecarLockDelayMs(retry, attempt), remaining);
       attempt += 1;
       await new Promise((resolve) => setTimeout(resolve, delay));
     };
@@ -330,12 +283,25 @@ export function createSidecarLockManager(key: string) {
           await waitForRetry();
           continue;
         }
-        let handle: FileHandle | null = null;
+        let handle: NativeFileHandle | null = null;
         try {
-          handle = await fs.open(lockPath, "wx");
           const payload = await options.payload();
           const { raw, ownershipToken } = serializeSidecarLockPayload(payload);
-          await handle.writeFile(raw, "utf8");
+          if (options.lockRoot) {
+            const relativeLockPath = relativeSidecarLockPath(options.lockRoot, lockPath);
+            try {
+              await options.lockRoot.create(relativeLockPath, raw, { mkdir: true, mode: 0o600 });
+            } catch (error) {
+              if (error instanceof FsSafeError && error.code === "already-exists") {
+                throw Object.assign(new Error("sidecar lock exists"), { code: "EEXIST" });
+              }
+              throw error;
+            }
+            handle = (await options.lockRoot.open(relativeLockPath)).handle;
+          } else {
+            handle = (await createNativeExclusiveFile(lockPath, 0o600)) ?? await fs.open(lockPath, "wx");
+            await handle.writeFile(raw, "utf8");
+          }
           const snapshot = { raw, payload, stat: await handle.stat(), ownershipToken };
           const createdHeld: HeldLock = {
             count: 1,
@@ -344,6 +310,8 @@ export function createSidecarLockManager(key: string) {
             snapshot,
             acquiredAt: Date.now(),
             metadata: options.metadata ?? {},
+            lockRoot: options.lockRoot,
+            parsePayload: options.parsePayload,
           };
           state.held.set(normalizedTargetPath, createdHeld);
           if (ownsReclaimGuard) {
@@ -357,9 +325,28 @@ export function createSidecarLockManager(key: string) {
           }
           const release = () =>
             releaseHeldLock(state, normalizedTargetPath, createdHeld).then(() => undefined);
+          const verifyStillHeld = async () =>
+            await sidecarLockSnapshotStillPresent(lockPath, snapshot, {
+              lockRoot: options.lockRoot,
+              parsePayload: options.parsePayload,
+            });
+          const interval = options.compromiseCheckIntervalMs;
+          if (options.onCompromised && interval !== undefined && interval > 0) {
+            createdHeld.compromiseTimer = setInterval(() => {
+              void verifyStillHeld().then((stillHeld) => {
+                if (!stillHeld && createdHeld.compromiseTimer) {
+                  clearInterval(createdHeld.compromiseTimer);
+                  createdHeld.compromiseTimer = undefined;
+                  options.onCompromised?.({ lockPath, normalizedTargetPath });
+                }
+              });
+            }, interval);
+            createdHeld.compromiseTimer.unref();
+          }
           return {
             lockPath,
             normalizedTargetPath,
+            verifyStillHeld,
             release,
             [Symbol.asyncDispose]: release,
           };
@@ -377,11 +364,16 @@ export function createSidecarLockManager(key: string) {
             }
             // If payload serialization/write fails, the file may be empty or
             // partial JSON, so remove while our exclusive handle is still open.
-            await fs.rm(lockPath, { force: true }).catch(() => undefined);
+            if (!options.lockRoot) {
+              await fs.rm(lockPath, { force: true }).catch(() => undefined);
+            }
             await handle.close().catch(() => undefined);
             // Windows can refuse removing an open file; retry after close but
             // only if the path still points at the file identity we created.
-            await removeSidecarLockIfUnchanged(lockPath, failedSnapshot);
+            await removeSidecarLockIfUnchanged(lockPath, failedSnapshot, {
+              lockRoot: options.lockRoot,
+              parsePayload: options.parsePayload,
+            });
           }
           if ((err as { code?: unknown }).code !== "EEXIST") {
             throw err;
@@ -392,11 +384,14 @@ export function createSidecarLockManager(key: string) {
             continue;
           }
           const nowMs = Date.now();
-          const snapshot = await readSidecarLockSnapshot(lockPath);
+          const snapshot = await readSidecarLockSnapshot(lockPath, {
+            lockRoot: options.lockRoot,
+            parsePayload: options.parsePayload,
+          });
           if (!snapshot) {
             continue;
           }
-          const shouldReclaim = options.shouldReclaim ?? defaultShouldReclaim;
+          const shouldReclaim = options.shouldReclaim ?? defaultSidecarLockShouldReclaim;
           if (
             await shouldReclaim({
               lockPath,
@@ -407,7 +402,12 @@ export function createSidecarLockManager(key: string) {
               heldByThisProcess: state.held.has(normalizedTargetPath),
             })
           ) {
-            if (!(await sidecarLockSnapshotStillPresent(lockPath, snapshot))) {
+            if (
+              !(await sidecarLockSnapshotStillPresent(lockPath, snapshot, {
+                lockRoot: options.lockRoot,
+                parsePayload: options.parsePayload,
+              }))
+            ) {
               continue;
             }
             const staleRecovery = options.staleRecovery ?? "fail-closed";
@@ -422,6 +422,8 @@ export function createSidecarLockManager(key: string) {
                 normalizedTargetPath,
                 snapshot,
                 shouldRemoveStaleLock: options.shouldRemoveStaleLock,
+                lockRoot: options.lockRoot,
+                parsePayload: options.parsePayload,
               });
               if (removal === "removed" || removal === "changed") {
                 continue;

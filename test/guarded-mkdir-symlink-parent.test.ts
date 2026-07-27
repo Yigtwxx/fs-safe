@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { FsSafeError } from "../src/errors.js";
 import { mkdirPathComponentsWithGuards } from "../src/guarded-mkdir.js";
-import { configureFsSafePython } from "../src/pinned-python-config.js";
+import { configureFsSafeNative } from "../src/native-config.js";
 import { root } from "../src/root.js";
 
 const tempDirs = new Set<string>();
@@ -20,7 +20,7 @@ afterEach(async () => {
     await fs.rm(dir, { recursive: true, force: true });
   }
   tempDirs.clear();
-  configureFsSafePython({ mode: "auto" });
+  configureFsSafeNative({ mode: "auto" });
 });
 
 // --- Unit-level coverage of mkdirPathComponentsWithGuards itself ---
@@ -115,10 +115,12 @@ it("rejects a dangling symlink directory component with a typed FsSafeError, not
 // mkdirPathComponentsWithGuards returns, so the fix must flow the resolved
 // path back to the caller, not just resolve it internally. ---
 
-it("writes a file through root().write() when the parent directory is an in-root symlink (mkdir: true)", async () => {
+it.runIf(process.platform !== "win32")(
+  "writes a file through root().write() when the parent directory is an in-root symlink (mkdir: true)",
+  async () => {
   // Force the JS fallback path deterministically, matching this repo's own
   // convention in test/pinned-write-fallback-coverage.test.ts.
-  configureFsSafePython({ mode: "off" });
+  configureFsSafeNative({ mode: "off" });
 
   const rootDir = await tempRoot("fs-safe-root-write-symlink-");
   const realDir = path.join(rootDir, "skills-bank", "skills", "auth-doctor");
@@ -139,4 +141,5 @@ it("writes a file through root().write() when the parent directory is an in-root
 
   const written = await fs.readFile(path.join(realDir, "SKILL.md"), "utf8");
   expect(written).toBe("# new content\n");
-});
+  },
+);

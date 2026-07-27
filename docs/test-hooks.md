@@ -31,6 +31,15 @@ type FsSafeTestHooks = {
   afterPreOpenLstat?: (filePath: string) => Promise<void> | void;
   beforeOpen?: (filePath: string, flags: number) => Promise<void> | void;
   afterOpen?: (filePath: string, handle: FileHandle) => Promise<void> | void;
+  beforeArchiveOutputMutation?: (operation: "mkdir" | "chmod", targetPath: string) => Promise<void> | void;
+  beforeFileStorePruneDescend?: (dirPath: string) => Promise<void> | void;
+  beforeFileStoreSyncPrivateWrite?: (filePath: string) => void;
+  beforeRootFallbackMutation?: (operation: "mkdir" | "move" | "remove", targetPath: string) => Promise<void> | void;
+  afterPinnedWriteFallbackRename?: (targetPath: string) => Promise<void> | void;
+  beforeSiblingTempWrite?: (tempPath: string) => Promise<void> | void;
+  beforeTrashMove?: (targetPath: string, destPath: string) => void;
+  afterPublishTargetCreated?: (method, targetPath, identity) => Promise<void> | void;
+  beforePublishDirectorySync?: (method, targetPath, identity) => Promise<void> | void;
 };
 ```
 
@@ -39,8 +48,19 @@ type FsSafeTestHooks = {
 | `afterPreOpenLstat` | A pre-open `lstat` has just resolved. Use this to swap a path between validation and open. |
 | `beforeOpen` | The library is about to call `open(path, flags)`. Use this to inject a TOCTOU window. |
 | `afterOpen` | An open just succeeded. Use this to mutate state before the post-open identity check runs. |
+| `beforeArchiveOutputMutation` | Archive staging is about to create a directory or apply a mode. |
+| `beforeFileStorePruneDescend` | File-store pruning is about to descend into a directory. |
+| `beforeFileStoreSyncPrivateWrite` | A synchronous private-store write is about to mutate its target. |
+| `beforeRootFallbackMutation` | A guarded JS root fallback is about to mkdir, move, or remove. |
+| `afterPinnedWriteFallbackRename` | A fallback rename committed and post-commit identity checks have not run yet. |
+| `beforeSiblingTempWrite` | A sibling temp file exists and its writer is about to run. |
+| `beforeTrashMove` | Trash handling is about to move the target. |
+| `afterPublishTargetCreated` | Exclusive publication created its target and final fences have not run yet. |
+| `beforePublishDirectorySync` | Publication verified the target and is about to sync its parent directory. |
 
-Each hook may be sync or async; async hooks are awaited.
+Hooks typed `Promise<void> | void` may be sync or async and are awaited.
+Hooks used by synchronous code paths are typed `void` and must not return a
+promise.
 
 ## Usage
 

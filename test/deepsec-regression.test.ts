@@ -3,10 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileStore } from "../src/file-store.js";
-import { configureFsSafePython, root as openRoot } from "../src/index.js";
+import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import { loadPendingJsonDurableQueueEntries } from "../src/json-durable-queue.js";
 import { readLocalFileFromRoots, resolveLocalPathFromRootsSync } from "../src/local-roots.js";
-import { __resetPinnedPythonWorkerForTest, runPinnedPythonOperation } from "../src/pinned-python.js";
 import { replaceFileAtomic } from "../src/replace-file.js";
 import { resolveRootPath } from "../src/root-path.js";
 import { assertNoSymlinkParents } from "../src/symlink-parents.js";
@@ -24,8 +23,7 @@ async function tempRoot(prefix: string): Promise<string> {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  __resetPinnedPythonWorkerForTest();
-  configureFsSafePython({ mode: "auto", pythonPath: undefined });
+  configureFsSafeNative({ mode: "auto" });
   await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { recursive: true, force: true })));
 });
 
@@ -211,7 +209,7 @@ describe("deepsec regressions", () => {
   });
 
   it.runIf(process.platform !== "win32")("rejects fallback writes when a missing parent is raced to a symlink", async () => {
-    configureFsSafePython({ mode: "off" });
+    configureFsSafeNative({ mode: "off" });
     const base = await tempRoot("fs-safe-fallback-mkdir-symlink-");
     const rootDir = path.join(base, "root");
     const outside = path.join(base, "outside");
@@ -258,9 +256,9 @@ describe("deepsec regressions", () => {
     await expect(fsp.lstat(path.join(outside, "nested"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform !== "win32")("uses best-effort private secret writes without the pinned helper", async () => {
-    configureFsSafePython({ mode: "off" });
-    const base = await tempRoot("fs-safe-secret-helper-required-");
+  it.runIf(process.platform !== "win32")("uses guarded private secret writes with native mode off", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const base = await tempRoot("fs-safe-secret-native-off-");
     const rootDir = path.join(base, "root");
     await fsp.mkdir(rootDir);
     const secretPath = path.join(rootDir, "secret.txt");
@@ -356,16 +354,4 @@ describe("deepsec regressions", () => {
     expect((await fsp.stat(outsideFile)).mode & 0o777).toBe(0o600);
   });
 
-  it.runIf(process.platform !== "win32")("rejects pinned helper operations after root swaps", async () => {
-    const rootDir = await tempRoot("fs-safe-helper-root-identity-");
-    const stat = await fsp.lstat(rootDir);
-
-    await expect(
-      runPinnedPythonOperation({
-        operation: "stat",
-        rootPath: rootDir,
-        payload: { relativePath: "", rootDev: stat.dev + 1, rootIno: stat.ino },
-      }),
-    ).rejects.toMatchObject({ code: "path-mismatch" });
-  });
 });

@@ -1,4 +1,5 @@
 export {
+  createSecretFileAtomic,
   DEFAULT_SECRET_FILE_MAX_BYTES,
   PRIVATE_SECRET_DIR_MODE,
   PRIVATE_SECRET_FILE_MODE,
@@ -7,3 +8,4 @@ export {
   writeSecretFileAtomic,
   type SecretFileReadOptions,
 } from "./secret-file.js";
+export { readSecretFile, tryReadSecretFile } from "./secret-read-async.js";

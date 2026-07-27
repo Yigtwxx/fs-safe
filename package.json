@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/fs-safe",
-  "version": "0.4.7",
+  "version": "0.5.0-dev.0",
   "description": "Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.",
   "keywords": [
     "filesystem",
@@ -120,6 +120,7 @@
   },
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",
+    "benchmark:publish": "pnpm build && node scripts/bench-publish.mjs",
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
     "lint:file-size": "node scripts/check-file-size.mjs",
     "lint:fs-boundary": "node scripts/check-fs-boundary-primitives.mjs",
@@ -129,7 +130,10 @@
     "test:security": "vitest run test/fs-safe.test.ts test/read-boundary-bypass.test.ts test/write-boundary-bypass.test.ts test/additional-boundary-bypass.test.ts test/adversarial-boundary-payloads.test.ts",
     "check": "pnpm lint:file-size && pnpm lint:fs-boundary && pnpm build && pnpm test && node scripts/check-pack.mjs",
     "docs:site": "node scripts/build-docs-site.mjs",
+    "native:build": "pnpm --filter @openclaw/fs-safe-native build",
+    "native:test": "cargo test --manifest-path native/Cargo.toml",
     "pack:check": "pnpm build && node scripts/check-pack.mjs",
+    "release-graph:smoke": "node scripts/release-graph-smoke.mjs",
     "check:changed": "pnpm run check",
     "release:notes": "node scripts/release-notes.mjs",
     "test:changed": "pnpm run test",
@@ -139,10 +143,12 @@
     "crabbox:warmup": "crabbox warmup"
   },
   "optionalDependencies": {
+    "@openclaw/fs-safe-native": "0.5.0-dev.0",
     "jszip": "^3.10.1",
     "tar": "7.5.21"
   },
   "devDependencies": {
+    "@napi-rs/cli": "3.7.4",
     "@types/node": "^26.1.1",
     "@vitest/coverage-v8": "4.1.10",
     "typescript": "^7.0.2",

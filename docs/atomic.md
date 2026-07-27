@@ -148,6 +148,13 @@ await movePathWithCopyFallback({
 ```
 
 Use it when source and destination might live on different filesystems (containers, tmpfs, separate volumes).
+`sourceHardlinks: "reject"` performs a recursive preflight capped at 50,000
+entries before any mutation. Because link count and rename cannot be one atomic
+portable operation, this mode always commits a fresh inode/tree through the
+staged-copy route, even on one filesystem. Each regular file is checked again
+after open and after copying, so a post-scan hardlink cannot become the
+published target. A hardlink fails with `FsSafeError("hardlink")`; exceeding
+the preflight cap fails with `FsSafeError("too-large")`.
 If another writer changes source entries during the fallback, the staged copy
 throws `ESTALE` before commit when possible. If the destination has already
 been committed, cleanup still preserves the changed source entries and throws
@@ -160,7 +167,7 @@ been committed, cleanup still preserves the changed source entries and throws
 | Take relative paths, bound to a `rootDir`. | Take absolute paths, no boundary. |
 | Throw `FsSafeError` with `code`. | Throw `FsSafeError` *or* the underlying `NodeJS.ErrnoException`, depending on failure point. |
 | Atomicity, mode, hooks, fsync are sane defaults. | Caller controls all of the above. |
-| `mkdir`, identity check, hardlink reject built in. | No identity check, no hardlink reject — pair with [path helpers](path.md) if you need them. |
+| `mkdir`, identity check, hardlink reject built in. | No root boundary; `movePathWithCopyFallback` has explicit `sourceHardlinks` policy, while other helpers expose their own narrower checks. |
 
 Use `Root` when the path is caller-controlled. Use `atomic` when the path is fully under your control and you want explicit knobs.
 

@@ -1,9 +1,11 @@
 export {
   configureFsSafePython,
-  getFsSafePythonConfig,
+  configureFsSafeNative,
+  getFsSafeNativeConfig,
   type FsSafePythonConfig,
-  type FsSafePythonMode,
-} from "./pinned-python-config.js";
+  type FsSafeNativeConfig,
+  type FsSafeNativeMode,
+} from "./native-config.js";
 export {
   configureFsSafeLocks,
   getFsSafeLockConfig,

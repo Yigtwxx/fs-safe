@@ -16,12 +16,14 @@ export type FsSafeErrorCode =
   | "path-alias"
   | "path-mismatch"
   | "permission-unverified"
+  | "secret-exists"
   | "symlink"
   | "timeout"
   | "too-large"
   | "unsupported-platform";
 
 export type FsSafeErrorCategory = "policy" | "operational";
+export type FsSafeErrorDetails = Readonly<Record<string, unknown>>;
 
 const OPERATIONAL_CODES: ReadonlySet<FsSafeErrorCode> = new Set([
   "helper-failed",
@@ -38,11 +40,17 @@ export function categorizeFsSafeError(code: FsSafeErrorCode): FsSafeErrorCategor
 export class FsSafeError extends Error {
   readonly code: FsSafeErrorCode;
   readonly category: FsSafeErrorCategory;
+  readonly details?: FsSafeErrorDetails;
 
-  constructor(code: FsSafeErrorCode, message: string, options: { cause?: unknown } = {}) {
+  constructor(
+    code: FsSafeErrorCode,
+    message: string,
+    options: { cause?: unknown; details?: FsSafeErrorDetails } = {},
+  ) {
     super(message, options);
     this.name = "FsSafeError";
     this.code = code;
     this.category = categorizeFsSafeError(code);
+    this.details = options.details;
   }
 }

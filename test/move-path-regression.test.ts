@@ -55,6 +55,122 @@ describe("movePathWithCopyFallback regressions", () => {
     ).toBeUndefined();
   });
 
+  it("rejects a hardlinked source before a same-filesystem rename", async () => {
+    const base = await tempRoot("fs-safe-move-rename-hardlink-");
+    const source = path.join(base, "source.txt");
+    const hardlink = path.join(base, "hardlink.txt");
+    const dest = path.join(base, "dest.txt");
+    await fsp.writeFile(source, "source");
+    await fsp.link(source, hardlink);
+    const rename = vi.spyOn(fsp, "rename");
+
+    await expect(
+      movePathWithCopyFallback({ from: source, sourceHardlinks: "reject", to: dest }),
+    ).rejects.toMatchObject({ code: "hardlink" });
+
+    expect(rename).not.toHaveBeenCalled();
+    await expect(fsp.readFile(source, "utf8")).resolves.toBe("source");
+    await expect(fsp.readFile(hardlink, "utf8")).resolves.toBe("source");
+    await expect(fsp.stat(dest)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("publishes a fresh inode when hardlink rejection is enabled", async () => {
+    const base = await tempRoot("fs-safe-move-reject-copy-");
+    const source = path.join(base, "source.txt");
+    const dest = path.join(base, "dest.txt");
+    await fsp.writeFile(source, "source");
+    const sourceIdentity = await fsp.stat(source);
+    const rename = vi.spyOn(fsp, "rename");
+
+    await movePathWithCopyFallback({ from: source, sourceHardlinks: "reject", to: dest });
+
+    expect(rename).not.toHaveBeenCalledWith(source, dest);
+    const targetIdentity = await fsp.stat(dest);
+    expect(targetIdentity.ino).not.toBe(sourceIdentity.ino);
+    await expect(fsp.readFile(dest, "utf8")).resolves.toBe("source");
+    await expect(fsp.stat(source)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a hardlink added after preflight without publishing a target", async () => {
+    const base = await tempRoot("fs-safe-move-hardlink-race-");
+    const source = path.join(base, "source.txt");
+    const hardlink = path.join(base, "late-link.txt");
+    const dest = path.join(base, "dest.txt");
+    await fsp.writeFile(source, "source");
+    const realLstat = fsp.lstat;
+    let sourceInspections = 0;
+    vi.spyOn(fsp, "lstat").mockImplementation(async (candidate, options) => {
+      const stat = await realLstat(candidate, options as never);
+      if (candidate === source && ++sourceInspections === 1) {
+        await fsp.link(source, hardlink);
+      }
+      return stat;
+    });
+
+    await expect(
+      movePathWithCopyFallback({ from: source, sourceHardlinks: "reject", to: dest }),
+    ).rejects.toMatchObject({ code: "hardlink" });
+
+    await expect(fsp.readFile(source, "utf8")).resolves.toBe("source");
+    await expect(fsp.readFile(hardlink, "utf8")).resolves.toBe("source");
+    await expect(fsp.stat(dest)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a directory move beneath itself before creating a staging tree", async () => {
+    const source = await tempRoot("fs-safe-move-self-descendant-");
+    await fsp.writeFile(path.join(source, "payload.txt"), "payload");
+    const dest = path.join(source, "child");
+
+    await expect(
+      movePathWithCopyFallback({ from: source, sourceHardlinks: "reject", to: dest }),
+    ).rejects.toMatchObject({ code: "invalid-path" });
+
+    await expect(fsp.readFile(path.join(source, "payload.txt"), "utf8")).resolves.toBe("payload");
+    expect((await fsp.readdir(source)).toSorted()).toEqual(["payload.txt"]);
+  });
+
+  it("normalizes dot segments before rejecting a self-descendant move", async () => {
+    const source = await tempRoot("fs-safe-move-self-normalized-");
+    await fsp.mkdir(path.join(source, "sub"));
+    await fsp.writeFile(path.join(source, "payload.txt"), "payload");
+    const disguisedDest = path.join(source, "sub", "pivot", "..");
+
+    await expect(
+      movePathWithCopyFallback({
+        from: source,
+        sourceHardlinks: "reject",
+        to: disguisedDest,
+      }),
+    ).rejects.toMatchObject({ code: "invalid-path" });
+
+    expect((await fsp.readdir(source)).toSorted()).toEqual(["payload.txt", "sub"]);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a self-descendant copy reached through a symlinked parent",
+    async () => {
+      const base = await tempRoot("fs-safe-move-self-symlink-");
+      const source = path.join(base, "source");
+      const alias = path.join(base, "alias");
+      await fsp.mkdir(source);
+      await fsp.writeFile(path.join(source, "payload.txt"), "payload");
+      await fsp.symlink(source, alias, "dir");
+
+      await expect(
+        movePathWithCopyFallback({
+          from: source,
+          sourceHardlinks: "reject",
+          to: path.join(alias, "child"),
+        }),
+      ).rejects.toMatchObject({ code: "invalid-path" });
+
+      await expect(fsp.readFile(path.join(source, "payload.txt"), "utf8")).resolves.toBe(
+        "payload",
+      );
+      expect((await fsp.readdir(source)).toSorted()).toEqual(["payload.txt"]);
+    },
+  );
+
   it.runIf(process.platform !== "win32")(
     "does not delete source entries replaced after an EXDEV copy",
     async () => {

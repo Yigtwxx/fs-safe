@@ -6,6 +6,10 @@ import {
   createAsyncDirectoryGuard,
   type AsyncDirectoryGuard,
 } from "./directory-guard.js";
+import {
+  ArchiveSecurityError,
+  type ArchiveSecurityErrorCode,
+} from "./archive-errors.js";
 import { FsSafeError } from "./errors.js";
 import { resolveOpenedFileRealPathForHandle, root } from "./root.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
@@ -15,20 +19,7 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 const ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK = "archive entry traverses symlink in destination";
 const ARCHIVE_STAGING_MODE = 0o700;
 
-export type ArchiveSecurityErrorCode =
-  | "destination-not-directory"
-  | "destination-symlink"
-  | "destination-symlink-traversal";
-
-export class ArchiveSecurityError extends Error {
-  code: ArchiveSecurityErrorCode;
-
-  constructor(code: ArchiveSecurityErrorCode, message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.code = code;
-    this.name = "ArchiveSecurityError";
-  }
-}
+export { ArchiveSecurityError, type ArchiveSecurityErrorCode } from "./archive-errors.js";
 
 function symlinkTraversalError(originalPath: string): ArchiveSecurityError {
   return new ArchiveSecurityError(
@@ -135,6 +126,21 @@ async function assertResolvedInsideDestination(params: {
   }
 }
 
+async function mkdirArchiveOutput(params: {
+  targetRoot: { mkdir(relativePath: string): Promise<void> };
+  relativePath: string;
+  originalPath: string;
+}): Promise<void> {
+  try {
+    await params.targetRoot.mkdir(params.relativePath);
+  } catch (error) {
+    if (error instanceof FsSafeError) {
+      throw symlinkTraversalError(params.originalPath);
+    }
+    throw error;
+  }
+}
+
 export async function prepareArchiveOutputPath(params: {
   destinationDir: string;
   destinationRealDir: string;
@@ -155,7 +161,7 @@ export async function prepareArchiveOutputPath(params: {
   if (params.isDirectory) {
     await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("mkdir", params.outPath);
     await assertDirectoryIdentityGuard(destinationGuard);
-    await targetRoot.mkdir(relPath);
+    await mkdirArchiveOutput({ targetRoot, relativePath: relPath, originalPath: params.originalPath });
     await assertDirectoryIdentityGuard(destinationGuard);
     await assertResolvedInsideDestination({
       destinationRealDir: params.destinationRealDir,
@@ -169,7 +175,11 @@ export async function prepareArchiveOutputPath(params: {
   if (parentRel !== ".") {
     await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("mkdir", path.dirname(params.outPath));
     await assertDirectoryIdentityGuard(destinationGuard);
-    await targetRoot.mkdir(parentRel);
+    await mkdirArchiveOutput({
+      targetRoot,
+      relativePath: parentRel,
+      originalPath: params.originalPath,
+    });
     await assertDirectoryIdentityGuard(destinationGuard);
   }
   await assertResolvedInsideDestination({

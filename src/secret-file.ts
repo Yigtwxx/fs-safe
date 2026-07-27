@@ -314,13 +314,18 @@ async function ensurePrivateDirectory(
   return { rootGuard, targetReal: await fsp.realpath(resolvedTarget) };
 }
 
-export async function writeSecretFileAtomic(params: {
+type SecretFileWriteParams = {
   rootDir: string;
   filePath: string;
   content: string | Uint8Array;
   mode?: number;
   dirMode?: number;
-}): Promise<void> {
+};
+
+async function materializeSecretFileAtomic(
+  params: SecretFileWriteParams,
+  createOnly: boolean,
+): Promise<void> {
   const mode = params.mode ?? PRIVATE_SECRET_FILE_MODE;
   const dirMode = params.dirMode ?? PRIVATE_SECRET_DIR_MODE;
   const resolvedRoot = path.resolve(params.rootDir);
@@ -340,6 +345,9 @@ export async function writeSecretFileAtomic(params: {
 
   try {
     const stat = await fsp.lstat(finalFilePath);
+    if (createOnly) {
+      throw new FsSafeError("secret-exists", `Private secret file ${finalFilePath} already exists.`);
+    }
     if (stat.isSymbolicLink()) {
       throw new Error(`Private secret file ${finalFilePath} must not be a symlink.`);
     }
@@ -360,11 +368,29 @@ export async function writeSecretFileAtomic(params: {
     basename: fileName,
     mkdir: false,
     mode,
-    overwrite: true,
+    overwrite: !createOnly,
     input: { kind: "buffer", data: typeof params.content === "string" ? params.content : Buffer.from(params.content) },
     rootIdentity: { dev: parentGuard.stat.dev, ino: parentGuard.stat.ino },
   });
   await assertAsyncDirectoryGuard(rootGuard);
   await assertAsyncDirectoryGuard(parentGuard);
   await enforcePrivateFileIdentityAndMode(finalFilePath, identity, mode);
+}
+
+export async function writeSecretFileAtomic(params: SecretFileWriteParams): Promise<void> {
+  await materializeSecretFileAtomic(params, false);
+}
+
+export async function createSecretFileAtomic(params: SecretFileWriteParams): Promise<void> {
+  try {
+    await materializeSecretFileAtomic(params, true);
+  } catch (error) {
+    if (
+      (error instanceof FsSafeError && error.code === "already-exists") ||
+      (error as NodeJS.ErrnoException).code === "EEXIST"
+    ) {
+      throw new FsSafeError("secret-exists", "Private secret file already exists.", { cause: error });
+    }
+    throw error;
+  }
 }

@@ -11,16 +11,13 @@ import type { FileIdentityStat } from "./file-identity.js";
 import { sameFileIdentity, sha256Hex } from "./file-identity.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
-import { canFallbackFromPythonError, getFsSafePythonConfig } from "./pinned-python-config.js";
-import {
-  assertPinnedPythonOperationAvailable,
-  runPinnedPythonOperation,
-  validatePinnedOperationPayload,
-} from "./pinned-python.js";
+import { runPinnedWriteNative } from "./native-pinned-write.js";
+import { getNativeBinding } from "./native.js";
+import { validatePinnedOperationPayload } from "./pinned-operation.js";
 import { withSidecarLock } from "./sidecar-lock.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
-type PinnedWriteInput =
+export type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding }
   | { kind: "stream"; stream: Readable };
 
@@ -86,34 +83,11 @@ async function writeStreamToHandle(
   }
 }
 
-async function inputToBase64(
-  input: PinnedWriteInput,
-  maxBytes: number | undefined,
-): Promise<string> {
-  if (input.kind === "buffer") {
-    assertWithinMaxBytes(byteLength(input.data, input.encoding), maxBytes);
-    return (
-      typeof input.data === "string"
-        ? Buffer.from(input.data, input.encoding ?? "utf8")
-        : input.data
-    ).toString("base64");
-  }
-  const chunks: Buffer[] = [];
-  let bytes = 0;
-  for await (const chunk of input.stream) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
-    bytes += buffer.byteLength;
-    assertWithinMaxBytes(bytes, maxBytes);
-    chunks.push(buffer);
-  }
-  return Buffer.concat(chunks, bytes).toString("base64");
-}
-
-type RenameIdentityMismatchPolicy = "throw" | "verify-content";
+export type RenameIdentityMismatchPolicy = "throw" | "verify-content";
 
 export type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
 
-type PinnedWriteParams = {
+export type PinnedWriteParams = {
   rootPath: string;
   relativeParentPath: string;
   basename: string;
@@ -131,51 +105,16 @@ export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<F
   validatePinnedOperationPayload({
     relativeParentPath: params.relativeParentPath,
   });
-  // The Python helper deliberately enforces the strict post-rename inode
-  // contract. The explicit compatibility policy therefore uses the guarded
-  // Node fallback, where content verification can replace that one check.
+  // The explicit compatibility policy uses the guarded Node fallback, where
+  // content verification can replace the strict post-rename inode check.
   if (params.onRenameIdentityMismatch === "verify-content") {
     return await runPinnedWriteFallback(params);
   }
-  if (getFsSafePythonConfig().mode === "off") {
-    return await runPinnedWriteFallback(params);
+  const native = getNativeBinding();
+  if (native && params.overwrite === false) {
+    return await runPinnedWriteNative(native, params);
   }
-  if (params.input.kind === "stream") {
-    try {
-      assertPinnedPythonOperationAvailable();
-    } catch (error) {
-      if (canFallbackFromPythonError(error)) {
-        return await runPinnedWriteFallback(params);
-      }
-      throw error;
-    }
-  }
-  const input =
-    params.input.kind === "stream"
-      ? { kind: "buffer" as const, data: Buffer.from(await inputToBase64(params.input, params.maxBytes), "base64") }
-      : params.input;
-  const payload = {
-    base64: await inputToBase64(input, params.maxBytes),
-    basename: params.basename,
-    maxBytes: params.maxBytes ?? -1,
-    mkdir: params.mkdir,
-    mode: params.mode || 0o600,
-    overwrite: params.overwrite !== false,
-    relativeParentPath: params.relativeParentPath,
-    ...(params.rootIdentity ? { rootDev: params.rootIdentity.dev, rootIno: params.rootIdentity.ino } : {}),
-  };
-  try {
-    return await runPinnedPythonOperation<FileIdentityStat>({
-      operation: "write",
-      rootPath: params.rootPath,
-      payload,
-    });
-  } catch (error) {
-    if (canFallbackFromPythonError(error)) {
-      return await runPinnedWriteFallback({ ...params, input });
-    }
-    throw error;
-  }
+  return await runPinnedWriteFallback(params);
 }
 
 export async function runPinnedWriteWithRenamePolicy(
@@ -210,40 +149,6 @@ export async function runPinnedWriteWithRenamePolicy(
       onRenameIdentityMismatch: "verify-content",
     }),
   );
-}
-
-export async function runPinnedCopyHelper(params: {
-  rootPath: string;
-  relativeParentPath: string;
-  basename: string;
-  mkdir: boolean;
-  mode: number;
-  overwrite?: boolean;
-  maxBytes?: number;
-  sourcePath: string;
-  sourceIdentity: FileIdentityStat;
-  rootIdentity?: FileIdentityStat;
-}): Promise<FileIdentityStat> {
-  assertSafeBasename(params.basename);
-  validatePinnedOperationPayload({
-    relativeParentPath: params.relativeParentPath,
-  });
-  return await runPinnedPythonOperation<FileIdentityStat>({
-    operation: "copy",
-    rootPath: params.rootPath,
-    payload: {
-      basename: params.basename,
-      maxBytes: params.maxBytes ?? -1,
-      mkdir: params.mkdir,
-      mode: params.mode || 0o600,
-      overwrite: params.overwrite !== false,
-      relativeParentPath: params.relativeParentPath,
-      ...(params.rootIdentity ? { rootDev: params.rootIdentity.dev, rootIno: params.rootIdentity.ino } : {}),
-      sourceDev: params.sourceIdentity.dev,
-      sourceIno: params.sourceIdentity.ino,
-      sourcePath: params.sourcePath,
-    },
-  });
 }
 
 async function runPinnedWriteFallback(params: {
@@ -293,6 +198,7 @@ async function runPinnedWriteFallback(params: {
     );
     let created = true;
     try {
+      await handle.chmod(params.mode);
       if (params.input.kind === "buffer") {
         assertWithinMaxBytes(
           byteLength(params.input.data, params.input.encoding),
@@ -334,6 +240,7 @@ async function runPinnedWriteFallback(params: {
   let renamed = false;
   try {
     handle = await fs.open(tempPath, tempFlags, params.mode);
+    await handle.chmod(params.mode);
     if (params.input.kind === "buffer") {
       assertWithinMaxBytes(
         byteLength(params.input.data, params.input.encoding),

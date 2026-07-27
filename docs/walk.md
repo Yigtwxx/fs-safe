@@ -67,7 +67,62 @@ type WalkDirectoryOptions = {
 
 Unreadable directories are skipped rather than throwing, but every skipped directory is recorded in `failedDirs`. This keeps the helper suitable for best-effort inventories while letting pruning jobs tell an incomplete scan from an empty one: a destructive reconcile that deletes state for paths missing from `entries` must first confirm `failedDirs` holds no real read failures, or a transient `EIO`/`EACCES` blip would be mistaken for mass deletion. Use a stricter root-bounded operation when every entry must be accounted for.
 
+## Root-bounded async iteration
+
+`Root.walk(rel, options)` is the root-bounded counterpart to these standalone
+inventory helpers. It yields `{ relativePath, kind, size }` incrementally and
+accepts `maxDepth`, `maxEntries`, `symlinkPolicy: "skip" |
+"follow-within-root"`, and an `AbortSignal`. The default budget behavior yields
+one `kind: "truncated"` marker and ends; pass `limitBehavior: "throw"` for a
+typed `FsSafeError("too-large")` instead.
+
+`entryFilter` is evaluated for each resolved file, directory, or other entry:
+
+```ts
+for await (const entry of capability.walk("", {
+  symlinkPolicy: "skip",
+  entryFilter: (entry) =>
+    entry.kind === "directory" && entry.relativePath === ".git"
+      ? "skip-subtree"
+      : "include",
+  onDirectoryError: "skip-and-report",
+})) {
+  if (entry.kind === "directory-error") {
+    console.warn("incomplete subtree", entry.relativePath, entry.error);
+    continue;
+  }
+  consume(entry);
+}
+```
+
+The result values are `"include"`, `"skip"`, and `"skip-subtree"`. Plain
+`"skip"` omits an entry but still descends when it is a directory;
+`"skip-subtree"` omits that directory and prunes its descendants. Returning
+`"skip-subtree"` for a non-directory is equivalent to `"skip"`.
+
+`onDirectoryError` defaults to `"throw"`, preserving the original fail-fast
+contract. `"skip-and-report"` yields a discriminated
+`{ kind: "directory-error", relativePath, size: 0, error }` marker for a
+directory that cannot be resolved or listed, then continues with its siblings.
+Every examined directory entry consumes `maxEntries` before filtering, so
+`"skip"` cannot turn the iterator into an unbounded traversal. Reporting and
+`"truncated"` markers describe already-reached state and do not authorize
+further descent.
+
+The pure-Node path validates every directory canonically inside the root,
+revalidates each listing through the normal `Root.list()` boundary, and tracks
+canonical directories to stop symlink cycles. It does not hold a descriptor
+for the entire tree, so it is not a process sandbox against a hostile peer that
+can continuously swap and restore directories. Each individual lookup retains
+the documented Node `Root` boundary checks.
+
+Unlike `walkDirectory()` and `walkDirectorySync()`, `Root.walk()` is
+root-bounded and reports failures inline because an async iterator has no final
+result summary. Its default remains to throw on unreadable or invalid
+directories.
+
 ## See also
 
 - [`fileStore`](file-store.md) — managed stores use bounded walking for pruning.
 - [Path scopes](path-scope.md) — boundary checks for known absolute paths.
+- [Migrating to 0.5](migrating-to-0.5.md) — adopting bounded pruning and partial-result handling.

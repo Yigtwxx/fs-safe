@@ -26,7 +26,7 @@ Full docs and reference at **[fs-safe.io](https://fs-safe.io)**.
 
 ## Contents
 
-[Why this exists](#why-this-exists) · [Not a sandbox](#not-a-sandbox) · [Install](#install) · [Quick start](#quick-start) · [Reading](#reading) · [Subpaths](#subpaths) · [Failure semantics](#failure-semantics-in-the-name) · [Directory durability](#directory-durability) · [Atomic writes](#atomic-writes) · [External outputs](#external-outputs) · [Stores](#stores) · [Secure absolute reads](#secure-absolute-file-reads) · [Walking](#directory-walking) · [Archive extraction](#archive-extraction) · [Path scopes](#advanced-path-scopes) · [Errors](#errors) · [Safety model](#safety-model) · [Limitations](#limitations)
+[Why this exists](#why-this-exists) · [Not a sandbox](#not-a-sandbox) · [Install](#install) · [0.5 migration](docs/migrating-to-0.5.md) · [Python migration](#migrating-from-the-python-helper) · [Quick start](#quick-start) · [Reading](#reading) · [Subpaths](#subpaths) · [Failure semantics](#failure-semantics-in-the-name) · [Directory durability](#directory-durability) · [Atomic writes](#atomic-writes) · [External outputs](#external-outputs) · [Stores](#stores) · [Secure absolute reads](#secure-absolute-file-reads) · [Walking](#directory-walking) · [Archive extraction](#archive-extraction) · [Path scopes](#advanced-path-scopes) · [Errors](#errors) · [Safety model](#safety-model) · [Limitations](#limitations)
 
 ## Why this exists
 
@@ -45,7 +45,7 @@ The same idea has landed in other languages. Go [added `os.Root` and `OpenInRoot
 | `path.resolve().startsWith()` | string check only | – | – | – | – |
 | [`write-file-atomic`](https://www.npmjs.com/package/write-file-atomic) | – | ✓ | – | – | – |
 | Go [`os.Root`](https://go.dev/blog/osroot) / Rust [`cap-std`](https://github.com/bytecodealliance/cap-std) | ✓ | platform | ✓ | ✓ | – |
-| **`@openclaw/fs-safe`** | **✓** | **✓** | **✓** | **✓ (POSIX fd-relative)** | **✓ (ZIP/TAR)** |
+| **`@openclaw/fs-safe`** | **✓** | **✓** | **✓** | **✓ (POSIX fd-relative)** | **✓ (ZIP/TAR; native zstd/bzip2)** |
 
 ## Not a sandbox
 
@@ -59,27 +59,41 @@ pnpm add @openclaw/fs-safe
 
 Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. Archive helpers use optional `jszip` and `tar` dependencies for ZIP/TAR support; installs that omit optional dependencies can still use every non-archive subpath.
 
-On POSIX, `root()` uses one process-global persistent Python helper for the
-fd-relative operations Node does not expose ergonomically (`renameat`,
-`unlinkat`, recursive `mkdirat`-style walks, and parent-fd writes). Configure it
-before first use when you need a strict environment policy:
+The optional native package supplies fd-relative and atomic no-replace
+primitives that Node does not expose directly. Configure its lazy loader before
+first use when you need a strict environment policy:
 
 ```ts
-import { configureFsSafePython } from "@openclaw/fs-safe";
+import { configureFsSafeNative } from "@openclaw/fs-safe";
 
-configureFsSafePython({ mode: "auto" });    // default: use helper, fall back if unavailable
-configureFsSafePython({ mode: "off" });     // never spawn Python; use best-effort Node fallbacks
-configureFsSafePython({ mode: "require" }); // fail closed if helper cannot start
+configureFsSafeNative({ mode: "auto" });    // default: native when available
+configureFsSafeNative({ mode: "off" });     // guarded JavaScript only
+configureFsSafeNative({ mode: "require" }); // fail closed if the binding is unavailable
 ```
 
-Equivalent env vars: `FS_SAFE_PYTHON_MODE=auto|off|require` and
-`FS_SAFE_PYTHON=/path/to/python3`. Without Python, `fs-safe` keeps lexical and
-canonical root checks, no-follow opens, atomic temp+rename writes, and
-post-write identity verification. What you lose is the strongest POSIX
-fd-relative protection against a same-process-user racer swapping parent
-directories between validation and mutation. Windows already uses the Node
-fallback path. See the [Python helper policy](docs/python-helper.md) for
-deployment guidance.
+Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. The seven platform
+packages are prebuilt; consumers do not need Rust. Without a matching package,
+`auto` retains lexical and canonical root checks, no-follow opens, guarded
+temp+rename writes, and post-write identity verification. See the [native
+helper policy](docs/native-helper.md) for the exact boundary and deployment
+tradeoff, and [native architecture](docs/native.md) for the platform mechanisms
+and policy ownership model.
+
+## Migrating from the Python helper
+
+Version 0.5 replaces the persistent Python worker with optional prebuilt native
+bindings. The modes map directly: `configureFsSafePython({ mode: "auto" })`
+becomes `configureFsSafeNative({ mode: "auto" })`, and likewise for `off` and
+`require`. Replace `FS_SAFE_PYTHON_MODE` with `FS_SAFE_NATIVE_MODE`; remove
+`pythonPath`, `FS_SAFE_PYTHON`, and interpreter provisioning because the native
+loader does not spawn Python.
+
+Version 0.5 retains the old function and documented `FS_SAFE_PYTHON*`
+and OpenClaw Python environment names emit one `FS_SAFE_PYTHON_DEPRECATED`
+warning and map the old mode to its native equivalent. They are migration
+bridges for shipped 0.4 consumers, not an alternate helper contract. Update
+startup configuration as part of the 0.5 upgrade rather than relying on the
+warning path. Follow the [0.5 migration checklist](docs/migrating-to-0.5.md).
 
 ## Quick start
 
@@ -174,32 +188,32 @@ await locked.write(".env", "token"); // FsSafeError code "denied-path"
 
 ## Subpaths
 
-The main entry point is intentionally small: `root`, the root option/result
-types, and `FsSafeError`. Use subpaths for everything else. Low-level helpers
-that OpenClaw needs to compose higher-level APIs are grouped under
+The main entry point collects the common root, config, output, lock, native-mode,
+and error exports. Prefer focused subpaths when a consumer needs a narrower
+contract. Low-level helpers that OpenClaw needs to compose higher-level APIs are grouped under
 `@openclaw/fs-safe/advanced` instead of being separate public leaf contracts.
 
 | Subpath | Contents |
 |---|---|
-| `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, related types |
-| `@openclaw/fs-safe/config` | process-global Python helper configuration |
+| `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, and root-bounded walking with pruning/error markers |
+| `@openclaw/fs-safe/config` | process-global native helper and lock defaults |
 | `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants |
 | `@openclaw/fs-safe/output` | `writeExternalFileWithinRoot` for external libraries that need a temp output path |
 | `@openclaw/fs-safe/store` | `fileStore`, `fileStoreSync`, and `jsonStore` |
-| `@openclaw/fs-safe/secret` | strict and try-style secret file read/write helpers |
+| `@openclaw/fs-safe/secret` | sync/async strict and try-style secret reads, atomic replace, and create-only secret writes |
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
-| `@openclaw/fs-safe/durability` | pinned directory identities, strict and best-effort directory sync, durable nested-directory creation |
+| `@openclaw/fs-safe/durability` | pinned directory identities, strict directory sync, durable nested-directory creation, exclusive publication, streaming SHA-256, provenance receipts, and sync-failure policy |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `withTempWorkspace`, `resolveSecureTempRoot` |
 | `@openclaw/fs-safe/secure-file` | fd-pinned absolute file reads with owner, mode, ACL, trusted-dir, size, and timeout checks |
-| `@openclaw/fs-safe/file-lock` | `acquireFileLock`, `withFileLock`, `createFileLockManager`, and related lock types |
-| `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection plus remediation formatting helpers |
+| `@openclaw/fs-safe/file-lock` | async/sync sidecar locks, root-bounded sidecars, ownership verification, and stale policy |
+| `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection, raw owner/ACE facts, private-directory creation, and remediation helpers |
 | `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
-| `@openclaw/fs-safe/archive` | `extractArchive`, `resolveArchiveKind`, `ArchiveLimitError`, preflight helpers |
+| `@openclaw/fs-safe/archive` | policy-driven ZIP/TAR extraction, clamp/filter policy, metadata/path-depth limits, native gzip/zstd/bzip2, and bounded entry reads |
 | `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, root-file open, bounded descriptor reads, install paths, filename sanitizing, temp-file targets, sibling-temp writes, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
-| `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode` |
+| `@openclaw/fs-safe/errors` | `FsSafeError`, closed codes/categories, causes, and operation-specific details receipts |
 | `@openclaw/fs-safe/types` | shared types: `DirEntry`, `PathStat`, … |
-| `@openclaw/fs-safe/test-hooks` | hooks the test suite uses to inject races; only active under `NODE_ENV=test` |
+| `@openclaw/fs-safe/test-hooks` | hooks the test suite uses to inject races; registration requires `NODE_ENV=test` or `VITEST=true` |
 
 ## Failure semantics in the name
 
@@ -243,8 +257,14 @@ when creating a nested directory. Strict sync propagates real I/O failures and
 reports known Windows directory-flush limitations explicitly. Separate
 best-effort helpers preserve operations that do not promise crash durability.
 
+`publishFileExclusive()` adds no-clobber hardlink/copy/rename strategies and a
+typed post-creation receipt. Its `onSyncFailure` policy defaults to
+`"rollback"`; backup writers can choose `"preserve"` to keep a complete target
+when parent-directory sync fails, then inspect `details.directorySync` and
+retry or record the weaker durability state.
+
 See [Directory durability](docs/durability.md) for the receipt, pin lifecycle,
-creation callback, and platform contract.
+publication policy, creation callback, and platform contract.
 
 ## Atomic writes
 
@@ -406,6 +426,13 @@ for (const file of scan.entries) {
 
 Check `scan.truncated` before treating the result as complete, and `scan.failedDirs` to tell an incomplete scan (a directory that could not be read) from an empty one before pruning state from the listing.
 
+For caller-controlled paths, `Root.walk()` is the root-bounded async iterator.
+It supports entry/depth budgets, in-root symlink following, cancellation, and a
+truncation marker (or typed error) when a budget is reached. Its `entryFilter`
+can return `"skip-subtree"` to prune a directory, and
+`onDirectoryError: "skip-and-report"` yields typed `"directory-error"` markers
+while preserving entries from readable subtrees.
+
 ## Archive extraction
 
 `extractArchive()` handles ZIP and TAR behind one API, with traversal checks, blocked-link-type rejection, and entry-count and byte budgets.
@@ -426,6 +453,7 @@ await extractArchive({
     maxEntries: 50_000,
     maxExtractedBytes: 512 * 1024 * 1024,
     maxEntryBytes: 256 * 1024 * 1024,
+    maxEntryPathComponents: 64,
   },
 });
 ```
@@ -474,19 +502,19 @@ if (err instanceof FsSafeError) {
 }
 ```
 
-Current `FsSafeErrorCode` values are `already-exists`, `denied-path`, `device-path`, `hardlink`, `helper-failed`, `helper-unavailable`, `invalid-path`, `insecure-permissions`, `not-empty`, `not-file`, `not-found`, `not-owned`, `not-removable`, `outside-workspace`, `path-alias`, `path-mismatch`, `permission-unverified`, `symlink`, `timeout`, `too-large`, and `unsupported-platform`.
+Current `FsSafeErrorCode` values are `already-exists`, `denied-path`, `device-path`, `hardlink`, `helper-failed`, `helper-unavailable`, `invalid-path`, `insecure-permissions`, `not-empty`, `not-file`, `not-found`, `not-owned`, `not-removable`, `outside-workspace`, `path-alias`, `path-mismatch`, `permission-unverified`, `secret-exists`, `symlink`, `timeout`, `too-large`, and `unsupported-platform`.
 
 ## Safety model
 
 - root-bounded APIs resolve paths against a configured root and reject canonical escapes
 - reads reject known unsafe device paths, open with `O_NOFOLLOW` where available, then verify fd identity matches the path identity before returning the buffer or handle
-- writes use pinned parent-directory helpers and atomic replacement on POSIX, with verified post-write identity
-- `remove`, `mkdir`, `move`, `stat`, `list`, and parent-fd writes use one persistent fd-relative Python helper on POSIX, with Node fallbacks when the helper is disabled or unavailable
+- create-only writes, sidecar acquisition, and exclusive publication prefer fd-relative native primitives, with verified guarded JavaScript fallbacks
+- `remove`, `mkdir`, `move`, `stat`, and `list` retain guarded JavaScript implementations with pre/post identity checks
 - archive extraction stages into a private directory and merges through the same boundary checks used by direct writes
 
 ## Limitations
 
-- Windows uses the safest Node-level behavior available; some fd-relative POSIX hardening is unavailable there.
+- Windows native opens are handle-relative and reject reparse points; operations without native wiring use the guarded Node implementation.
 - Hardlink rejection depends on platform metadata. Treat it as defense-in-depth, not authorization.
 - `fs-safe` does not validate file contents or archive payload semantics beyond filesystem safety constraints. Schemas, signatures, and authorization belong in the layer above.
 

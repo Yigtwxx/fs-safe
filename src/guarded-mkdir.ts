@@ -80,6 +80,7 @@ export async function mkdirPathComponentsWithGuards(params: {
         throw new FsSafeError("not-file", "directory component must be a directory");
       }
       await createAsyncDirectoryGuard(nextReal);
+      await assertAsyncDirectoryGuard(parentGuard);
       current = nextReal;
       continue;
     }

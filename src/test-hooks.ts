@@ -1,4 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
+import type { FileIdentityStat } from "./file-identity.js";
 
 export type FsSafeTestHooks = {
   afterPreOpenLstat?: (filePath: string) => Promise<void> | void;
@@ -17,6 +18,16 @@ export type FsSafeTestHooks = {
   afterPinnedWriteFallbackRename?: (targetPath: string) => Promise<void> | void;
   beforeSiblingTempWrite?: (tempPath: string) => Promise<void> | void;
   beforeTrashMove?: (targetPath: string, destPath: string) => void;
+  afterPublishTargetCreated?: (
+    method: "hardlink" | "exclusive-copy" | "rename-noreplace",
+    targetPath: string,
+    identity: FileIdentityStat,
+  ) => Promise<void> | void;
+  beforePublishDirectorySync?: (
+    method: "hardlink" | "exclusive-copy" | "rename-noreplace",
+    targetPath: string,
+    identity: FileIdentityStat,
+  ) => Promise<void> | void;
 };
 
 let fsSafeTestHooks: FsSafeTestHooks | undefined;

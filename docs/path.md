@@ -19,7 +19,7 @@ import {
 } from "@openclaw/fs-safe/path";
 ```
 
-Only `root()`, `FsSafeError`, and the Python helper config live on the main entry. Path helpers are deliberately a subpath import so the main entry stays small.
+Only `root()`, `FsSafeError`, and the native helper config live on the main entry. Path helpers are deliberately a subpath import so the main entry stays small.
 
 ## Boundary checks
 

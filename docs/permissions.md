@@ -64,7 +64,88 @@ createIcaclsResetCommand(targetPath, { isDir, env });
 resolveWindowsUserPrincipal(env);
 ```
 
-The default Windows inspector calls `icacls.exe /sid` and classifies principals as trusted, world, or group. Trusted defaults include the current user, SYSTEM, and Administrators. The parser is on the advanced surface so tests and CLIs can process captured `icacls` output without spawning a process.
+The fallback Windows inspector calls `icacls.exe <path>` using its supported
+path-only inspection syntax and classifies principals as trusted, world, or
+group. Trusted defaults include the current user, SYSTEM, and Administrators.
+The parser is on the advanced surface so tests and CLIs can process captured
+`icacls` output without spawning a process.
+
+When the optional native binding is available, `inspectPathPermissions()`
+reads the owner and DACL directly with Windows security APIs. It classifies the
+current user, LocalSystem, and built-in Administrators as trusted and reports
+the world/group read/write facts consumed by secure reads. Descriptor forms it
+cannot classify equivalently fall back to the established owner/.NET and
+`icacls` path; `mode: "off"` exercises that fallback deterministically.
+
+## Policy-free owner and DACL facts
+
+`readOwnerAndDacl()` exposes the direct Windows descriptor facts needed by a
+consumer that owns a principal allowlist. It deliberately does not decide
+which SID is trusted or calculate effective access. For example, snapshot
+staging can reject an incomplete descriptor and ignore inherit-only ACEs before
+applying its own exact SID policy:
+
+```ts
+import { readOwnerAndDacl } from "@openclaw/fs-safe/permissions";
+
+const facts = readOwnerAndDacl(stagingDirectory);
+if (facts.status === "unsupported-platform") {
+  throw new Error(`Windows ACL facts unavailable on ${facts.platform}`);
+}
+if (!facts.isLocal || !facts.daclPresent || !facts.complete) {
+  throw new Error("staging DACL cannot be evaluated completely");
+}
+
+for (const ace of facts.aces) {
+  if (ace.flags.inheritOnly) continue;
+  if (!trustedSids.has(ace.sid)) {
+    throw new Error(`unexpected staging principal: ${ace.sid}`);
+  }
+  evaluateMaskAndDenyOrder(ace.aceType, ace.mask);
+}
+```
+
+On Windows the supported result contains `ownerSid`, `currentUserSid`,
+`daclPresent`, `isLocal`, `complete`, `unsupportedAceTypes`, and ordered basic
+allow/deny `aces`. `currentUserSid` is the process token's `TokenUser` SID, so
+callers can compare it with the owner or their own allowlist without fs-safe
+applying trust policy. Each ACE has `{ sid, mask, aceType, flags }`; `flags`
+retains the raw byte and decoded
+`objectInherit`, `containerInherit`, `noPropagateInherit`, `inheritOnly`,
+`inherited`, `successfulAccess`, and `failedAccess` facts. SID strings are
+lowercase Windows SID notation. `daclPresent: false` represents a null DACL,
+which grants unrestricted access; it must not be mistaken for an empty DACL.
+
+Object-specific and other ACE layouts are not guessed: they are omitted,
+`complete` becomes false, and their numeric types appear in
+`unsupportedAceTypes`, allowing a security-sensitive caller to fail closed.
+Non-Windows systems return `{ status: "unsupported-platform", platform }`.
+Windows requires the optional native binding; if it is unavailable or forced
+off, the call throws `FsSafeError("helper-unavailable")`. The existing coarse
+`inspectPathPermissions()` API still owns its compatibility fallback and trust
+classification.
+
+## Private directories
+
+```ts
+import path from "node:path";
+import { createPrivateDirectory } from "@openclaw/fs-safe/permissions";
+
+const sqliteDirectory =
+  "C:\\Users\\me\\AppData\\Local\\OpenClaw\\private-databases";
+await createPrivateDirectory(sqliteDirectory);
+await openSqlite(path.join(sqliteDirectory, "sessions.sqlite"));
+```
+
+On Windows with native support, this creates the directory and applies a
+protected owner + LocalSystem + Administrators full-control DACL directly with
+an atomic security descriptor; no PowerShell or `icacls` process is launched.
+This API is Windows-only and native-only; it fails closed with
+`FsSafeError("helper-unavailable")` on other platforms, when native mode is off,
+or when the binding is unavailable. POSIX callers should create private
+directories through their existing trusted-root creation policy rather than a
+pathname-only compatibility shim. Existing Windows permission inspection still
+retains its .NET/`icacls` compatibility fallback.
 
 Use `createIcaclsResetCommand()` when you need a structured command and argv pair. Use `formatIcaclsResetCommand()` when you only need a remediation string for a user-facing message.
 
@@ -96,3 +177,5 @@ type PermissionCheck = {
 
 - [Secure file reads](secure-file.md) — fd-pinned reads that enforce these checks.
 - [Errors](errors.md) — permission-related `FsSafeError` codes.
+- [Native architecture](native.md) — direct Windows security descriptor mechanisms.
+- [Migrating to 0.5](migrating-to-0.5.md) — native-only feature checklist.

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { ArchiveSecurityError } from "./archive-errors.js";
 import { resolveSafeBaseDir } from "./path.js";
 
 export function isWindowsDrivePath(value: string): boolean {
@@ -17,15 +18,18 @@ export function validateArchiveEntryPath(
     return;
   }
   if (isWindowsDrivePath(entryPath)) {
-    throw new Error(`archive entry uses a drive path: ${entryPath}`);
+    throw new ArchiveSecurityError("entry-path", `archive entry uses a drive path: ${entryPath}`);
   }
   const normalized = path.posix.normalize(normalizeArchiveEntryPath(entryPath));
   const escapeLabel = params?.escapeLabel ?? "destination";
   if (normalized === ".." || normalized.startsWith("../")) {
-    throw new Error(`archive entry escapes ${escapeLabel}: ${entryPath}`);
+    throw new ArchiveSecurityError(
+      "entry-path",
+      `archive entry escapes ${escapeLabel}: ${entryPath}`,
+    );
   }
   if (path.posix.isAbsolute(normalized) || normalized.startsWith("//")) {
-    throw new Error(`archive entry is absolute: ${entryPath}`);
+    throw new ArchiveSecurityError("entry-path", `archive entry is absolute: ${entryPath}`);
   }
 }
 
@@ -55,7 +59,10 @@ export function resolveArchiveOutputPath(params: {
   const outPath = path.resolve(params.rootDir, params.relPath);
   const escapeLabel = params.escapeLabel ?? "destination";
   if (!outPath.startsWith(safeBase)) {
-    throw new Error(`archive entry escapes ${escapeLabel}: ${params.originalPath}`);
+    throw new ArchiveSecurityError(
+      "entry-path",
+      `archive entry escapes ${escapeLabel}: ${params.originalPath}`,
+    );
   }
   return outPath;
 }

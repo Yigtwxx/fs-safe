@@ -121,7 +121,10 @@ await extractArchive({
     maxEntries: 50_000,
     maxExtractedBytes: 512 * 1024 * 1024,
     maxEntryBytes: 256 * 1024 * 1024,
+    maxMetaEntryBytes: 1024 * 1024,
+    maxEntryPathComponents: 64,
   },
+  entryModes: "clamp",
 });
 ```
 
@@ -133,7 +136,7 @@ Extraction stages into a private dir and merges through the same boundary used b
 import { withTempWorkspace } from "@openclaw/fs-safe/temp";
 
 await withTempWorkspace({ rootDir: "/srv/jobs/tmp", prefix: "build-" }, async (workspace) => {
-  await fs.copyIn("input.bin", "/tmp/source.bin");
+  await workspace.copyIn("input.bin", "/tmp/source.bin");
   // ...do work in workspace.dir; auto-cleaned on exit
 });
 ```
