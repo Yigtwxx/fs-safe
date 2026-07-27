@@ -4,6 +4,19 @@
 
 The same shape exists in other languages: Go's [`os.Root` / `OpenInRoot`](https://go.dev/blog/osroot) and Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std) both expose a root handle whose operations refuse to escape it. `fs-safe` is the Node-side equivalent: a single `root()` capability that carries the boundary across every read, write, move, and remove, instead of leaving each call site to redo `path.resolve(...).startsWith(...)` and hope.
 
+## Affected versions / exposure
+
+In published releases through 0.4.7, the exported `resolveRootPath()` and
+`resolveRootPathSync()` helpers validated a lexically normalized path spelling.
+A caller-supplied path traversing an in-root symlink could therefore pass
+validation while resolving outside the root. Version 0.5 fixes this with
+component-wise alias resolution, resolving each alias before applying later
+path components.
+
+`root()` handles were **not** affected: their operations have contained this
+case since `5ddca80`. Exposure is limited to consumers that call
+`resolveRootPath()` or `resolveRootPathSync()` directly.
+
 ## Threat model
 
 You hand a `root()` boundary to a piece of code that takes caller-controlled relative paths. The library defends against a caller that:

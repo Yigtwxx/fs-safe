@@ -13,7 +13,7 @@
 
 ### Security and Correctness
 
-- **Security:** Resolve symlink aliases component-by-component before applying later `..` segments in the exported root-path validator, and validate raw `root()` inputs before normalized I/O, preventing alias-dependent traversal from being approved under a different lexical path.
+- **Security — `resolveRootPath()` / `resolveRootPathSync()`:** Published releases through 0.4.7 validated a lexically normalized path spelling, so a caller-supplied path traversing an in-root symlink could pass validation while resolving outside the root. Version 0.5 fixes this with component-wise alias resolution. `root()` handles were **not** affected: their operations have contained this case since `5ddca80`, so exposure is limited to direct users of these two exported helpers.
 - Prefer macOS 15.4's `O_RESOLVE_BENEATH` for native opens, retain the guarded component walk on older kernels, and apply an `F_GETPATH` post-open escape detector to both routes without claiming rename-race atomicity.
 - Report open containment explicitly: native `openBeneath()` returns `{ fd, containment }` with `kernel-atomic` on Linux and `best-effort` on macOS/Windows, while JavaScript root open/read/writable results report `best-effort`.
 - Serialize async `jsonStore` writes and read-modify-write updates in-process by canonical store path before taking the cross-process sidecar lock, preventing overlapping `write`, `update`, and `updateOr` calls from silently losing updates; reject nested same-path mutations with typed `store-reentrant-update` errors. Thanks @yetval for reporting this.
