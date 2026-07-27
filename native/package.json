@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/fs-safe-native",
-  "version": "0.5.0-dev.0",
+  "version": "0.5.0",
   "description": "Native fd-relative filesystem primitives for @openclaw/fs-safe.",
   "license": "MIT",
   "author": "OpenClaw Team <dev@openclaw.ai>",
@@ -42,12 +42,12 @@
     "prepublishOnly": "napi prepublish -t npm"
   },
   "optionalDependencies": {
-    "@openclaw/fs-safe-native-darwin-arm64": "0.5.0-dev.0",
-    "@openclaw/fs-safe-native-darwin-x64": "0.5.0-dev.0",
-    "@openclaw/fs-safe-native-linux-arm64-gnu": "0.5.0-dev.0",
-    "@openclaw/fs-safe-native-linux-arm64-musl": "0.5.0-dev.0",
-    "@openclaw/fs-safe-native-linux-x64-gnu": "0.5.0-dev.0",
-    "@openclaw/fs-safe-native-linux-x64-musl": "0.5.0-dev.0",
-    "@openclaw/fs-safe-native-win32-x64-msvc": "0.5.0-dev.0"
+    "@openclaw/fs-safe-native-darwin-arm64": "0.5.0",
+    "@openclaw/fs-safe-native-darwin-x64": "0.5.0",
+    "@openclaw/fs-safe-native-linux-arm64-gnu": "0.5.0",
+    "@openclaw/fs-safe-native-linux-arm64-musl": "0.5.0",
+    "@openclaw/fs-safe-native-linux-x64-gnu": "0.5.0",
+    "@openclaw/fs-safe-native-linux-x64-musl": "0.5.0",
+    "@openclaw/fs-safe-native-win32-x64-msvc": "0.5.0"
   }
 }

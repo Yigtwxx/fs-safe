@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/fs-safe",
-  "version": "0.5.0-dev.0",
+  "version": "0.5.0",
   "description": "Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.",
   "keywords": [
     "filesystem",
@@ -143,7 +143,7 @@
     "crabbox:warmup": "crabbox warmup"
   },
   "optionalDependencies": {
-    "@openclaw/fs-safe-native": "0.5.0-dev.0",
+    "@openclaw/fs-safe-native": "0.5.0",
     "jszip": "^3.10.1",
     "tar": "7.5.21"
   },

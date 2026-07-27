@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/fs-safe-native-darwin-x64",
-  "version": "0.5.0-dev.0",
+  "version": "0.5.0",
   "description": "Native binding for @openclaw/fs-safe on macOS x64.",
   "license": "MIT",
   "author": "OpenClaw Team <dev@openclaw.ai>",
