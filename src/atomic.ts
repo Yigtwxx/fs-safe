@@ -3,7 +3,11 @@ export {
   replaceFileAtomicSync,
   type ReplaceFileAtomicFileSystem,
   type ReplaceFileAtomicOptions,
+  type ReplaceFileAtomicRestoreCleanup,
+  type ReplaceFileAtomicRestoreFailureDetails,
   type ReplaceFileAtomicResult,
+  type ReplaceFileCopyFallbackRestorePolicy,
+  type ReplaceFileDestinationHardlinkPolicy,
   type ReplaceFileAtomicSyncFileSystem,
   type ReplaceFileAtomicSyncOptions,
 } from "./replace-file.js";

@@ -2,6 +2,7 @@ import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { sanitizeUntrustedFileName } from "./filename.js";
 import { isPathInside } from "./path.js";
+import { writeExternalFileViaSibling } from "./output-sibling.js";
 import { root } from "./root.js";
 import { tempFile } from "./temp-target.js";
 
@@ -11,6 +12,8 @@ export type ExternalFileWriteOptions<T = void> = {
   write: (filePath: string) => Promise<T>;
   maxBytes?: number;
   mode?: number;
+  staging?: "workspace" | "sibling";
+  fallbackFileName?: string;
 };
 
 export type ExternalFileWriteResult<T = void> = {
@@ -18,8 +21,9 @@ export type ExternalFileWriteResult<T = void> = {
   result: T;
 };
 
-function tempFileNameForTarget(targetPath: string): string {
-  return sanitizeUntrustedFileName(path.basename(targetPath), "output.bin");
+function tempFileNameForTarget(targetPath: string, fallbackFileName?: string): string {
+  const fallback = sanitizeUntrustedFileName(fallbackFileName ?? "output.bin", "output.bin");
+  return sanitizeUntrustedFileName(path.basename(targetPath), fallback);
 }
 
 function ensureTrailingSep(value: string): string {
@@ -77,9 +81,24 @@ export async function writeExternalFileWithinRoot<T = void>(
   });
   assertFileTargetPath(targetPath);
   const finalPath = await targetRoot.resolve(targetPath);
+  if (options.staging === "sibling") {
+    const parentPath = path.dirname(targetPath);
+    if (parentPath !== ".") {
+      await targetRoot.mkdir(parentPath);
+    }
+    const siblingFinalPath = await targetRoot.resolve(targetPath);
+    const result = await writeExternalFileViaSibling({
+      finalPath: siblingFinalPath,
+      write: options.write,
+      fallbackFileName: options.fallbackFileName,
+      maxBytes: options.maxBytes,
+      mode: options.mode,
+    });
+    return { path: siblingFinalPath, result };
+  }
   const staged = await tempFile({
     prefix: "fs-safe-output",
-    fileName: tempFileNameForTarget(targetPath),
+    fileName: tempFileNameForTarget(targetPath, options.fallbackFileName),
   });
 
   try {

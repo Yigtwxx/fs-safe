@@ -3,6 +3,16 @@ import syncFs from "node:fs";
 import type { Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  assertDestinationHardlinkPolicy,
+  assertDestinationHardlinkPolicySync,
+  copyFallbackReplace,
+  copyFallbackReplaceSync,
+  type ReplaceFileAtomicRestoreCleanup,
+  type ReplaceFileAtomicRestoreFailureDetails,
+  type ReplaceFileCopyFallbackRestorePolicy,
+  type ReplaceFileDestinationHardlinkPolicy,
+} from "./replace-file-copy-fallback.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 import { serializePathWrite } from "./write-queue.js";
@@ -36,9 +46,20 @@ export type ReplaceFileAtomicSyncFileSystem = Pick<
   | "openSync"
   | "fsyncSync"
   | "closeSync"
+  | "fstatSync"
   | "statSync"
   | "lstatSync"
+  | "ftruncateSync"
+  | "readSync"
+  | "writeSync"
 >;
+
+export type {
+  ReplaceFileAtomicRestoreCleanup,
+  ReplaceFileAtomicRestoreFailureDetails,
+  ReplaceFileCopyFallbackRestorePolicy,
+  ReplaceFileDestinationHardlinkPolicy,
+};
 
 type ReplaceFileAtomicBaseOptions = {
   filePath: string;
@@ -50,6 +71,9 @@ type ReplaceFileAtomicBaseOptions = {
   renameMaxRetries?: number;
   renameRetryBaseDelayMs?: number;
   copyFallbackOnPermissionError?: boolean;
+  copyFallbackRestore?: ReplaceFileCopyFallbackRestorePolicy;
+  maxRestoreBytes?: number;
+  destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
   syncTempFile?: boolean;
   syncParentDir?: boolean;
   throwOnCleanupError?: boolean;
@@ -78,15 +102,6 @@ function isPermissionRenameError(error: unknown): boolean {
   return code === "EPERM" || code === "EEXIST";
 }
 
-const SUPPORTS_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in syncFs.constants;
-const OPEN_READ_FLAGS =
-  syncFs.constants.O_RDONLY | (SUPPORTS_NOFOLLOW ? syncFs.constants.O_NOFOLLOW : 0);
-const OPEN_WRITE_EXCLUSIVE_FLAGS =
-  syncFs.constants.O_WRONLY |
-  syncFs.constants.O_CREAT |
-  syncFs.constants.O_EXCL |
-  (SUPPORTS_NOFOLLOW ? syncFs.constants.O_NOFOLLOW : 0);
-
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -98,6 +113,9 @@ async function renameWithRetry(params: {
   maxRetries: number;
   baseDelayMs: number;
   copyFallbackOnPermissionError: boolean;
+  copyFallbackRestore: ReplaceFileCopyFallbackRestorePolicy;
+  maxRestoreBytes?: number;
+  destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
 }): Promise<ReplaceFileAtomicResult> {
   for (let attempt = 0; attempt <= params.maxRetries; attempt++) {
     try {
@@ -109,7 +127,14 @@ async function renameWithRetry(params: {
         continue;
       }
       if (params.copyFallbackOnPermissionError && isPermissionRenameError(error)) {
-        await copyFallbackReplace(params.fsModule, params.src, params.dest);
+        await copyFallbackReplace({
+          fsModule: params.fsModule,
+          src: params.src,
+          dest: params.dest,
+          destinationHardlinks: params.destinationHardlinks,
+          restore: params.copyFallbackRestore,
+          maxRestoreBytes: params.maxRestoreBytes,
+        });
         return { method: "copy-fallback" };
       }
       throw error;
@@ -132,6 +157,9 @@ function renameWithRetrySync(params: {
   maxRetries: number;
   baseDelayMs: number;
   copyFallbackOnPermissionError: boolean;
+  copyFallbackRestore: ReplaceFileCopyFallbackRestorePolicy;
+  maxRestoreBytes?: number;
+  destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
 }): ReplaceFileAtomicResult {
   for (let attempt = 0; attempt <= params.maxRetries; attempt++) {
     try {
@@ -143,7 +171,14 @@ function renameWithRetrySync(params: {
         continue;
       }
       if (params.copyFallbackOnPermissionError && isPermissionRenameError(error)) {
-        copyFallbackReplaceSync(params.fsModule, params.src, params.dest);
+        copyFallbackReplaceSync({
+          fsModule: params.fsModule,
+          src: params.src,
+          dest: params.dest,
+          destinationHardlinks: params.destinationHardlinks,
+          restore: params.copyFallbackRestore,
+          maxRestoreBytes: params.maxRestoreBytes,
+        });
         return { method: "copy-fallback" };
       }
       throw error;
@@ -152,99 +187,19 @@ function renameWithRetrySync(params: {
   throw new Error("Atomic rename retry loop exhausted.");
 }
 
-async function copyFallbackReplace(
-  fsModule: ReplaceFileAtomicFileSystem["promises"],
-  src: string,
-  dest: string,
-): Promise<void> {
-  const sourceStat = await fsModule.lstat(src);
-  if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
-    throw new Error(`Refusing copy fallback from non-file source: ${src}`);
-  }
-  const destStat = await fsModule.lstat(dest).catch((lstatError) => {
-    if ((lstatError as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
-    throw lstatError;
-  });
-  if (destStat?.isSymbolicLink()) {
-    throw new Error(`Refusing copy fallback through symlink destination: ${dest}`);
-  }
-  if (destStat) {
-    await fsModule.rm(dest, { force: true });
-  }
-
-  let sourceHandle: Awaited<ReturnType<ReplaceFileAtomicFileSystem["promises"]["open"]>> | null =
-    null;
-  let destHandle: Awaited<ReturnType<ReplaceFileAtomicFileSystem["promises"]["open"]>> | null =
-    null;
-  try {
-    sourceHandle = await fsModule.open(src, OPEN_READ_FLAGS);
-    destHandle = await fsModule.open(dest, OPEN_WRITE_EXCLUSIVE_FLAGS, sourceStat.mode & 0o777);
-    await destHandle.writeFile(await sourceHandle.readFile());
-  } finally {
-    await destHandle?.close().catch(() => undefined);
-    await sourceHandle?.close().catch(() => undefined);
-  }
-  await fsModule.unlink(src).catch(() => undefined);
-}
-
-function copyFallbackReplaceSync(
-  fsModule: ReplaceFileAtomicSyncFileSystem,
-  src: string,
-  dest: string,
-): void {
-  const sourceStat = fsModule.lstatSync(src);
-  if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
-    throw new Error(`Refusing copy fallback from non-file source: ${src}`);
-  }
-  let destStat: Stats | null = null;
-  try {
-    destStat = fsModule.lstatSync(dest);
-  } catch (lstatError) {
-    if ((lstatError as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw lstatError;
-    }
-  }
-  if (destStat?.isSymbolicLink()) {
-    throw new Error(`Refusing copy fallback through symlink destination: ${dest}`);
-  }
-  if (destStat) {
-    fsModule.rmSync(dest, { force: true });
-  }
-
-  let sourceFd: number | undefined;
-  let destFd: number | undefined;
-  try {
-    sourceFd = fsModule.openSync(src, OPEN_READ_FLAGS);
-    destFd = fsModule.openSync(dest, OPEN_WRITE_EXCLUSIVE_FLAGS, sourceStat.mode & 0o777);
-    fsModule.writeFileSync(destFd, fsModule.readFileSync(sourceFd));
-  } finally {
-    if (destFd !== undefined) {
-      try {
-        fsModule.closeSync(destFd);
-      } catch {
-        // Best-effort close after fallback replacement.
-      }
-    }
-    if (sourceFd !== undefined) {
-      try {
-        fsModule.closeSync(sourceFd);
-      } catch {
-        // Best-effort close after fallback replacement.
-      }
-    }
-  }
-  try {
-    fsModule.unlinkSync(src);
-  } catch {
-    // Best-effort cleanup after fallback replacement.
-  }
-}
-
 function validateReplaceFilePath(filePath: string): void {
   if (!filePath || filePath.includes("\0")) {
     throw new Error("Atomic replace file path must be non-empty.");
+  }
+}
+
+function validateRestoreOptions(options: ReplaceFileAtomicBaseOptions): void {
+  if (options.copyFallbackRestore !== "restore-original") return;
+  if (options.maxRestoreBytes === undefined) {
+    throw new RangeError("maxRestoreBytes is required when copyFallbackRestore is restore-original");
+  }
+  if (!Number.isSafeInteger(options.maxRestoreBytes) || options.maxRestoreBytes < 0) {
+    throw new RangeError("maxRestoreBytes must be a non-negative safe integer");
   }
 }
 
@@ -369,6 +324,7 @@ export async function replaceFileAtomic(
 ): Promise<ReplaceFileAtomicResult> {
   const filePath = options.filePath;
   validateReplaceFilePath(filePath);
+  validateRestoreOptions(options);
   return await serializePathWrite(path.resolve(filePath), async () => {
     return await replaceFileAtomicUnserialized(options);
   });
@@ -398,6 +354,7 @@ async function replaceFileAtomicUnserialized(
     if (options.beforeRename) {
       await options.beforeRename({ filePath, tempPath });
     }
+    await assertDestinationHardlinkPolicy(fsModule, filePath, options.destinationHardlinks);
     const result = await renameWithRetry({
       fsModule,
       src: tempPath,
@@ -405,6 +362,9 @@ async function replaceFileAtomicUnserialized(
       maxRetries: options.renameMaxRetries ?? 0,
       baseDelayMs: options.renameRetryBaseDelayMs ?? 50,
       copyFallbackOnPermissionError: options.copyFallbackOnPermissionError === true,
+      copyFallbackRestore: options.copyFallbackRestore ?? "none",
+      maxRestoreBytes: options.maxRestoreBytes,
+      destinationHardlinks: options.destinationHardlinks,
     });
     tempExists = false;
     unregisterTempPath();
@@ -434,6 +394,7 @@ export function replaceFileAtomicSync(
 ): ReplaceFileAtomicResult {
   const filePath = options.filePath;
   validateReplaceFilePath(filePath);
+  validateRestoreOptions(options);
   const fsModule = options.fileSystem ?? syncFs;
   const dir = path.dirname(filePath);
   const dirMode = options.dirMode ?? 0o700;
@@ -458,6 +419,7 @@ export function replaceFileAtomicSync(
     if (options.beforeRename) {
       options.beforeRename({ filePath, tempPath });
     }
+    assertDestinationHardlinkPolicySync(fsModule, filePath, options.destinationHardlinks);
     const result = renameWithRetrySync({
       fsModule,
       src: tempPath,
@@ -465,6 +427,9 @@ export function replaceFileAtomicSync(
       maxRetries: options.renameMaxRetries ?? 0,
       baseDelayMs: options.renameRetryBaseDelayMs ?? 50,
       copyFallbackOnPermissionError: options.copyFallbackOnPermissionError === true,
+      copyFallbackRestore: options.copyFallbackRestore ?? "none",
+      maxRestoreBytes: options.maxRestoreBytes,
+      destinationHardlinks: options.destinationHardlinks,
     });
     tempExists = false;
     unregisterTempPath();

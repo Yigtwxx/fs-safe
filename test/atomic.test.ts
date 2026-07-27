@@ -1,5 +1,5 @@
 import fsSync from "node:fs";
-import fs from "node:fs/promises";
+import fs, { type FileHandle } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -138,6 +138,244 @@ describe("atomic helpers", () => {
   });
 
   it.runIf(process.platform !== "win32")(
+    "rejects a hardlinked destination from its pinned descriptor",
+    async () => {
+      const root = await tempRoot("fs-safe-atomic-hardlink-");
+      const filePath = path.join(root, "state.txt");
+      const otherPath = path.join(root, "other.txt");
+      await fs.writeFile(filePath, "old", "utf8");
+      await fs.link(filePath, otherPath);
+
+      await expect(
+        replaceFileAtomic({
+          filePath,
+          content: "new",
+          destinationHardlinks: "reject",
+          fileSystem: {
+            promises: {
+              ...fs,
+              lstat: async (candidate) => {
+                const stat = await fs.lstat(candidate);
+                return candidate === filePath
+                  ? new Proxy(stat, { get: (target, property) => property === "nlink" ? 1 : Reflect.get(target, property) })
+                  : stat;
+              },
+            },
+          },
+        }),
+      ).rejects.toMatchObject({ code: "hardlink" });
+
+      await expect(fs.readFile(filePath, "utf8")).resolves.toBe("old");
+      await expect(fs.readFile(otherPath, "utf8")).resolves.toBe("old");
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a hardlinked destination in the synchronous variant",
+    async () => {
+      const root = await tempRoot("fs-safe-atomic-hardlink-sync-");
+      const filePath = path.join(root, "state.txt");
+      const otherPath = path.join(root, "other.txt");
+      await fs.writeFile(filePath, "old", "utf8");
+      await fs.link(filePath, otherPath);
+
+      expect(() =>
+        replaceFileAtomicSync({
+          filePath,
+          content: "new",
+          destinationHardlinks: "reject",
+        }),
+      ).toThrow(expect.objectContaining({ code: "hardlink" }));
+      expect(fsSync.readFileSync(filePath, "utf8")).toBe("old");
+      expect(fsSync.readFileSync(otherPath, "utf8")).toBe("old");
+    },
+  );
+
+  it("restores a destination after a torn copy-fallback write", async () => {
+    const root = await tempRoot("fs-safe-atomic-restore-");
+    const filePath = path.join(root, "state.txt");
+    await fs.writeFile(filePath, "original", "utf8");
+    let replacementWrites = 0;
+    let syncs = 0;
+    const open: typeof fs.open = async (candidate, flags, mode) => {
+      const handle = await fs.open(candidate, flags, mode);
+      if (candidate !== filePath || typeof flags !== "number" || !(flags & fsSync.constants.O_RDWR)) {
+        return handle;
+      }
+      return new Proxy(handle, {
+        get(target, property) {
+          if (property === "write") {
+            return async (buffer: Buffer, offset: number, length: number, position: number) => {
+              replacementWrites += 1;
+              if (replacementWrites === 1) {
+                await target.write(buffer, offset, 2, position);
+                throw Object.assign(new Error("simulated torn write"), { code: "EIO" });
+              }
+              return await target.write(buffer, offset, length, position);
+            };
+          }
+          if (property === "sync") {
+            return async () => {
+              syncs += 1;
+              await target.sync();
+            };
+          }
+          const value = Reflect.get(target, property);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as FileHandle;
+    };
+
+    await expect(
+      replaceFileAtomic({
+        filePath,
+        content: "replacement",
+        copyFallbackOnPermissionError: true,
+        copyFallbackRestore: "restore-original",
+        maxRestoreBytes: 1024,
+        fileSystem: {
+          promises: {
+            ...fs,
+            open,
+            rename: async () => {
+              throw Object.assign(new Error("rename denied"), { code: "EPERM" });
+            },
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "helper-failed",
+      details: { cleanup: "restored" },
+    });
+
+    expect(syncs).toBe(1);
+    await expect(fs.readFile(filePath, "utf8")).resolves.toBe("original");
+  });
+
+  it("reports a restore-failed double fault", async () => {
+    const root = await tempRoot("fs-safe-atomic-restore-failed-");
+    const filePath = path.join(root, "state.txt");
+    await fs.writeFile(filePath, "original", "utf8");
+    let writes = 0;
+    const open: typeof fs.open = async (candidate, flags, mode) => {
+      const handle = await fs.open(candidate, flags, mode);
+      if (candidate !== filePath || typeof flags !== "number" || !(flags & fsSync.constants.O_RDWR)) {
+        return handle;
+      }
+      return new Proxy(handle, {
+        get(target, property) {
+          if (property === "write") {
+            return async (buffer: Buffer, offset: number, _length: number, position: number) => {
+              writes += 1;
+              await target.write(buffer, offset, writes === 1 ? 2 : 1, position);
+              throw Object.assign(new Error(writes === 1 ? "write failed" : "restore failed"), {
+                code: "EIO",
+              });
+            };
+          }
+          const value = Reflect.get(target, property);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as FileHandle;
+    };
+
+    await expect(
+      replaceFileAtomic({
+        filePath,
+        content: "replacement",
+        copyFallbackOnPermissionError: true,
+        copyFallbackRestore: "restore-original",
+        maxRestoreBytes: 1024,
+        fileSystem: {
+          promises: {
+            ...fs,
+            open,
+            rename: async () => {
+              throw Object.assign(new Error("rename denied"), { code: "EPERM" });
+            },
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "helper-failed",
+      details: { cleanup: "restore-failed" },
+      cause: expect.any(AggregateError),
+    });
+  });
+
+  it("refuses an oversized restore snapshot before modifying the destination", async () => {
+    const root = await tempRoot("fs-safe-atomic-restore-limit-");
+    const filePath = path.join(root, "state.txt");
+    await fs.writeFile(filePath, "original", "utf8");
+
+    await expect(
+      replaceFileAtomic({
+        filePath,
+        content: "new",
+        copyFallbackOnPermissionError: true,
+        copyFallbackRestore: "restore-original",
+        maxRestoreBytes: 3,
+        fileSystem: {
+          promises: {
+            ...fs,
+            rename: async () => {
+              throw Object.assign(new Error("rename denied"), { code: "EPERM" });
+            },
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "too-large" });
+
+    await expect(fs.readFile(filePath, "utf8")).resolves.toBe("original");
+  });
+
+  it("restores a torn synchronous copy-fallback write through the pinned fd", async () => {
+    const root = await tempRoot("fs-safe-atomic-restore-sync-");
+    const filePath = path.join(root, "state.txt");
+    await fs.writeFile(filePath, "original", "utf8");
+    let destinationFd: number | undefined;
+    let writes = 0;
+    const fileSystem = {
+      ...fsSync,
+      renameSync: () => {
+        throw Object.assign(new Error("rename denied"), { code: "EPERM" });
+      },
+      openSync: ((candidate: fsSync.PathLike, flags: fsSync.OpenMode, mode?: fsSync.Mode) => {
+        const fd = fsSync.openSync(candidate, flags, mode);
+        if (candidate === filePath && typeof flags === "number" && (flags & fsSync.constants.O_RDWR)) {
+          destinationFd = fd;
+        }
+        return fd;
+      }) as typeof fsSync.openSync,
+      writeSync: ((fd: number, buffer: Uint8Array, offset: number, length: number, position: number) => {
+        if (fd === destinationFd) {
+          writes += 1;
+          if (writes === 1) {
+            fsSync.writeSync(fd, buffer, offset, 2, position);
+            throw Object.assign(new Error("simulated torn write"), { code: "EIO" });
+          }
+        }
+        return fsSync.writeSync(fd, buffer, offset, length, position);
+      }) as typeof fsSync.writeSync,
+    };
+
+    expect(() =>
+      replaceFileAtomicSync({
+        filePath,
+        content: "replacement",
+        copyFallbackOnPermissionError: true,
+        copyFallbackRestore: "restore-original",
+        maxRestoreBytes: 1024,
+        fileSystem,
+      }),
+    ).toThrow(expect.objectContaining({
+      code: "helper-failed",
+      details: { cleanup: "restored" },
+    }));
+    expect(fsSync.readFileSync(filePath, "utf8")).toBe("original");
+  });
+
+  it.runIf(process.platform !== "win32")(
     "does not copy fallback through destination symlinks",
     async () => {
       const root = await tempRoot("fs-safe-atomic-link-");
@@ -151,6 +389,8 @@ describe("atomic helpers", () => {
           filePath,
           content: "new",
           copyFallbackOnPermissionError: true,
+          copyFallbackRestore: "restore-original",
+          maxRestoreBytes: 1024,
           fileSystem: {
             promises: {
               ...fs,
@@ -185,6 +425,8 @@ describe("atomic helpers", () => {
           filePath,
           content: "new",
           copyFallbackOnPermissionError: true,
+          copyFallbackRestore: "restore-original",
+          maxRestoreBytes: 1024,
           fileSystem: {
             ...fsSync,
             renameSync: () => {
