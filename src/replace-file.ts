@@ -13,6 +13,11 @@ import {
   type ReplaceFileCopyFallbackRestorePolicy,
   type ReplaceFileDestinationHardlinkPolicy,
 } from "./replace-file-copy-fallback.js";
+import {
+  type SyncFchmod,
+  writeTempFile,
+  writeTempFileSync,
+} from "./replace-file-descriptor.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
 import { serializePathWrite } from "./write-queue.js";
@@ -52,7 +57,9 @@ export type ReplaceFileAtomicSyncFileSystem = Pick<
   | "ftruncateSync"
   | "readSync"
   | "writeSync"
->;
+> & {
+  fchmodSync?: typeof syncFs.fchmodSync;
+};
 
 export type {
   ReplaceFileAtomicRestoreCleanup,
@@ -160,6 +167,7 @@ function renameWithRetrySync(params: {
   copyFallbackRestore: ReplaceFileCopyFallbackRestorePolicy;
   maxRestoreBytes?: number;
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
+  fchmodSync?: SyncFchmod;
 }): ReplaceFileAtomicResult {
   for (let attempt = 0; attempt <= params.maxRetries; attempt++) {
     try {
@@ -178,6 +186,7 @@ function renameWithRetrySync(params: {
           destinationHardlinks: params.destinationHardlinks,
           restore: params.copyFallbackRestore,
           maxRestoreBytes: params.maxRestoreBytes,
+          fchmodSync: params.fchmodSync,
         });
         return { method: "copy-fallback" };
       }
@@ -240,30 +249,10 @@ function resolveModeSync(options: ReplaceFileAtomicSyncOptions): number {
   return stat ? stat.mode : defaultMode;
 }
 
-async function syncTempFile(fsModule: ReplaceFileAtomicFileSystem["promises"], tempPath: string) {
-  const handle = await fsModule.open(tempPath, "r+");
-  try {
-    await handle.sync();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") {
-      throw error;
-    }
-  } finally {
-    await handle.close();
-  }
-}
-
-function syncTempFileSync(fsModule: ReplaceFileAtomicSyncFileSystem, tempPath: string): void {
-  const fd = fsModule.openSync(tempPath, "r+");
-  try {
-    fsModule.fsyncSync(fd);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") {
-      throw error;
-    }
-  } finally {
-    fsModule.closeSync(fd);
-  }
+function missingFchmodSyncError(): TypeError {
+  return new TypeError(
+    "fileSystem.fchmodSync is required when mode or preserveExistingMode is specified",
+  );
 }
 
 async function syncDirectoryBestEffort(
@@ -346,11 +335,13 @@ async function replaceFileAtomicUnserialized(
   await fsModule.chmod(dir, dirMode).catch(() => undefined);
   try {
     tempExists = true;
-    await fsModule.writeFile(tempPath, options.content, { mode, flag: "wx" });
-    unregisterTempPath.setIdentity(await fsModule.lstat(tempPath));
-    if (options.syncTempFile) {
-      await syncTempFile(fsModule, tempPath);
-    }
+    unregisterTempPath.setIdentity(await writeTempFile({
+      fsModule,
+      tempPath,
+      content: options.content,
+      mode,
+      sync: options.syncTempFile === true,
+    }));
     if (options.beforeRename) {
       await options.beforeRename({ filePath, tempPath });
     }
@@ -368,7 +359,6 @@ async function replaceFileAtomicUnserialized(
     });
     tempExists = false;
     unregisterTempPath();
-    await fsModule.chmod(filePath, mode).catch(() => undefined);
     if (options.syncParentDir) {
       await syncDirectoryBestEffort(fsModule, dir);
     }
@@ -399,6 +389,12 @@ export function replaceFileAtomicSync(
   const dir = path.dirname(filePath);
   const dirMode = options.dirMode ?? 0o700;
   const mode = resolveModeSync(options);
+  const fchmodSync = options.fileSystem?.fchmodSync ?? (
+    options.fileSystem === undefined ? syncFs.fchmodSync : undefined
+  );
+  if (!fchmodSync && (options.mode !== undefined || options.preserveExistingMode === true)) {
+    throw missingFchmodSyncError();
+  }
   const tempPath = buildReplaceTempPath(filePath, options.tempPrefix);
   const unregisterTempPath = registerTempPathForExit(tempPath);
   let tempExists = false;
@@ -411,11 +407,14 @@ export function replaceFileAtomicSync(
   }
   try {
     tempExists = true;
-    fsModule.writeFileSync(tempPath, options.content, { mode, flag: "wx" });
-    unregisterTempPath.setIdentity(fsModule.lstatSync(tempPath));
-    if (options.syncTempFile) {
-      syncTempFileSync(fsModule, tempPath);
-    }
+    unregisterTempPath.setIdentity(writeTempFileSync({
+      fsModule,
+      tempPath,
+      content: options.content,
+      mode,
+      fchmodSync,
+      sync: options.syncTempFile === true,
+    }));
     if (options.beforeRename) {
       options.beforeRename({ filePath, tempPath });
     }
@@ -430,14 +429,10 @@ export function replaceFileAtomicSync(
       copyFallbackRestore: options.copyFallbackRestore ?? "none",
       maxRestoreBytes: options.maxRestoreBytes,
       destinationHardlinks: options.destinationHardlinks,
+      fchmodSync,
     });
     tempExists = false;
     unregisterTempPath();
-    try {
-      fsModule.chmodSync(filePath, mode);
-    } catch {
-      // Best-effort on platforms that do not enforce POSIX modes.
-    }
     if (options.syncParentDir) {
       syncDirectoryBestEffortSync(fsModule, dir);
     }

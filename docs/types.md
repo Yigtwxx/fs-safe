@@ -2,6 +2,8 @@
 
 The types most callers reach for. Shared data shapes are exported from `@openclaw/fs-safe/types`; method-specific option/result types live next to their subpath.
 
+For atomic replacement, `ReplaceFileAtomicFileSystem` and `ReplaceFileAtomicSyncFileSystem` are exported from `@openclaw/fs-safe/atomic`. Async adapters use `chmod()` on the `FileHandle` returned by their required `open()` operation. The synchronous type adds optional `fchmodSync(fd, mode)`; custom sync adapters that explicitly request `mode` or `preserveExistingMode` must implement it. See [Atomic writes](atomic.md#test-injection).
+
 ```ts
 import type {
   BasePathOptions,

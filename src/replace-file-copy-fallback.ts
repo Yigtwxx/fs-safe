@@ -350,6 +350,7 @@ export async function copyFallbackReplace(params: {
       );
       await destHandle.writeFile(replacement);
     }
+    await destHandle.chmod(sourceStat.mode);
   } finally {
     await destHandle?.close().catch(() => undefined);
     await sourceHandle.close().catch(() => undefined);
@@ -364,6 +365,7 @@ export function copyFallbackReplaceSync(params: {
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
   restore: ReplaceFileCopyFallbackRestorePolicy;
   maxRestoreBytes?: number;
+  fchmodSync?: (fd: number, mode: number) => void;
 }): void {
   const sourcePreview = params.fsModule.lstatSync(params.src);
   if (sourcePreview.isSymbolicLink() || !sourcePreview.isFile()) {
@@ -421,6 +423,7 @@ export function copyFallbackReplaceSync(params: {
       );
       writeAllSync(params.fsModule, destFd, replacement);
     }
+    params.fchmodSync?.(destFd, sourceStat.mode);
   } finally {
     if (destFd !== undefined) {
       try {

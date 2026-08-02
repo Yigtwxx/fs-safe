@@ -14,7 +14,7 @@ import {
 
 ## `replaceFileAtomic` / `replaceFileAtomicSync`
 
-Write `content` to a sibling temp file in the destination directory, optionally `fsync` the temp file, optionally `fsync` the parent directory after rename, then atomically rename over the destination.
+Write `content` to a sibling temp file in the destination directory, apply the final mode through its still-open descriptor, optionally `fsync` that descriptor, optionally `fsync` the parent directory after rename, then atomically rename over the destination. No permission change follows the caller-supplied destination path after publication.
 
 Async replacements to the same destination are serialized inside the current process, so two overlapping `replaceFileAtomic()` calls do not interleave their temp-write/rename phases. Use a sidecar lock when multiple processes may write the same target.
 
@@ -121,7 +121,7 @@ Use it when callers must see a whole staged tree at the target path. For single-
 ## `writeTextAtomic`
 
 Atomic UTF-8 text write with the same secure defaults as `writeJson`: sibling
-temp file, temp fsync, rename, parent fsync, and final chmod best-effort.
+temp file, descriptor-bound mode setting and fsync, rename, and parent fsync.
 It delegates to `replaceFileAtomic()` with a smaller call shape. Use it when
 you do not need replacement hooks such as `beforeRename`, `preserveExistingMode`,
 or custom copy-fallback policy.
@@ -211,6 +211,17 @@ await replaceFileAtomic({
   },
 });
 ```
+
+The synchronous injectable interface adds one optional descriptor-mode operation:
+
+```ts
+type ReplaceFileAtomicSyncFileSystem = {
+  // other required operations omitted
+  fchmodSync?: typeof import("node:fs").fchmodSync;
+};
+```
+
+The async interface already requires `open()`, whose `FileHandle` supplies `chmod()`, so injecting `node:fs` or another conforming adapter needs no new async member. A custom synchronous filesystem that passes `mode` or `preserveExistingMode` must supply `fchmodSync`; omission fails before any file is created and never falls back to `chmod(destination)`. Existing synchronous adapters that request neither option may omit it. Copy fallback applies the mode through its pinned destination descriptor as well, preserving exact modes despite the process umask.
 
 ## See also
 

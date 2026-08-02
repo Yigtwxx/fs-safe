@@ -11,6 +11,14 @@
 
 - Suffix Windows reserved basenames with `_` in `sanitizeUntrustedFileName()` while preserving case and extensions on every platform, including dollar names and superscript COM/LPT variants; thanks @SebTardif (#67).
 
+### Security and Correctness
+
+- Apply `replaceFileAtomic()` and `replaceFileAtomicSync()` modes through pinned temp-file descriptors before rename, and through pinned copy-fallback descriptors, so a post-rename symlink swap cannot redirect `chmod` to an unrelated file while exact modes remain independent of umask; thanks @yetval for reporting this (#86).
+
+### Compatibility
+
+- Add an optional `fchmodSync` operation to the injectable synchronous atomic-replacement filesystem type. Async adapters need no new member because their required `open()` returns a mode-capable `FileHandle`; custom sync adapters that pass `mode` or `preserveExistingMode` now fail before mutation when `fchmodSync` is absent, while adapters that request neither option remain compatible.
+
 ## 0.5.1 - 2026-08-01
 
 ### Security and Correctness
