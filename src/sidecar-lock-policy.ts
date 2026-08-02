@@ -10,6 +10,20 @@ export function computeSidecarLockDelayMs(retry: SidecarLockRetryOptions, attemp
   return Math.min(maxTimeout, Math.round(base * jitter));
 }
 
+// Windows denies access to a lock file while a just-unlinked directory entry
+// is still being torn down, so a contended acquire sees EPERM on a name that is
+// already gone -- both when creating it exclusively and when reading the
+// holder's snapshot. The next attempt succeeds, so this is contention rather
+// than a permission failure. The error must name the lock file itself: the
+// exclusive-create helper opens the parent directory first, and a denial from
+// that setup step carries no teardown evidence and has to reach the caller.
+export const maxTransientLockDenials = 8;
+
+export function isTransientLockFileDenial(error: unknown, lockPath: string): boolean {
+  const denial = error as NodeJS.ErrnoException | null;
+  return process.platform === "win32" && denial?.code === "EPERM" && denial.path === lockPath;
+}
+
 export function sidecarLockPayloadIsStale(
   payload: unknown,
   staleMs: number,
