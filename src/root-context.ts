@@ -3,7 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { expandHomePrefix } from "./home-dir.js";
-import { assertNoNulPathInput, isNotFoundPathError, isPathInside } from "./path.js";
+import {
+  assertNoNulPathInput,
+  assertNoUnsafeDeviceReadPath,
+  hasNodeErrorCode,
+  isNotFoundPathError,
+  isPathInside,
+} from "./path.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
 
@@ -78,6 +84,8 @@ export async function resolvePathInRoot(
   options?: {
     aliasErrorCode?: "outside-workspace" | "path-alias";
     allowFinalSymlink?: boolean;
+    rejectUnsafeDeviceReads?: boolean;
+    rejectSymlinks?: boolean;
   },
 ): Promise<{ rootReal: string; rootWithSep: string; resolved: string }> {
   assertValidRootRelativePath(relativePath);
@@ -85,6 +93,9 @@ export async function resolvePathInRoot(
   const resolved = path.resolve(root.rootWithSep, expanded);
   if (!isPathInside(root.rootWithSep, resolved)) {
     throw new FsSafeError("outside-workspace", "file is outside workspace root");
+  }
+  if (options?.rejectUnsafeDeviceReads === true) {
+    assertNoUnsafeDeviceReadPath(resolved);
   }
   const rawAbsolutePath = path.isAbsolute(expanded)
     ? expanded
@@ -96,8 +107,17 @@ export async function resolvePathInRoot(
       rootCanonicalPath: root.rootReal,
       boundaryLabel: "root",
       policy: options?.allowFinalSymlink ? ROOT_PATH_ALIAS_POLICIES.unlinkTarget : undefined,
+      rejectSymlinks: options?.rejectSymlinks,
     });
   } catch (error) {
+    if (error instanceof FsSafeError && error.code === "symlink") {
+      throw error;
+    }
+    if (hasNodeErrorCode(error, "ENAMETOOLONG")) {
+      throw new FsSafeError("invalid-path", "relative path is too long", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
     const code = options?.aliasErrorCode ?? "outside-workspace";
     throw new FsSafeError(
       code,
