@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Reject negative, malformed, and oversized base-256 TAR sizes using the full encoded field, preventing high-order size bytes from bypassing archive metadata metering.
 - Preserve unrelated files when the create-only JavaScript `Root.write()` fallback loses a parent-directory race during post-write verification, limiting failure cleanup to the inode created by the operation.
 - Report the documented `not-file` code when a writable Root open reaches a non-regular descriptor on Windows, matching the existing POSIX `EISDIR` mapping.
 - Serialize same-target `Root.write()` and `Root.copyIn()` calls before inspecting the existing destination, so ordinary overlapping writers do not race the mode-preservation open against another writer's atomic replacement.
