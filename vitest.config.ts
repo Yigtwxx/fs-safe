@@ -4,6 +4,9 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     pool: "forks",
+    // Windows hosted runners become nondeterministic when the filesystem stress
+    // suites compete across worker processes. Keep that platform serialized.
+    maxWorkers: process.platform === "win32" ? 1 : undefined,
     expect: {
       requireAssertions: true,
     },

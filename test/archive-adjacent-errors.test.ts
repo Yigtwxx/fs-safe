@@ -134,13 +134,21 @@ describe("archive input staging failures", () => {
   it("rejects an archive whose identity changes after open", async () => {
     const root = await tempRoot("fs-safe-stage-race-");
     const archivePath = path.join(root, "archive");
-    const other = path.join(root, "other");
     await fs.writeFile(archivePath, "archive");
-    await fs.writeFile(other, "other");
     const realLstat = fs.lstat.bind(fs);
+    const originalStat = await realLstat(archivePath);
+    const changedStat = new Proxy(originalStat, {
+      get(target, property) {
+        if (property === "ino") {
+          return typeof target.ino === "bigint" ? target.ino + 1n : target.ino === 0 ? 1 : 0;
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
     let archiveLstats = 0;
     vi.spyOn(fs, "lstat").mockImplementation(async (candidate) => {
-      if (String(candidate) === archivePath && ++archiveLstats === 2) return await realLstat(other);
+      if (String(candidate) === archivePath && ++archiveLstats === 2) return changedStat;
       return await realLstat(candidate);
     });
 
@@ -149,6 +157,7 @@ describe("archive input staging failures", () => {
       limits: resolveExtractLimits(),
       deadline: deadline(),
     })).rejects.toThrow("archive changed during validation");
+    expect(archiveLstats).toBe(2);
   });
 
   it("enforces the byte limit if a pinned input grows after its initial stat", async () => {
