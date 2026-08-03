@@ -32,7 +32,21 @@ export function validateArchiveEntryPath(
       `archive entry contains a NUL byte: ${formatErrorDetail(entryPath)}`,
     );
   }
-  const normalized = path.posix.normalize(normalizeArchiveEntryPath(entryPath));
+  const slashNormalized = normalizeArchiveEntryPath(entryPath);
+  const normalized = path.posix.normalize(slashNormalized);
+  if (
+    normalized.split("/").some((segment) =>
+      Math.max(
+        Buffer.byteLength(segment.normalize("NFC")),
+        Buffer.byteLength(segment.normalize("NFD")),
+      ) > 255
+    )
+  ) {
+    throw new ArchiveSecurityError(
+      "entry-path",
+      `archive entry has an overlong path component: ${formatErrorDetail(entryPath)}`,
+    );
+  }
   const escapeLabel = params?.escapeLabel ?? "destination";
   if (normalized === ".." || normalized.startsWith("../")) {
     throw new ArchiveSecurityError(
@@ -44,6 +58,12 @@ export function validateArchiveEntryPath(
     throw new ArchiveSecurityError(
       "entry-path",
       `archive entry is absolute: ${formatErrorDetail(entryPath)}`,
+    );
+  }
+  if (slashNormalized.split("/").includes("..")) {
+    throw new ArchiveSecurityError(
+      "entry-path",
+      `archive entry contains a parent segment: ${formatErrorDetail(entryPath)}`,
     );
   }
 }

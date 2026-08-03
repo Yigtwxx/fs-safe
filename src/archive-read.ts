@@ -2,7 +2,11 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { Readable } from "node:stream";
 import { readFileHandleBounded } from "./bounded-read.js";
-import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
+import {
+  ArchiveFormatError,
+  ArchiveSecurityError,
+  isArchiveFormatErrorMessage,
+} from "./archive-errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import {
   normalizeArchiveEntryPath,
@@ -18,9 +22,12 @@ import {
 } from "./archive-limits.js";
 import { readTarEntryInfo } from "./archive-tar.js";
 import { preflightTarMetadata } from "./archive-tar-meta.js";
-import { importOptionalTar } from "./archive-tar-runtime.js";
+import { importOptionalTar, normalizeTarParserError } from "./archive-tar-runtime.js";
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
-import { createZipIntegrityTransform } from "./archive-zip-integrity.js";
+import {
+  createZipIntegrityTransform,
+  normalizeZipIntegrityError,
+} from "./archive-zip-integrity.js";
 import type { ZipEntry } from "./archive-zip-entry.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
@@ -133,11 +140,13 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number)
   ) {
     throw new Error(`archive entry is a link: ${formatErrorDetail(entryPath)}`);
   }
-  const stream =
+  const stream: NodeJS.ReadableStream =
     typeof entry.nodeStream === "function"
       ? entry.nodeStream()
       : Readable.from(await entry.async("nodebuffer"));
-  return await readStreamBounded(stream.pipe(createZipIntegrityTransform(entry)), maxBytes);
+  const integrity = createZipIntegrityTransform(entry);
+  stream.once("error", (error: Error) => integrity.destroy(normalizeZipIntegrityError(error)));
+  return await readStreamBounded(stream.pipe(integrity), maxBytes);
 }
 
 async function readTarEntry(archivePath: string, entryPath: string, maxBytes: number): Promise<Buffer> {
@@ -149,44 +158,48 @@ async function readTarEntry(archivePath: string, entryPath: string, maxBytes: nu
   let matched: Promise<Buffer> | undefined;
   let entryError: Error | undefined;
   const seenPaths = new Set<string>();
-  await tar.t({
-    file: archivePath,
-    strict: true,
-    maxMetaEntrySize: DEFAULT_MAX_META_ENTRY_BYTES,
-    onReadEntry(entry) {
-      const info = readTarEntryInfo(entry);
-      validateArchiveEntryPath(info.path, { escapeLabel: "archive root" });
-      const normalized = normalizeArchiveEntryPath(info.path).replace(/^\.\//, "");
-      if (seenPaths.has(normalized)) {
-        entryError ??= new ArchiveSecurityError(
-          "entry-path",
-          `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`,
-        );
-        entry.resume();
-        return;
-      }
-      seenPaths.add(normalized);
-      if (normalized !== entryPath) {
-        entry.resume();
-        return;
-      }
-      if (info.type !== "File" && info.type !== "OldFile" && info.type !== "ContiguousFile") {
-        entryError ??= new Error(
-          `archive entry is not a file: ${formatErrorDetail(entryPath)}`,
-        );
-        entry.resume();
-        return;
-      }
-      if (info.size > maxBytes) {
-        entryError ??= new ArchiveLimitError(
-          ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
-        );
-        entry.resume();
-        return;
-      }
-      matched = readStreamBounded(entry, maxBytes);
-    },
-  });
+  try {
+    await tar.t({
+      file: archivePath,
+      strict: true,
+      maxMetaEntrySize: DEFAULT_MAX_META_ENTRY_BYTES,
+      onReadEntry(entry) {
+        const info = readTarEntryInfo(entry);
+        validateArchiveEntryPath(info.path, { escapeLabel: "archive root" });
+        const normalized = normalizeArchiveEntryPath(info.path).replace(/^\.\//, "");
+        if (seenPaths.has(normalized)) {
+          entryError ??= new ArchiveSecurityError(
+            "entry-path",
+            `archive contains duplicate entry path: ${formatErrorDetail(normalized)}`,
+          );
+          entry.resume();
+          return;
+        }
+        seenPaths.add(normalized);
+        if (normalized !== entryPath) {
+          entry.resume();
+          return;
+        }
+        if (info.type !== "File" && info.type !== "OldFile" && info.type !== "ContiguousFile") {
+          entryError ??= new Error(
+            `archive entry is not a file: ${formatErrorDetail(entryPath)}`,
+          );
+          entry.resume();
+          return;
+        }
+        if (info.size > maxBytes) {
+          entryError ??= new ArchiveLimitError(
+            ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
+          );
+          entry.resume();
+          return;
+        }
+        matched = readStreamBounded(entry, maxBytes);
+      },
+    });
+  } catch (error) {
+    throw normalizeTarParserError(error);
+  }
   if (entryError) {
     throw entryError;
   }
@@ -265,7 +278,7 @@ export async function readArchiveEntry(
             ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
           );
         }
-        if (error instanceof Error && error.message.includes("archive-header-invalid")) {
+        if (error instanceof Error && isArchiveFormatErrorMessage(error.message)) {
           throw new ArchiveFormatError(error.message, { cause: error });
         }
         throw error;

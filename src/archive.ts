@@ -6,6 +6,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
   createArchiveOutputPathTracker,
+  normalizeArchiveEntryPath,
   resolveArchiveOutputPath,
   stripArchivePath,
   validateArchiveEntryPath,
@@ -43,7 +44,10 @@ import {
   zipEntryMode,
   type ZipEntry,
 } from "./archive-zip-entry.js";
-import { createZipIntegrityTransform } from "./archive-zip-integrity.js";
+import {
+  createZipIntegrityTransform,
+  normalizeZipIntegrityError,
+} from "./archive-zip-integrity.js";
 import { FsSafeError } from "./errors.js";
 import { ArchiveSecurityError } from "./archive-errors.js";
 import { extractNativeArchive } from "./archive-native.js";
@@ -53,7 +57,7 @@ import {
   resolveArchiveEntryMode,
   shouldExtractArchiveEntry,
 } from "./archive-policy.js";
-import { importOptionalTar } from "./archive-tar-runtime.js";
+import { importOptionalTar, normalizeTarParserError } from "./archive-tar-runtime.js";
 import { preflightTarMetadata } from "./archive-tar-meta.js";
 import type { ExtractArchiveOptions } from "./archive-options.js";
 import { writeSiblingTempFile } from "./sibling-temp.js";
@@ -186,7 +190,7 @@ async function writeZipFileEntry(params: {
             { signal: params.deadline.signal },
           );
         } catch (err) {
-          throw createPipelineTimeoutError(err, params.deadline);
+          throw normalizeZipIntegrityError(createPipelineTimeoutError(err, params.deadline));
         }
         params.deadline.check();
         if (!handleClosedByStream) {
@@ -390,6 +394,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
                   const info = readTarEntryInfo(entry);
                   const accepted = checkTarEntrySafety(info);
                   if (accepted) {
+                    (entry as { path: string }).path = normalizeArchiveEntryPath(info.path);
                     const relPath = stripArchivePath(
                       info.path,
                       Math.max(0, Math.floor(params.stripComponents ?? 0)),
@@ -434,7 +439,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
                 signal: deadline.signal,
               });
             } catch (error) {
-              throw createPipelineTimeoutError(error, deadline);
+              throw normalizeTarParserError(createPipelineTimeoutError(error, deadline));
             }
             for (const accepted of acceptedEntries) {
               const outputPath = resolveArchiveOutputPath({
