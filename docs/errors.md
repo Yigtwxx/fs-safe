@@ -62,8 +62,8 @@ filesystem boundary violation. Branch on the specific code when the distinction
 between those operational outcomes matters.
 
 The operational set is exactly `helper-failed`, `helper-unavailable`,
-`not-empty`, `not-found`, `not-removable`, `permission-unverified`, `timeout`,
-and `unsupported-platform`. Every other current `FsSafeErrorCode`, including
+`not-empty`, `not-found`, `not-removable`, `permission-unverified`, `read-failed`,
+`timeout`, and `unsupported-platform`. Every other current `FsSafeErrorCode`, including
 `store-reentrant-update`, is categorized as `policy`.
 
 ## Code union
@@ -87,6 +87,7 @@ type FsSafeErrorCode =
   | "path-alias"
   | "path-mismatch"
   | "permission-unverified"
+  | "read-failed"
   | "secret-exists"
   | "store-reentrant-update"
   | "symlink"
@@ -108,7 +109,7 @@ type FsSafeErrorCode =
 | `insecure-permissions` | A secure file or path permission check found a mode/ACL that allows broader access than requested. | File or directory is group/world writable/readable; Windows ACL grants broad read. |
 | `invalid-path` | Input was empty, contained NUL, was an unparseable URL, or otherwise unusable. | Caller didn't validate input; input was a network path on Windows, a drive-relative segment in a portable relative path or store key, or a leading drive-relative spelling such as `C:name` used as a Root destination. Existing-object Root lookups retain legal POSIX drive-like names. |
 | `not-empty` | `remove()` on a non-empty directory. | Use `replaceDirectoryAtomic` or remove children first. |
-| `not-file` | Read or copy targeted a non-regular file. | Target was a directory, FIFO, socket, device. |
+| `not-file` | Read or copy targeted a non-regular file, or a path walk found a non-directory ancestor. | Target was a directory, FIFO, socket, device, or an existing file was followed by another segment. |
 | `not-found` | The target does not exist (or its parent does not, with `mkdir: false`). | Typical missing-file case. |
 | `not-owned` | A secure file owner check failed. | File is owned by another UID. |
 | `not-removable` | `remove()` couldn't `unlink`/`rmdir` for a reason other than non-empty. | Permissions, device busy, immutable bit. |
@@ -116,6 +117,7 @@ type FsSafeErrorCode =
 | `path-alias` | A path alias check failed (e.g. canonical-real-path moved out of the root). | Symlink resolution lands outside the root. |
 | `path-mismatch` | Post-open identity check failed: the opened fd does not match the resolved path. | TOCTOU — something else swapped the path between resolve and open. |
 | `permission-unverified` | A secure file check could not verify required permissions. | Windows ACL inspection failed; POSIX ownership/mode was unavailable. |
+| `read-failed` | A validated file could not be read because of an operational filesystem or device failure. | I/O error, media failure, or another runtime read failure; inspect `cause`. |
 | `secret-exists` | `createSecretFileAtomic()` found an existing final path. | First-writer-wins secret creation lost a race or the credential was already initialized. |
 | `store-reentrant-update` | A `JsonStore.update()` callback called `update()` or `updateOr()` for the same canonical store before returning. | Reentrant mutation would deadlock or lose an update; return the complete next value from the outer callback. |
 | `symlink` | Path component is a symlink, policy is `reject`. | Caller followed a symlink they shouldn't have, or `symlinks: "reject"` is set. |
