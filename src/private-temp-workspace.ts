@@ -10,7 +10,8 @@ import {
 } from "./file-store.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
-import { isNodeError, isNotFoundPathError } from "./path.js";
+import { isNotFoundPathError } from "./path.js";
+import { throwFsSafeReadError } from "./read-error.js";
 import {
   matchRootFileOpenFailure,
   openRootFileSync,
@@ -89,18 +90,6 @@ function assertWorkspaceFileName(fileName: string): string {
   return value;
 }
 
-function throwTempWorkspaceReadError(error: unknown): never {
-  if (error instanceof FsSafeError) {
-    throw error;
-  }
-  if (isNodeError(error)) {
-    throw new FsSafeError("read-failed", "temp workspace target could not be read", {
-      cause: error,
-    });
-  }
-  throw error;
-}
-
 function throwTempWorkspaceOpenFailure(failure: RootFileOpenFailure): never {
   return matchRootFileOpenFailure<never>(failure, {
     path: ({ error }) => {
@@ -119,7 +108,7 @@ function throwTempWorkspaceOpenFailure(failure: RootFileOpenFailure): never {
         cause: error,
       });
     },
-    io: ({ error }) => throwTempWorkspaceReadError(error),
+    io: ({ error }) => throwFsSafeReadError(error, "temp workspace"),
     fallback: ({ error }) => {
       throw new FsSafeError("path-mismatch", "temp workspace target changed during read", {
         cause: error,
@@ -222,7 +211,7 @@ async function createTempWorkspace(
       try {
         return await store.readBytes(assertWorkspaceFileName(fileName));
       } catch (error) {
-        throwTempWorkspaceReadError(error);
+        throwFsSafeReadError(error, "temp workspace");
       }
     },
     cleanup: async () => {
@@ -318,7 +307,7 @@ export function tempWorkspaceSync(
         try {
           return fsSync.readFileSync(opened.fd);
         } catch (error) {
-          throwTempWorkspaceReadError(error);
+          throwFsSafeReadError(error, "temp workspace");
         }
       } finally {
         fsSync.closeSync(opened.fd);

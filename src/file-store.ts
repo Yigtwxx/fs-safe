@@ -14,7 +14,8 @@ import {
 import { writeFileSyncAtomic } from "./file-store-sync-write.js";
 import { createJsonStore, type JsonFileStoreOptions, type JsonStore } from "./json-document-store.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
-import { isNodeError, resolveSafeRelativePath } from "./path.js";
+import { isNotFoundPathError, resolveSafeRelativePath } from "./path.js";
+import { throwFsSafeReadError } from "./read-error.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
 import { DEFAULT_ROOT_MAX_BYTES } from "./root-impl.js";
 import { readRegularFile } from "./regular-file.js";
@@ -133,23 +134,9 @@ function assertMaxBytes(size: number, maxBytes?: number): void {
 }
 
 function isNotFound(error: unknown): boolean {
-  if (!error) {
-    return false;
-  }
   return error instanceof FsSafeError
     ? error.code === "not-found"
-    : (error as NodeJS.ErrnoException).code === "ENOENT" ||
-        (error as NodeJS.ErrnoException).code === "ENOTDIR";
-}
-
-function throwFileStoreReadError(error: unknown): never {
-  if (error instanceof FsSafeError) {
-    throw error;
-  }
-  if (isNodeError(error)) {
-    throw new FsSafeError("read-failed", "store target could not be read", { cause: error });
-  }
-  throw error;
+    : isNotFoundPathError(error);
 }
 
 function handleSyncStoreReadOpenFailure(opened: RootFileOpenFailure): null {
@@ -172,7 +159,7 @@ function handleSyncStoreReadOpenFailure(opened: RootFileOpenFailure): null {
         cause: failure.error instanceof Error ? failure.error : undefined,
       });
     },
-    io: (failure) => throwFileStoreReadError(failure.error),
+    io: (failure) => throwFsSafeReadError(failure.error, "store"),
     fallback: (failure) => {
       throw new FsSafeError("path-mismatch", "store target changed during read", {
         cause: failure.error instanceof Error ? failure.error : undefined,
@@ -189,9 +176,7 @@ async function readFileStoreCopySource(params: {
   if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
     throw new FsSafeError("not-file", "source path is not a file");
   }
-  if (params.maxBytes !== undefined && sourceStat.size > params.maxBytes) {
-    throw new FsSafeError("too-large", `file exceeds maximum size of ${params.maxBytes} bytes`);
-  }
+  assertMaxBytes(sourceStat.size, params.maxBytes);
   try {
     return (await readRegularFile({ filePath: params.sourcePath, maxBytes: params.maxBytes }))
       .buffer;
@@ -370,7 +355,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
         if (isNotFound(error)) {
           return null;
         }
-        throwFileStoreReadError(error);
+        throwFsSafeReadError(error, "store");
       }
     },
     readJson: async <T = unknown>(relativePath: string, readOptions?: FileStoreReadOptions) => {
@@ -390,7 +375,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
         if (isNotFound(error)) {
           return null;
         }
-        throwFileStoreReadError(error);
+        throwFsSafeReadError(error, "store");
       }
     },
     remove: async (relativePath) => {
@@ -487,7 +472,7 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
             ? syncFs.readFileSync(opened.fd, "utf8")
             : readFileDescriptorBoundedSync(opened.fd, limit).toString("utf8");
         } catch (error) {
-          throwFileStoreReadError(error);
+          throwFsSafeReadError(error, "store");
         }
       } finally {
         syncFs.closeSync(opened.fd);
