@@ -4,6 +4,7 @@
 
 ### Security and Correctness
 
+- Reject NTFS alternate data stream archive entry names on Windows before extraction, keep JavaScript and native TAR/ZIP policy aligned, and fix one-code-unit native rename and hardlink metadata buffers.
 - Reject synchronous secret reads when the path is retargeted after the preview check, matching the asynchronous reader's `path-mismatch` contract instead of returning bytes from the replacement file.
 - Preserve dangling symlinks when trash moves cross filesystems instead of failing while following their missing targets.
 - Reject non-canonical FileStore keys and malformed archive names before filesystem access, keep JavaScript/native TAR and ZIP rejection semantics aligned (including full-width base-256 sizes and empty ZIP files), and add deterministic property-based regression coverage for path aliasing, parser boundaries, collisions, truncation, and extraction limits.
@@ -13,6 +14,10 @@
 - Report filesystem I/O failures from secret, `FileStore`, and temp-workspace twin readers as the new operational `read-failed` code with the original error in `cause`, replacing synchronous secret `invalid-path`, asynchronous secret and synchronous store `path-mismatch`, and raw Node errors; consumers matching the old wrapper or `EIO`-style top-level code should match `read-failed` and inspect `cause.code` instead.
 - Preserve semantic path and validation codes in synchronous `FileStore` and temp-workspace reads: missing temp leaves now report `not-found`, stable directories report `not-file`, and hardlinks and symlinks report `hardlink` and `symlink`, replacing `path-mismatch` and fabricated raw `ENOENT` respectively to match their asynchronous twins; consumers treating either old result as absence or identity drift should match the specific path-state code instead.
 - Report an existing non-directory ancestor as `not-file` from both `assertNoSymlinkParents()` variants, replacing asynchronous success and the synchronous helper's platform-dependent success or raw `ENOTDIR` under default `allowMissing`; callers relying on that acceptance should ensure every existing prefix component is a directory or handle `not-file`.
+
+### Docs and Tooling
+
+- Measure coverage once per operating system and merge the platform reports before enforcing thresholds, so coverage reflects existing cross-platform execution rather than implying new test coverage.
 
 ## 0.5.2 - 2026-08-02
 
