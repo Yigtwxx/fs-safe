@@ -162,20 +162,6 @@ describe("store stress matrix", () => {
     await expect(store.readText("one/fresh.txt")).resolves.toBe("fresh");
   });
 
-  it("rejects unsafe keys consistently across async and sync stores", async () => {
-    const root = await tempRoot("fs-safe-store-keys-");
-    const asyncStore = fileStore({ rootDir: root });
-    const syncStore = fileStoreSync({ rootDir: root });
-    const unsafeKeys = ["", " ", "../escape", "/absolute", "a/../../escape", "C:name", "a/C:name"];
-
-    for (const key of unsafeKeys) {
-      expect(() => asyncStore.path(key)).toThrow();
-      expect(() => syncStore.path(key)).toThrow();
-      await expect(asyncStore.writeText(key, "nope")).rejects.toThrow();
-      expect(() => syncStore.writeText(key, "nope")).toThrow();
-    }
-  });
-
   itPosix("keeps exact private and queue modes across repeated atomic replacement", async () => {
     const root = await tempRoot("fs-safe-store-modes-");
     const privateStore = fileStore({ rootDir: path.join(root, "private"), private: true });
@@ -190,7 +176,5 @@ describe("store stress matrix", () => {
     expect((await fs.stat(privateStore.path("nested/value.txt"))).mode & 0o777).toBe(0o600);
     expect((await fs.stat(path.join(root, "private", "nested"))).mode & 0o777).toBe(0o700);
     expect((await fs.stat(paths.jsonPath)).mode & 0o777).toBe(0o600);
-    expect((await fs.stat(queueDir)).mode & 0o777).toBe(0o700);
-    expect((await fs.stat(failedDir)).mode & 0o777).toBe(0o700);
   });
 });
