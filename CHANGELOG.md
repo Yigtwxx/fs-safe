@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## 0.5.4 - 2026-08-10
 
 **Highlight:** two security fixes in the publication path. If you run fs-safe on
