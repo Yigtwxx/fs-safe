@@ -1,11 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.5.4 - 2026-08-10
+
+**Highlight:** two security fixes in the publication path. If you run fs-safe on
+Windows, the identity fix is the one that matters — rounded file indexes could
+previously let a replaced path pass as the original.
 
 ### Security and Correctness
 
-- Open pinned and standalone regular-file reads nonblocking on POSIX before descriptor type validation, so a raced FIFO or device cannot stall the worker; share the same read-open flags with root reads, hashing, and move-copy fallbacks.
-- Compare exact bigint filesystem identities during exclusive publication and rollback cleanup, so rounded Windows file indexes cannot hide replaced source or target paths or authorize deletion of an attacker replacement.
+- Compare exact bigint filesystem identities during exclusive publication and rollback cleanup. Windows rounds file indexes, so a replaced source or target path could previously masquerade as the original — and, worse, authorize deletion of an attacker's replacement. Identity comparisons are now exact.
+- Open pinned and standalone regular-file reads nonblocking on POSIX before validating the descriptor type, so a raced FIFO or device cannot stall the worker. The same read-open flags are now shared by root reads, hashing, and move-copy fallbacks, so the guarantee holds on every path rather than just the one that was fixed.
+
+### Dependencies and maintenance
+
+- Refresh the napi toolchain (napi 3.12.1, napi-derive 3.6.3, napi-build 2.4.1) and the Rust and Node development dependency graph.
 
 ## 0.5.3 - 2026-08-08
 
