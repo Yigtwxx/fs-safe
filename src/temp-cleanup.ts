@@ -21,7 +21,10 @@ function pathStillMatchesReceipt(entry: TempCleanupEntry): boolean {
     return false;
   }
   try {
-    return sameFileIdentityForCleanup(fsSync.lstatSync(entry.path), entry.identity);
+    return sameFileIdentityForCleanup(
+      fsSync.lstatSync(entry.path, { bigint: true }),
+      entry.identity,
+    );
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ENOENT";
   }
@@ -55,7 +58,7 @@ export function registerTempPathForExit(
   };
   if (!entry.identity) {
     try {
-      entry.identity = fsSync.lstatSync(tempPath);
+      entry.identity = fsSync.lstatSync(tempPath, { bigint: true });
     } catch {
       // Callers that register before creation set the identity after opening.
     }
