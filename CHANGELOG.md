@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.6 - 2026-08-14
 
 ### Security and Correctness
 
@@ -10,7 +10,6 @@
 ### Docs and Tooling
 
 - Set up Node before pnpm when hydrating Crabbox runners so minimal images without a preinstalled npm can prepare the workspace.
-
 ## 0.5.5 - 2026-08-12
 
 ### Security and Correctness
