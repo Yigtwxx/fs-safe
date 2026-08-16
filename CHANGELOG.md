@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Security and Correctness
+
+- Fail closed when synchronous sidecar compromise checks hit I/O errors and invoke `onCompromised` once instead of throwing from the interval. Thanks @SebTardif.
+
 ## 0.5.6 - 2026-08-14
 
 ### Security and Correctness
