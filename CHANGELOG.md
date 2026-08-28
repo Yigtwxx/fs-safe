@@ -14,6 +14,7 @@
 - Share native writer admission and direct-child cleanup mechanisms; preserve combined POSIX coordinator operation/disposal failures with `SuppressedError` while keeping staged preparation/cleanup receipts and Windows close policy unchanged.
 - Fail closed when synchronous sidecar compromise checks hit I/O errors and invoke `onCompromised` once instead of throwing from the interval. Thanks @SebTardif.
 - Reject ZIP symlink-mode entries with a trailing slash or DOS directory bit before creating output, aligning JavaScript extraction with native link policy while preserving explicit filtering. Thanks @Yigtwxx.
+- Make the validated stripped path authoritative during JavaScript TAR extraction, fixing `ENOENT` and native path disagreement for dot or empty components, including local PAX paths, while preserving pre-strip filter inputs. Thanks @Yigtwxx.
 
 ### Docs and Tooling
 
