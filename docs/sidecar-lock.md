@@ -181,7 +181,7 @@ compromise interval treats a thrown verification I/O error as a lost lock and
 invokes `onCompromised` once, matching the asynchronous `.catch(() => false)`
 contract. An explicit `verifyStillHeld()` call still propagates that I/O error.
 
-Both synchronous helpers consume the [process-wide lock defaults](config.md#configurefssafelocksconfig).
+Both synchronous helpers consume the [process-wide lock defaults](config.md#configurefssafelocks-config).
 Per-call options take precedence, including zero values; a per-call `retry`
 object replaces the entire configured retry object. A configured
 `staleRecovery: "remove-if-unchanged"` still needs per-call

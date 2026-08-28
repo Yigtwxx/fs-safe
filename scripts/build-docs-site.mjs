@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { assertNavigationCoversDocs, readDocPages, sections } from "./docs-site-navigation.mjs";
 
 import {
   brandMarkSvg,
@@ -25,23 +26,11 @@ const productDescription =
   "Race-resistant root-bounded filesystem helpers for Node.js. One root() boundary that survives symlink swaps, .. traversal, hardlink aliases, and TOCTOU rename races between check and use.";
 const installCmd = "pnpm add @openclaw/fs-safe";
 
-const sections = [
-  ["Start", ["index.md", "install.md", "quickstart.md", "security-model.md", "native-helper.md", "native.md", "config.md"]],
-  ["Root API", ["root.md", "reading.md", "writing.md", "path-scope.md"]],
-  ["Atomic & temp", ["atomic.md", "staged-file.md", "output.md", "json.md", "temp.md", "archive.md"]],
-  ["Stores", ["store.md", "json-store.md", "file-store.md", "private-file-store.md"]],
-  ["Specialized", ["secret-file.md", "regular-file.md", "sidecar-lock.md", "pinned-open.md", "local-roots.md"]],
-  ["Path & filename", ["path.md", "filename.md", "install-path.md"]],
-  ["Reference", ["errors.md", "types.md", "testing.md", "timing.md", "advanced.md", "test-hooks.md", "contributing.md"]],
-];
+const pageRels = readDocPages(docsDir);
+assertNavigationCoversDocs(pageRels);
 
-const buildExcludes = [];
-
-fs.rmSync(outDir, { recursive: true, force: true });
-fs.mkdirSync(outDir, { recursive: true });
-
-const allPages = allMarkdown(docsDir).map((file) => {
-  const rel = path.relative(docsDir, file).replaceAll(path.sep, "/");
+const pages = pageRels.map((rel) => {
+  const file = path.join(docsDir, rel);
   const raw = fs.readFileSync(file, "utf8");
   const { frontmatter, body } = parseFrontmatter(raw);
   const cleaned = stripStrayDirectives(body);
@@ -49,7 +38,6 @@ const allPages = allMarkdown(docsDir).map((file) => {
   return { file, rel, title, outRel: outPath(rel, frontmatter), markdown: cleaned, frontmatter };
 });
 
-const pages = allPages.filter((page) => !buildExcludes.some((re) => re.test(page.rel)));
 const pageMap = new Map(pages.map((page) => [page.rel, page]));
 const permalinkMap = new Map();
 for (const page of pages) {
@@ -61,7 +49,7 @@ for (const page of pages) {
 const nav = sections
   .map(([name, rels]) => ({
     name,
-    pages: rels.map((rel) => pageMap.get(rel)).filter(Boolean),
+    pages: rels.map((rel) => pageMap.get(rel)),
   }))
   .filter((section) => section.pages.length);
 
@@ -69,13 +57,16 @@ const sectionByRel = new Map();
 for (const section of nav) for (const page of section.pages) sectionByRel.set(page.rel, section.name);
 const orderedPages = nav.flatMap((s) => s.pages);
 
+fs.rmSync(outDir, { recursive: true, force: true });
+fs.mkdirSync(outDir, { recursive: true });
+
 for (const page of pages) {
   const html = markdownToHtml(page.markdown, page.rel);
   const toc = tocFromHtml(html);
   const idx = orderedPages.findIndex((p) => p.rel === page.rel);
   const prev = idx > 0 ? orderedPages[idx - 1] : null;
   const next = idx >= 0 && idx < orderedPages.length - 1 ? orderedPages[idx + 1] : null;
-  const sectionName = sectionByRel.get(page.rel) || "Reference";
+  const sectionName = sectionByRel.get(page.rel);
   const pageOut = path.join(outDir, page.outRel);
   fs.mkdirSync(path.dirname(pageOut), { recursive: true });
   fs.writeFileSync(pageOut, layout({ page, html, toc, prev, next, sectionName }), "utf8");
@@ -194,17 +185,6 @@ function normalizePermalink(value) {
   if (!v.startsWith("/")) v = `/${v}`;
   if (v.length > 1 && v.endsWith("/")) v = v.slice(0, -1);
   return v;
-}
-
-function allMarkdown(dir) {
-  return fs
-    .readdirSync(dir, { withFileTypes: true })
-    .flatMap((entry) => {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) return allMarkdown(full);
-      return entry.name.endsWith(".md") ? [full] : [];
-    })
-    .sort();
 }
 
 function outPath(rel, frontmatter = {}) {
