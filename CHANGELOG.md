@@ -15,6 +15,7 @@
 - Fail closed when synchronous sidecar compromise checks hit I/O errors and invoke `onCompromised` once instead of throwing from the interval. Thanks @SebTardif.
 - Reject ZIP symlink-mode entries with a trailing slash or DOS directory bit before creating output, aligning JavaScript extraction with native link policy while preserving explicit filtering. Thanks @Yigtwxx.
 - Make the validated stripped path authoritative during JavaScript TAR extraction, fixing `ENOENT` and native path disagreement for dot or empty components, including local PAX paths, while preserving pre-strip filter inputs. Thanks @Yigtwxx.
+- Apply process-wide retry, timeout, and stale-policy defaults to synchronous file locks while preserving per-call overrides and caller-approved guarded recovery. Thanks @Yigtwxx.
 
 ### Docs and Tooling
 
